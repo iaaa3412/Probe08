@@ -1,0 +1,413 @@
+"""Probe Routing Panel — semantic view of the 707B switch matrix wiring.
+
+Row-to-instrument assignment (user-defined physical wiring):
+  A → SMU ChA HI      B → SMU ChA LO/GND
+  C → SMU ChB HI      D → SMU ChB LO/GND
+  E → DMM LO          F → DMM HI
+  G → Wave CH1 Out    H → Wave CH2 Out
+
+Probe-to-slot assignment:
+  Probes  1–12  → Slot 2, card columns 1–12
+  Probes 13–24  → Slot 4, card columns 1–12
+"""
+import tkinter as tk
+from tkinter import ttk
+
+# ── Instrument row definitions ────────────────────────────────────────────────
+# (row_letter, display_label, label_colour)
+_ROW_MAP = [
+    ("A", "SMU A HI",  "#60a5fa"),
+    ("B", "SMU A LO",  "#93c5fd"),
+    ("C", "SMU B HI",  "#fb923c"),
+    ("D", "SMU B LO",  "#fdba74"),
+    ("E", "DMM LO",    "#86efac"),
+    ("F", "DMM HI",    "#22c55e"),
+    ("G", "Wave CH1",  "#e879f9"),
+    ("H", "Wave CH2",  "#f0abfc"),
+]
+
+_N_PROBES = 24
+
+
+def _probe_slot_col(probe: int):
+    """Return (slot_str, card_col) for a 1-indexed probe wire."""
+    if probe <= 12:
+        return ("2", probe)
+    return ("4", probe - 12)
+
+
+# ── Canvas geometry ───────────────────────────────────────────────────────────
+_LBL_W    = 88    # pixels reserved for instrument-name label on the left
+_DOT_R    = 8     # dot radius
+_DOT_STEP = 22    # centre-to-centre spacing
+_GAP      = 14    # extra gap between the two slot groups
+_HDR_H    = 38    # header area height (slot labels + probe numbers)
+
+_CANVAS_W = _LBL_W + _N_PROBES * _DOT_STEP + _GAP + _DOT_R * 2 + 8
+_CANVAS_H = _HDR_H + len(_ROW_MAP) * _DOT_STEP + 8
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+_C_OPEN      = "#6b7566"
+_C_CLOSED    = "#22c55e"
+_C_HL_OPEN   = "#9ba89a"
+_C_HL_CLOSED = "#86efac"
+
+
+def _cx(probe: int) -> int:
+    """Canvas x-centre for probe column (1-indexed)."""
+    extra = _GAP if probe > 12 else 0
+    return _LBL_W + (probe - 1) * _DOT_STEP + _DOT_R + extra
+
+
+def _cy(row_idx: int) -> int:
+    """Canvas y-centre for instrument row (0-indexed)."""
+    return _HDR_H + row_idx * _DOT_STEP + _DOT_R
+
+
+def scrollable_routing(parent, controller):
+    """ProbeRoutingPanel inside a scrollable container.
+
+    The matrix canvas has a fixed pixel size, so hosts narrower/shorter than
+    the panel get scrollbars; when the host is wider, the panel stretches so
+    the side terminal fills the leftover width. Returns (holder, panel).
+    """
+    holder = ttk.Frame(parent)
+    holder.rowconfigure(0, weight=1)
+    holder.columnconfigure(0, weight=1)
+
+    canvas = tk.Canvas(holder, highlightthickness=0, height=_CANVAS_H + 70)
+    hsb = ttk.Scrollbar(holder, orient="horizontal", command=canvas.xview)
+    vsb = ttk.Scrollbar(holder, orient="vertical",   command=canvas.yview)
+    canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb.set)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+    hsb.grid(row=1, column=0, sticky="ew")
+
+    panel = ProbeRoutingPanel(canvas, controller=controller)
+    win = canvas.create_window((0, 0), window=panel, anchor="nw")
+
+    def _sync(_e=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+    panel.bind("<Configure>", _sync)
+    canvas.bind("<Configure>",
+                lambda e: canvas.itemconfig(
+                    win, width=max(e.width, panel.winfo_reqwidth())))
+    return holder, panel
+
+
+class ProbeRoutingPanel(ttk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+
+        # (slot, row_letter, card_col) → bool
+        self._state: dict = {}
+        # (slot, row_letter, card_col) → (body_canvas_id, highlight_canvas_id)
+        self._dot_ids: dict = {}
+
+        self._scpi_history: list = []
+        self._scpi_hist_idx: int = -1
+
+        self.rowconfigure(0, weight=0)
+        self.rowconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        # Compact SCPI/TSP terminal lives inline in the topbar, next to
+        # Read State — see _build_topbar.
+        self._build_topbar()
+        self._build_matrix()
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _drv(self):
+        drv = self.controller.drivers.get("switch")
+        return drv if (drv and drv.inst) else None
+
+    def _log(self, msg: str):
+        self.controller.log(msg)
+
+    # ── Top bar ───────────────────────────────────────────────────────────────
+
+    def _build_topbar(self):
+        bar = tk.Frame(self, bg="#c8c8c8", relief="flat")
+        bar.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 0))
+        bar.columnconfigure(6, weight=1)
+
+        tk.Label(bar, text="Probe Routing Matrix",
+                 bg="#c8c8c8", fg="#374151",
+                 font=("Segoe UI", 8)).grid(
+                 row=0, column=0, columnspan=7, sticky="w", padx=2)
+
+        tk.Button(
+            bar, text="Open All",
+            bg="#d4d4d4", activebackground="#bdbdbd",
+            relief="raised", bd=2,
+            font=("Segoe UI", 10),
+            command=self._open_all,
+        ).grid(row=1, column=0, sticky="w", padx=2, pady=(2, 6))
+
+        ttk.Button(
+            bar, text="↻ Read State",
+            command=self._read_all,
+        ).grid(row=1, column=1, sticky="w", padx=(4, 8), pady=(2, 6))
+
+        # ── Compact SCPI/TSP terminal (single line — see _scpi_send) ───────
+        ttk.Separator(bar, orient="vertical").grid(
+            row=1, column=2, sticky="ns", padx=4, pady=(2, 6))
+        tk.Label(bar, text="SCPI/TSP:", bg="#c8c8c8", fg="#374151",
+                 font=("Segoe UI", 8)).grid(
+                 row=1, column=3, sticky="w", padx=(2, 2), pady=(2, 6))
+
+        self._scpi_entry = ttk.Entry(bar, font=("Consolas", 9), width=16)
+        self._scpi_entry.grid(row=1, column=4, sticky="w", padx=2, pady=(2, 6))
+        self._scpi_entry.bind("<Return>", lambda _: self._scpi_send())
+        self._scpi_entry.bind("<Up>",     self._scpi_hist_prev)
+        self._scpi_entry.bind("<Down>",   self._scpi_hist_next)
+
+        ttk.Button(bar, text="Send", width=5,
+                   command=self._scpi_send).grid(
+                   row=1, column=5, sticky="w", padx=(2, 4), pady=(2, 6))
+
+        self._scpi_resp_var = tk.StringVar(value="")
+        tk.Label(bar, textvariable=self._scpi_resp_var, bg="#c8c8c8",
+                 fg="#1d4ed8", font=("Consolas", 8),
+                 anchor="w").grid(
+                 row=1, column=6, sticky="ew", padx=(2, 4), pady=(2, 6))
+
+    # ── Routing matrix ────────────────────────────────────────────────────────
+
+    def _build_matrix(self):
+        outer = tk.Frame(self, bg="#b8b8b8", relief="groove", bd=2)
+        outer.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
+
+        c = tk.Canvas(outer, width=_CANVAS_W, height=_CANVAS_H,
+                      bg="#8c9688", highlightthickness=0, cursor="hand2")
+        c.pack(padx=8, pady=8)
+        self._canvas = c
+
+        # ── Column header: slot group labels ──────────────────────────────
+        cx_s2_mid = (_cx(1) + _cx(12)) // 2
+        cx_s4_mid = (_cx(13) + _cx(24)) // 2
+        c.create_text(cx_s2_mid, 6, text="Slot 2  (Probes 1–12)",
+                      fill="#1f2937", font=("Segoe UI", 7, "bold"), anchor="n")
+        c.create_text(cx_s4_mid, 6, text="Slot 4  (Probes 13–24)",
+                      fill="#1f2937", font=("Segoe UI", 7, "bold"), anchor="n")
+
+        # ── Column header: probe numbers ──────────────────────────────────
+        for p in range(1, _N_PROBES + 1):
+            c.create_text(_cx(p), 22, text=str(p),
+                          fill="#374151", font=("Courier", 7), anchor="n")
+
+        # ── Slot separator line ───────────────────────────────────────────
+        sep_x = (_cx(12) + _cx(13)) // 2
+        c.create_line(sep_x, 0, sep_x, _CANVAS_H,
+                      fill="#6b7280", width=1, dash=(4, 3))
+
+        # ── Row labels and dots ───────────────────────────────────────────
+        for ri, (row_letter, label, color) in enumerate(_ROW_MAP):
+            cy = _cy(ri)
+            c.create_text(_LBL_W - 4, cy,
+                          text=f"{label}  ({row_letter})",
+                          fill=color, font=("Segoe UI", 7, "bold"),
+                          anchor="e")
+            for probe in range(1, _N_PROBES + 1):
+                slot, card_col = _probe_slot_col(probe)
+                self._draw_dot(c, slot, row_letter, card_col, _cx(probe), cy, closed=False)
+
+        c.bind("<Button-1>", self._on_click)
+
+    def _draw_dot(self, canvas, slot, row, col, cx, cy, closed: bool):
+        key = (slot, row, col)
+        old = self._dot_ids.get(key)
+        if old:
+            canvas.delete(old[0])
+            canvas.delete(old[1])
+
+        r    = _DOT_R - 1
+        fill = _C_CLOSED if closed else _C_OPEN
+        hl   = _C_HL_CLOSED if closed else _C_HL_OPEN
+
+        body = canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                  fill=fill, outline="#2d3748", width=1)
+        hr   = max(2, r // 3)
+        spec = canvas.create_oval(cx - r + 2, cy - r + 2,
+                                  cx - r + 2 + hr, cy - r + 2 + hr,
+                                  fill=hl, outline="")
+        self._dot_ids[key] = (body, spec)
+
+    def _refresh_dot(self, slot: str, row: str, col: int):
+        key = (slot, row, col)
+        ids = self._dot_ids.get(key)
+        if not ids:
+            return
+        closed = self._state.get(key, False)
+        fill = _C_CLOSED if closed else _C_OPEN
+        hl   = _C_HL_CLOSED if closed else _C_HL_OPEN
+        self._canvas.itemconfig(ids[0], fill=fill)
+        self._canvas.itemconfig(ids[1], fill=hl)
+
+    def _on_click(self, event):
+        x, y = event.x, event.y
+        if y < _HDR_H:
+            return
+
+        ri = (y - _HDR_H) // _DOT_STEP
+        if not (0 <= ri < len(_ROW_MAP)):
+            return
+
+        # Find nearest probe column within hit radius
+        probe = None
+        for p in range(1, _N_PROBES + 1):
+            if abs(x - _cx(p)) <= _DOT_R + 2:
+                probe = p
+                break
+        if probe is None:
+            return
+
+        row_letter   = _ROW_MAP[ri][0]
+        slot, card_col = _probe_slot_col(probe)
+        ch = f"{slot}{row_letter}{card_col:02d}"
+        key = (slot, row_letter, card_col)
+
+        drv = self._drv()
+        if self._state.get(key, False):
+            if drv:
+                drv.open_crosspoint(f"{slot}{row_letter}", f"{card_col:02d}")
+            self._state[key] = False
+            self._log(f"[SW] open  {ch}  (probe {probe})")
+        else:
+            if drv:
+                drv.close_channel(ch)
+            self._state[key] = True
+            self._log(f"[SW] close {ch}  (probe {probe})")
+        self._refresh_dot(slot, row_letter, card_col)
+
+    # ── Hardware actions ──────────────────────────────────────────────────────
+
+    def _open_all(self):
+        drv = self._drv()
+        if drv:
+            drv.open_all()
+        self.mark_all_open()
+        self._log("[SW] All channels open")
+
+    # ── Live visual sync (no hardware I/O) — called from a running recipe
+    #    so this matrix mirrors the actual closures as they happen ───────────
+
+    @staticmethod
+    def _parse_channel(ch: str):
+        ch = (ch or "").strip()
+        if len(ch) >= 3 and ch[0].isdigit() and ch[1].isalpha() and ch[2:].isdigit():
+            return ch[0], ch[1].upper(), int(ch[2:])
+        return None, None, None
+
+    def mark_closed(self, ch: str):
+        """Reflect a channel the run loop just closed — visual only, no
+        driver call (the caller already did that)."""
+        slot, row, col = self._parse_channel(ch)
+        if slot is None:
+            return
+        self._state[(slot, row, col)] = True
+        self._refresh_dot(slot, row, col)
+
+    def mark_open(self, ch: str):
+        slot, row, col = self._parse_channel(ch)
+        if slot is None:
+            return
+        self._state[(slot, row, col)] = False
+        self._refresh_dot(slot, row, col)
+
+    def mark_all_open(self):
+        for key in list(self._state):
+            self._state[key] = False
+        for row_letter, _label, _color in _ROW_MAP:
+            for probe in range(1, _N_PROBES + 1):
+                slot, card_col = _probe_slot_col(probe)
+                self._refresh_dot(slot, row_letter, card_col)
+
+    def read_state(self):
+        """Poll the real 707B state and resync every dot — the periodic
+        accuracy check the run loop calls every few dies."""
+        self._read_all()
+
+    def _read_all(self):
+        drv = self._drv()
+        if not drv:
+            self._log("[SW] Read State: switch not connected")
+            return
+        rows_in_card = [r[0] for r in _ROW_MAP]
+        n_col = 12
+        for slot_str in ("2", "4"):
+            try:
+                chan_list = ",".join(
+                    f"{slot_str}{r}{c:02d}"
+                    for r in rows_in_card
+                    for c in range(1, n_col + 1)
+                )
+                raw = drv.query_state(chan_list)
+                self._log(f"[SW] getstate slot {slot_str}: {raw!r}")
+                n_exp = len(rows_in_card) * n_col
+                clean = (raw.replace(",", "").replace(";", "")
+                            .replace(" ", "").replace("\n", ""))
+                if all(ch in "01" for ch in clean) and len(clean) == n_exp:
+                    idx = 0
+                    for r in rows_in_card:
+                        for c in range(1, n_col + 1):
+                            self._state[(slot_str, r, c)] = clean[idx] == "1"
+                            idx += 1
+                for r in rows_in_card:
+                    for c in range(1, n_col + 1):
+                        self._refresh_dot(slot_str, r, c)
+            except Exception as e:
+                self._log(f"[SW] Read error slot {slot_str}: {e}")
+
+    # ── SCPI / TSP terminal (compact — single response label, full history
+    #    goes to the main execution log via self._log) ──────────────────────
+
+    def _scpi_send(self):
+        cmd = self._scpi_entry.get().strip()
+        if not cmd:
+            return
+        drv = self._drv()
+        if not drv:
+            self._scpi_print(">> Not connected")
+            return
+        if not self._scpi_history or self._scpi_history[-1] != cmd:
+            self._scpi_history.append(cmd)
+        self._scpi_hist_idx = -1
+        self._scpi_entry.delete(0, "end")
+        self._log(f"[SCPI] >> {cmd}")
+        try:
+            if "print(" in cmd.lower():
+                resp = drv.query(cmd)
+                self._scpi_print(str(resp).strip() if resp else "(no response)")
+            else:
+                drv.write(cmd)
+                self._scpi_print("(sent)")
+        except Exception as exc:
+            self._scpi_print(f"ERROR: {exc}")
+
+    def _scpi_print(self, text: str):
+        self._scpi_resp_var.set(text)
+        self._log(f"[SCPI] << {text}")
+
+    def _scpi_hist_prev(self, _):
+        if not self._scpi_history:
+            return
+        if self._scpi_hist_idx == -1:
+            self._scpi_hist_idx = len(self._scpi_history) - 1
+        elif self._scpi_hist_idx > 0:
+            self._scpi_hist_idx -= 1
+        self._scpi_entry.delete(0, "end")
+        self._scpi_entry.insert(0, self._scpi_history[self._scpi_hist_idx])
+
+    def _scpi_hist_next(self, _):
+        if self._scpi_hist_idx == -1:
+            return
+        if self._scpi_hist_idx < len(self._scpi_history) - 1:
+            self._scpi_hist_idx += 1
+            self._scpi_entry.delete(0, "end")
+            self._scpi_entry.insert(0, self._scpi_history[self._scpi_hist_idx])
+        else:
+            self._scpi_hist_idx = -1
+            self._scpi_entry.delete(0, "end")

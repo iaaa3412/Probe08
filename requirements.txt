@@ -1,0 +1,22 @@
+# ── Instrument communication ──────────────────────────────────────────────────
+pyvisa>=1.13              # VISA layer (NI-VISA or pyvisa-py backend)
+# pyvisa-py>=0.7          # Pure-Python VISA backend (uncomment if no NI-VISA)
+
+# ── Config / data ─────────────────────────────────────────────────────────────
+PyYAML>=6.0               # instruments.yaml config, switch routing export/import
+
+# ── GDS parsing ───────────────────────────────────────────────────────────────
+gdstk>=0.9.55             # GDS2 file read/write (requires C++ build tools on Windows)
+numpy>=1.24               # dependency of gdstk; pinned to avoid ABI mismatch
+
+# ── Plotting (GDS layout / wafer map renders) ─────────────────────────────────
+matplotlib>=3.8           # device layout and wafer map views in GDS Parser tab
+
+# ── Legacy recipe workbook import ─────────────────────────────────────────────
+xlrd>=2.0                 # reads legacy .xls "IMT Prober Recipe Generation" workbooks (PMA tab)
+
+# ── NanoZ EK-IV boards (NanoZ tab) ─────────────────────────────────────────────
+pyserial>=3.5              # serial COM-port comms with the NanoZ EK-IV eval boards
+
+# ── Optional: standalone executable build ─────────────────────────────────────
+# pyinstaller>=6.0        # uncomment to build Windows .exe: pyinstaller main.spec

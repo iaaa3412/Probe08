@@ -1,0 +1,20 @@
+{
+  "test_recipe": [
+    {
+      "test_name": "Resistor_1",
+      "switch_matrix_pins": "(@1A01, 1B02)",
+      "source_voltage": 2.0,
+      "compliance_current": 0.01,
+      "lower_limit_ohms": 40.0,
+      "upper_limit_ohms": 60.0
+    },
+    {
+      "test_name": "Leakage_Check",
+      "switch_matrix_pins": "(@1A03, 1B04)",
+      "source_voltage": 5.0,
+      "compliance_current": 0.05,
+      "lower_limit_ohms": 1000000.0,
+      "upper_limit_ohms": 999999999.0
+    }
+  ]
+}
