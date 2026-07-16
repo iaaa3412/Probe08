@@ -61,7 +61,7 @@ class AtomicaDashboard(tk.Tk):
             try:
                 stb, _desc = prober.read_stb_decoded()
                 if stb == 76 and prober.confirm_and_clear_alarm():
-                    self.log("[SYSTEM] Alarm detected while idle — "
+                    self.log("[SYSTEM] Alarm detected while idle : "
                             "buzzer auto-cleared (es sent).")
             except Exception:
                 stb = None
