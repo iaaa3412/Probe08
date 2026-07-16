@@ -1,0 +1,31 @@
+kind,recipe,pin,pad,net,seq,name,type,mode,instrument,chan,target,hi,lo,level,limit,shape,freq,conn,min,max,avg_count,avg_delay
+PIN,,1,rightm,,,,,,,,,,,,,,,,,,,
+PIN,,2,right,,,,,,,,,,,,,,,,,,,
+PIN,,23,left,,,,,,,,,,,,,,,,,,,
+PIN,,24,leftm,,,,,,,,,,,,,,,,,,,
+RECIPE,madres,,,,,,,,,,,,,,,,,,,,,
+STEP,madres,,,,1,500,delay,,,,,,,500.000,,,,,,,,
+STEP,madres,,,,2,res1,resistance,measure,DMM,,,1:rightm,24:leftm,,,,,"2F01,4E12",,,1,0
+STEP,madres,,,,3,500,delay,,,,,,,500.000,,,,,,,,
+STEP,madres,,,,4,open1,open,,,,res1,,,,,,,"2F01,4E12",,,,
+STEP,madres,,,,5,500,delay,,,,,,,500.000,,,,,,,,
+RECIPE,test,,,,,,,,,,,,,,,,,,,,,
+STEP,test,,,,1,res1,resistance,measure,SMU,A,,1:rightm,24:leftm,,,,,"2F01,4E12",,,1,0
+STEP,test,,,,2,200,delay,,,,,,,200,,,,,,,,
+STEP,test,,,,3,open1,open,,,,res1,,,,,,,"2F01,4E12",,,,
+STEP,test,,,,4,100,delay,,,,,,,100,,,,,,,,
+RECIPE,HPLaMP_TRACE_PROBE,,,,,,,,,,,,,,,,,,,,,
+STEP,HPLaMP_TRACE_PROBE,,,,1,Settle after contact (Delay1),delay,,,,,,,100,,,,,,,,
+STEP,HPLaMP_TRACE_PROBE,,,,2,Settle after output ON (Delay2),delay,,,,,,,200,,,,,,,,
+STEP,HPLaMP_TRACE_PROBE,,,,3,Leakage Measurement,current,measure,SMU,A,,,,10,0.000001,,,,,,20,200
+STEP,HPLaMP_TRACE_PROBE,,,,4,Leakage Check,passfail,,,,Leakage Measurement,,,,,,,,,0.000001,,
+STEP,HPLaMP_TRACE_PROBE,,,,5,Release,open,,,,Leakage Measurement,,,,,,,,,,,
+STEP,HPLaMP_TRACE_PROBE,,,,6,Settle after output OFF (Delay3),delay,,,,,,,200,,,,,,,,
+RECIPE,Maddy TL,,,,,,,,,,,,,,,,,,,,,
+STEP,Maddy TL,,,,1,Settle after contact,delay,,,,,,,1000,,,,,,,,
+STEP,Maddy TL,,,,2,Kelvin Resistance,resistance,measure,SMU,B,,23:left,2:right,,,,,"4C11,2D02",,,1,0
+STEP,Maddy TL,,,,3,Settle before DMM sense,delay,,,,,,,500,,,,,,,,
+STEP,Maddy TL,,,,4,Kelvin Voltage (DMM),voltage,measure,DMM,,,1:rightm,24:leftm,,,,,"2F01,4E12",,,1,0
+STEP,Maddy TL,,,,5,Resistance Check,passfail,,,,Kelvin Resistance,,,,,,,,5,30,,
+STEP,Maddy TL,,,,6,Release,open,,,,all,,,,,,,,,,,
+STEP,Maddy TL,,,,7,Settle after release,delay,,,,,,,1000,,,,,,,,
