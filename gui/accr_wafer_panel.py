@@ -1,31 +1,3 @@
-"""Accr Wafer — dry-run wafer map extraction from the Accretech UF200/190.
-
-Steps the prober through every valid die and records the coordinates,
-reconstructing the wafer map. Command sequence per manual FT02000-R003-E0
-(§3.4 Example 1, adapted for a dry run — same command semantics as the
-Prober Debug tab descriptions):
-
-  1. D — separate (chuck DOWN) so the needles never touch during the dry
-         run. STB 68. Optional but ON by default: G and J restore the chuck
-         to its PRIOR height after every travel, so a chuck left UP would
-         re-contact the probe card at every die.
-  2. G — position the start die (STB 70 = done chuck DOWN / 67 = done chuck
-         UP, i.e. in CONTACT). Also resets the prober's PASS/FAIL counters.
-  3. Q — read current die coordinates (response QYyyyXxxx, Y first, die
-         units −99…511; clips at −99).
-  4. J — position the next testing die (STB 66 = moved chuck DOWN,
-         67 = moved chuck UP/contact, 81 = wafer end (no move),
-         90 = <STOP> pushed on prober, 76 = alarm).
-  5. Repeat 3–4 until STB 81. The die is recorded BEFORE each J, so the
-         last die (whose J answers 81 without moving) is not lost.
-
-Contact guard: when "Send D first" is on, any G/J that finishes chuck UP
-(STB 67 — wafer touching the probe card) is followed immediately by D.
-
-Requires active probing (wafer loaded & aligned, start die positioned) —
-G/J/Q are rejected or indefinite otherwise. Runs a simulated wafer when no
-prober is connected (phase-1 offline mode).
-"""
 from __future__ import annotations
 
 import csv
@@ -39,14 +11,13 @@ from tkinter import filedialog, messagebox, ttk
 
 
 def _parse_q(raw: str):
-    """Parse a Q response (QYyyyXxxx, Y first) into (x_die, y_die) ints."""
     raw = (raw or "").strip()
     m = re.search(r'Y\s*([+-]?\d+)\s*X\s*([+-]?\d+)', raw)
     if m:
         return int(m.group(2)), int(m.group(1))
     parts = re.findall(r'[+-]?\d+', raw)
     if len(parts) >= 2:
-        return int(parts[1]), int(parts[0])  # Y comes first on the wire
+        return int(parts[1]), int(parts[0])
     raise ValueError(f"Cannot parse Q response: {raw!r}")
 
 
@@ -54,16 +25,10 @@ class AccrWaferPanel(ttk.Frame):
     def __init__(self, parent, controller, get_folder=None):
         super().__init__(parent)
         self.controller = controller
-        # Callable returning the currently loaded ATA folder (or "" / None),
-        # used by "Save to ATA" to write ata_wafer_map_accretech.csv there.
         self._get_folder = get_folder or (lambda: None)
         self._running = False
         self._abort   = False
-        self._dies    = []   # list of (x_die, y_die, raw_q) in visit order
-        # Folder whose saved ata_wafer_map_accretech.csv self._dies currently
-        # reflects — None means _dies is either empty or a live/unsaved
-        # extraction, which auto-loading must never clear out from under
-        # the user just because a different folder was opened.
+        self._dies    = []
         self._loaded_ata_folder = None
 
         self.rowconfigure(1, weight=1)
@@ -72,7 +37,6 @@ class AccrWaferPanel(ttk.Frame):
         self._build_topbar()
         self._build_main()
 
-    # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_topbar(self):
         bar = ttk.Frame(self, padding=(6, 4))
@@ -105,7 +69,6 @@ class AccrWaferPanel(ttk.Frame):
         pane = ttk.PanedWindow(self, orient="horizontal")
         pane.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
 
-        # ── Left: collected dies ──────────────────────────────────────────
         lf = ttk.LabelFrame(pane, text="Collected Dies", padding=6)
         pane.add(lf, weight=1)
         lf.rowconfigure(1, weight=1)
@@ -136,7 +99,6 @@ class AccrWaferPanel(ttk.Frame):
                    command=self._save_to_ata).grid(
                    row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
-        # ── Right: wafer map canvas ───────────────────────────────────────
         rf = ttk.LabelFrame(pane, text="Reconstructed Wafer Map", padding=4)
         pane.add(rf, weight=3)
         rf.rowconfigure(0, weight=1)
@@ -146,7 +108,6 @@ class AccrWaferPanel(ttk.Frame):
         self._canvas.grid(row=0, column=0, sticky="nsew")
         self._canvas.bind("<Configure>", lambda _e: self._redraw())
 
-    # ── Start / abort ─────────────────────────────────────────────────────────
 
     def _start_extraction(self):
         if self._running:
@@ -209,7 +170,6 @@ class AccrWaferPanel(ttk.Frame):
                         self._log(f"[ACCR MAP] es error: {e}")
                 threading.Thread(target=_clear, daemon=True).start()
 
-    # ── Extraction workers ────────────────────────────────────────────────────
 
     def _worker(self, sim: bool, send_separate: bool, max_dies: int):
         try:
@@ -223,9 +183,6 @@ class AccrWaferPanel(ttk.Frame):
                                    self._abort_btn.config(state="disabled")))
 
     def _ensure_separated(self, drv, stb: int, cmd: str) -> None:
-        """Contact guard: G/J restore the chuck's PRIOR height, so a travel
-        can finish chuck UP (STB=67 — wafer in CONTACT with the probe card).
-        During a dry run that must not persist — send D to separate again."""
         if stb == 67:
             self._log(f"[ACCR MAP] ⚠ {cmd} finished chuck UP (STB=67 — contact!) "
                       ">> D  (Separate)")
@@ -238,14 +195,11 @@ class AccrWaferPanel(ttk.Frame):
             self._finish("Prober not connected", error=True)
             return
         try:
-            # 1. D — separate first so G/J's height restoration keeps the
-            #    chuck DOWN for the whole dry run (no needle contact).
             if send_separate:
                 self._log("[ACCR MAP] >> D  (Z Down — chuck drops, wafer separates)")
                 drv.z_down()
                 self._log("[ACCR MAP] << STB=68  (Z Down done)")
 
-            # 2. G — position the start die (resets PASS/FAIL counters)
             self._log("[ACCR MAP] >> G  (Position start die)")
             stb = drv.move_to_start_die()
             self._log(f"[ACCR MAP] << STB={stb}  (start die positioned, chuck "
@@ -261,15 +215,12 @@ class AccrWaferPanel(ttk.Frame):
                     self._finish(f"Stopped at max-dies cap ({max_dies})", error=True)
                     return
 
-                # 3. Q — record the die we are on (BEFORE stepping, so the
-                #    last die is kept when J answers 81 without moving)
                 self._log("[ACCR MAP] >> Q  (die coordinates)")
                 raw = drv.get_xy_position()
                 x, y = _parse_q(raw)
                 self._log(f"[ACCR MAP] << {raw!r}  → die X={x} Y={y}")
                 self._add_die(x, y, raw)
 
-                # 4. J — position the next testing die
                 self._log("[ACCR MAP] >> J  (position next testing die)")
                 stb = drv.next_die()
                 if stb == 81:
@@ -287,12 +238,10 @@ class AccrWaferPanel(ttk.Frame):
                     self._ensure_separated(drv, stb, "J")
 
         except Exception as e:
-            # driver raises on STB=76 (alarm), STB=74, and timeouts
             self._log(f"[ACCR MAP] ERROR: {e}")
             self._finish(f"Error after {len(self._dies)} dies — see log", error=True)
 
     def _worker_sim(self, max_dies: int):
-        """Offline mode: serpentine walk over a circular wafer footprint."""
         self._log("[ACCR MAP] (sim) Extracting simulated wafer map…")
         radius = 12
         for row, y in enumerate(range(-radius, radius + 1)):
@@ -311,7 +260,6 @@ class AccrWaferPanel(ttk.Frame):
                 time.sleep(0.02)
         self._finish(f"Complete (sim) — {len(self._dies)} dies")
 
-    # ── Result handling (worker thread → UI) ──────────────────────────────────
 
     def _add_die(self, x: int, y: int, raw: str):
         self._dies.append((x, y, raw))
@@ -336,7 +284,6 @@ class AccrWaferPanel(ttk.Frame):
         self._status_var.set(text)
         self._status_lbl.config(foreground=color)
 
-    # ── Wafer map canvas ──────────────────────────────────────────────────────
 
     def _redraw(self):
         cv = self._canvas
@@ -362,14 +309,10 @@ class AccrWaferPanel(ttk.Frame):
 
         last = len(self._dies) - 1
         for i, (x, y, _raw) in enumerate(self._dies):
-            # +Y is backward on the prober (far side of the wafer from the
-            # operator) → draw +Y toward screen bottom, so the map matches
-            # what's seen looking down at the chuck (G's start die lands
-            # bottom-left, not top-left).
             cx = ox + (x - xmin) * cell
             cy = oy + (y - ymin) * cell
-            color = ("#2563eb" if i == 0            # start die
-                     else "#f97316" if i == last    # most recent die
+            color = ("#2563eb" if i == 0
+                     else "#f97316" if i == last
                      else "#22c55e")
             cv.create_rectangle(cx + 1, cy + 1, cx + cell - 1, cy + cell - 1,
                                 fill=color, outline="")
@@ -378,7 +321,6 @@ class AccrWaferPanel(ttk.Frame):
                        text=f"X {xmin}…{xmax}   Y {ymin}…{ymax}   {len(self._dies)} dies"
                             f"   ■ start  ■ latest")
 
-    # ── Export / clear ────────────────────────────────────────────────────────
 
     def _save_csv(self):
         if not self._dies:
@@ -400,13 +342,6 @@ class AccrWaferPanel(ttk.Frame):
         self._log(f"[ACCR MAP] Saved {len(self._dies)} dies → {path}")
 
     def _save_to_ata(self):
-        """💾 Save to ATA Folder — write ata_wafer_map_accretech.csv into the
-        loaded ATA folder, in the row/col schema WaferMapPanel.load_from_ata
-        reads (row=Y die, col=X die — the Accretech die-grid indices
-        themselves, no µm coordinates). Deliberately a DIFFERENT filename
-        than the GDS parser's ata_wafer_map.csv so the two never collide —
-        pick "Accretech" as the map source on the Wafer Map / Run tabs to
-        load this one back instead of the GDS-derived map."""
         if not self._dies:
             messagebox.showinfo("No Data", "No dies collected yet.")
             return
@@ -435,17 +370,6 @@ class AccrWaferPanel(ttk.Frame):
                   "Wafer Map / Run tabs to reload from this file.")
 
     def load_from_ata(self, folder: str) -> int:
-        """Opportunistically restore a previous extraction: read
-        ata_wafer_map_accretech.csv from folder (written by 💾 Save to ATA
-        Folder) and populate the collected-dies list + preview canvas.
-        Silent no-op (returns 0) if the file doesn't exist yet or an
-        extraction is currently running — this is called automatically
-        whenever an ATA folder is (re)loaded, not on explicit user action.
-
-        If nothing is found here but the currently-shown dies were
-        themselves loaded from a DIFFERENT folder's file, they're cleared
-        (stale — belong to a folder that's no longer open); a live/unsaved
-        extraction (never loaded from a file) is left alone either way."""
         if self._running or not folder:
             return 0
         path = os.path.join(folder, "ata_wafer_map_accretech.csv")

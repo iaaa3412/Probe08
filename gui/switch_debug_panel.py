@@ -1,19 +1,13 @@
-"""Switch Debug Panel — LabVIEW-style Keithley 707B control."""
 import tkinter as tk
 from tkinter import ttk
 
-# ── Card configuration ────────────────────────────────────────────────────────
-# Each entry defines one physical card in the mainframe.
-# Rows follow the 7072 labelling: A-D are signal rows, G-H are guard/special.
 _CARDS = [
     {"slot": "2", "rows": list("ABCDGH"), "cols": 12},
     {"slot": "4", "rows": list("ABCDGH"), "cols": 12},
 ]
 
-# The eight named connection slots shown in the UI (A–H)
 _CONN_LETTERS = list("ABCDEFGH")
 
-# Pre-defined crosspoint options per connection letter
 _CONN_OPTIONS = {
     "A": ["2A01", "2A11", "4A03", "4A09"],
     "B": ["2B01", "2B11", "4B01", "4B11"],
@@ -25,17 +19,15 @@ _CONN_OPTIONS = {
     "H": ["4H09"],
 }
 
-# LED dot geometry
-_DOT_R    = 8    # radius in px
-_DOT_STEP = 22   # center-to-center spacing
-_ROW_LBL  = 30   # width of the row-label column
-_TOP_PAD  = 8    # top padding inside the dot canvas
+_DOT_R    = 8
+_DOT_STEP = 22
+_ROW_LBL  = 30
+_TOP_PAD  = 8
 
-# Colours
-_C_OPEN   = "#6b7566"   # dark grey-green — open channel (matches LabVIEW look)
-_C_CLOSED = "#22c55e"   # bright green — closed channel
-_C_HL_OPEN   = "#9ba89a"  # specular highlight for open dot
-_C_HL_CLOSED = "#86efac"  # specular highlight for closed dot
+_C_OPEN   = "#6b7566"
+_C_CLOSED = "#22c55e"
+_C_HL_OPEN   = "#9ba89a"
+_C_HL_CLOSED = "#86efac"
 
 
 class SwitchDebugPanel(ttk.Frame):
@@ -43,26 +35,22 @@ class SwitchDebugPanel(ttk.Frame):
         super().__init__(parent)
         self.controller = controller
 
-        # Named connection vars: letter → StringVar holding e.g. "2A11"
         self._conn_vars: dict = {lbl: tk.StringVar() for lbl in _CONN_LETTERS}
 
-        # Crosspoint state: (slot, row_letter, col_int) → bool
         self._state: dict = {}
 
-        # Canvas dot items: (slot, row_letter, col_int) → (body_id, hl_id)
         self._dot_ids: dict = {}
 
-        # Canvas references: slot → Canvas
         self._canvases: dict = {}
 
         self._scpi_history: list = []
         self._scpi_hist_idx: int = -1
 
-        self.rowconfigure(0, weight=0)   # top bar
-        self.rowconfigure(1, weight=0)   # connections
-        self.rowconfigure(2, weight=1)   # cluster
-        self.rowconfigure(3, weight=0)   # SCPI terminal
-        self.rowconfigure(4, weight=0)   # recipe step connections
+        self.rowconfigure(0, weight=0)
+        self.rowconfigure(1, weight=0)
+        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=0)
+        self.rowconfigure(4, weight=0)
         self.columnconfigure(0, weight=1)
 
         self._build_topbar()
@@ -71,7 +59,6 @@ class SwitchDebugPanel(ttk.Frame):
         self._build_scpi_terminal()
         self._build_recipe_connections()
 
-    # ── Hardware helpers ──────────────────────────────────────────────────────
 
     def _drv(self):
         drv = self.controller.drivers.get("switch")
@@ -81,13 +68,11 @@ class SwitchDebugPanel(ttk.Frame):
         self.controller.log(msg)
 
     def _parse_ch(self, ch: str):
-        """'2A11' → ('2', 'A', 11). Returns (None, None, None) on failure."""
         ch = ch.strip()
         if len(ch) >= 3 and ch[0].isdigit() and ch[1].isalpha() and ch[2:].isdigit():
             return ch[0], ch[1].upper(), int(ch[2:])
         return None, None, None
 
-    # ── Top bar ───────────────────────────────────────────────────────────────
 
     def _build_topbar(self):
         bar = tk.Frame(self, bg="#c8c8c8", relief="flat")
@@ -109,15 +94,11 @@ class SwitchDebugPanel(ttk.Frame):
         read_btn = ttk.Button(bar, text="↻ Read State", command=self._read_all)
         read_btn.grid(row=1, column=1, sticky="e", padx=(4, 2), pady=(2, 6))
 
-    # ── Named connection inputs ───────────────────────────────────────────────
 
     def _build_connections(self):
-        """3-column × 2-row grid of A–H named connections."""
         outer = tk.Frame(self, bg="#bebebe", relief="groove", bd=2)
         outer.grid(row=1, column=0, sticky="ew", padx=8, pady=4)
 
-        # Column pairs: left column has top letter, right has bottom letter
-        # Layout: A/B | C/D | G/H
         _PAIRS = [("A", "B"), ("C", "D"), ("G", "H")]
 
         for col_idx, (top, bot) in enumerate(_PAIRS):
@@ -136,7 +117,6 @@ class SwitchDebugPanel(ttk.Frame):
                 inp_row = tk.Frame(row_f, bg="#bebebe")
                 inp_row.pack(fill="x")
 
-                # Combobox holds history of typed values
                 cb = ttk.Combobox(inp_row,
                                   textvariable=self._conn_vars[lbl],
                                   width=9, values=_CONN_OPTIONS.get(lbl, []))
@@ -164,10 +144,8 @@ class SwitchDebugPanel(ttk.Frame):
             self._state[(slot, row, col)] = True
             self._refresh_dot(slot, row, col)
 
-    # ── Cluster ───────────────────────────────────────────────────────────────
 
     def _build_cluster(self):
-        """Cluster section: two card LED grids side by side."""
         cluster_outer = tk.Frame(self, bg="#b8b8b8", relief="groove", bd=2)
         cluster_outer.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
@@ -205,7 +183,6 @@ class SwitchDebugPanel(ttk.Frame):
         for ri, row_letter in enumerate(rows):
             cy = _TOP_PAD + ri * _DOT_STEP + _DOT_R
 
-            # Row label: slotRow, e.g. "2A"
             c.create_text(_ROW_LBL // 2, cy,
                           text=f"{slot}{row_letter}",
                           fill="#1f2937", font=("Courier", 7, "bold"),
@@ -221,7 +198,6 @@ class SwitchDebugPanel(ttk.Frame):
                self._dot_click(e, s, r, nc))
 
     def _draw_dot(self, canvas, slot, row, col, cx, cy, closed: bool):
-        """Draw or redraw a single LED dot; cache item IDs."""
         key = (slot, row, col)
         old = self._dot_ids.get(key)
         if old:
@@ -274,7 +250,6 @@ class SwitchDebugPanel(ttk.Frame):
                 self._log(f"[SW] close {ch}")
             self._refresh_dot(slot, row, col)
 
-    # ── Hardware actions ──────────────────────────────────────────────────────
 
     def _open_all(self):
         drv = self._drv()
@@ -283,12 +258,8 @@ class SwitchDebugPanel(ttk.Frame):
         self.mark_all_open()
         self._log("[SW] All channels open")
 
-    # ── Live visual sync (no hardware I/O) — called from a running recipe
-    #    so this matrix mirrors the actual closures as they happen ───────────
 
     def mark_closed(self, ch: str):
-        """Reflect a channel the run loop just closed — visual only, no
-        driver call (the caller already did that)."""
         slot, row, col = self._parse_ch(ch)
         if slot is None:
             return
@@ -311,8 +282,6 @@ class SwitchDebugPanel(ttk.Frame):
                     self._refresh_dot(spec["slot"], row, col)
 
     def read_state(self):
-        """Poll the real 707B state and resync every dot — the periodic
-        accuracy check the run loop calls every few dies."""
         self._read_all()
 
     def _read_all(self):
@@ -357,10 +326,8 @@ class SwitchDebugPanel(ttk.Frame):
             except Exception as e:
                 self._log(f"[SW] Read error slot {slot}: {e}")
 
-    # ── SCPI terminal ─────────────────────────────────────────────────────────
 
     def _build_recipe_connections(self):
-        """Per-step closure report pushed live by the Recipe tab."""
         lf = ttk.LabelFrame(self, text="Recipe Step Connections", padding=4)
         lf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
         lf.columnconfigure(0, weight=1)
@@ -377,7 +344,6 @@ class SwitchDebugPanel(ttk.Frame):
         self._recipe_conn_text.configure(yscrollcommand=sb.set)
 
     def set_recipe_connections(self, text: str):
-        """Viewer callback registered with RecipePanel.set_connections_viewer."""
         self._recipe_conn_text.config(state="normal")
         self._recipe_conn_text.delete("1.0", "end")
         self._recipe_conn_text.insert("1.0", text or "— no steps —")
@@ -388,7 +354,6 @@ class SwitchDebugPanel(ttk.Frame):
         lf.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         lf.columnconfigure(0, weight=1)
 
-        # ── Input row ──────────────────────────────────────────────────────
         inp_row = tk.Frame(lf)
         inp_row.grid(row=0, column=0, sticky="ew")
         inp_row.columnconfigure(0, weight=1)
@@ -402,7 +367,6 @@ class SwitchDebugPanel(ttk.Frame):
         ttk.Button(inp_row, text="Send", width=8,
                    command=self._scpi_send).grid(row=0, column=1)
 
-        # ── Output box ─────────────────────────────────────────────────────
         out_frame = tk.Frame(lf)
         out_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
         out_frame.columnconfigure(0, weight=1)
@@ -431,7 +395,6 @@ class SwitchDebugPanel(ttk.Frame):
             self._scpi_print(">> Not connected")
             return
 
-        # Save to history (avoid consecutive duplicates)
         if not self._scpi_history or self._scpi_history[-1] != cmd:
             self._scpi_history.append(cmd)
         self._scpi_hist_idx = -1
@@ -439,7 +402,6 @@ class SwitchDebugPanel(ttk.Frame):
 
         self._scpi_print(f">> {cmd}")
         try:
-            # Auto-detect query vs write: commands containing print() expect a response
             if "print(" in cmd.lower():
                 resp = drv.query(cmd)
                 self._scpi_print(str(resp).strip() if resp else "(no response)")

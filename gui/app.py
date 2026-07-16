@@ -30,20 +30,11 @@ class AtomicaDashboard(tk.Tk):
         self.dies_passed = 0
         self.dies_failed = 0
         self.drivers = {}
-        self._sys_ready_prev = None   # tracks the last logged ready/pending state
-        # Prober STB=65 ("ready to start probing") — polled on a background
-        # thread (see _poll_prober_ready) since a GPIB read can block for
-        # the prober's full 30s timeout and must never stall the GUI thread.
-        # None = not yet known (or not applicable — sim mode / mid-run).
-        # Purely informational (sidebar's separate yellow "Prober: ..."
-        # line, see _update_prober_status_label) — never factored into
-        # SYSTEM READY / PENDING and never affects whether a run can start.
+        self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
         self._build_brand_header()
         self.create_toolbar()
-        # Main content over the bottom probe-routing strip — a vertical
-        # PanedWindow so both areas are resizable by dragging the sash.
         self._main_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
         self._main_pane.grid(row=2, column=0, sticky="nsew")
         self.instrument_panel = MainLayout(parent=self._main_pane, controller=self)
@@ -53,10 +44,6 @@ class AtomicaDashboard(tk.Tk):
         self.after(500, self.init_hardware)
         self.update_statistics_visuals()
         self.check_system_ready()
-        # Belt-and-suspenders: recompute readiness every couple seconds so
-        # the sidebar status can never go stale no matter what changed it
-        # (probe card pin edits, recipe step edits, etc. don't all have an
-        # explicit check_system_ready() call site).
         self.after(2000, self._system_ready_loop)
         self.after(1500, self._poll_prober_ready)
 
@@ -65,13 +52,6 @@ class AtomicaDashboard(tk.Tk):
         self.after(2000, self._system_ready_loop)
 
     def _poll_prober_ready(self):
-        """Background-thread STB read for "ready to start probing"
-        (STB=65) AND the background alarm/buzzer watcher — skipped while
-        disconnected or a run is in progress (nothing meaningful to poll,
-        or polling would contend with the run thread's own GPIB traffic;
-        a genuine alarm during a run should surface normally rather than
-        being silently auto-cleared) so it just leaves the last known
-        value in place."""
         prober = self.drivers.get("prober")
         if not (prober and prober.inst) or self._any_run_in_progress():
             self.after(3000, self._poll_prober_ready)
@@ -92,12 +72,6 @@ class AtomicaDashboard(tk.Tk):
         self.after(3000, self._poll_prober_ready)
 
     def _any_run_in_progress(self) -> bool:
-        """True while Full Die/Test Die, the Cassette lot runner, the
-        Accr Wafer dry-run extraction, or the NanoZ lot runner is actively
-        driving the prober and polling its own STB — the background
-        buzzer watcher must stay off the GPIB bus during those (same
-        reason _exec2_running alone used to gate this before the Cassette
-        tab existed)."""
         ui = self.ui
         if getattr(ui, "_exec2_running", False):
             return True
@@ -125,12 +99,11 @@ class AtomicaDashboard(tk.Tk):
         if os.path.exists(logo_path):
             try:
                 img = tk.PhotoImage(file=logo_path)
-                # Subsample to fit the 48 px header (same factor as GDS reference)
                 factor = max(1, img.height() // 36)
                 if factor > 1:
                     img = img.subsample(factor, factor)
                 lbl_img = tk.Label(hdr, image=img, bg="#0E0E0F")
-                lbl_img.image = img   # prevent GC
+                lbl_img.image = img
                 lbl_img.pack(side="left", padx=(10, 6), pady=4)
             except Exception:
                 pass
@@ -142,11 +115,6 @@ class AtomicaDashboard(tk.Tk):
                  font=("Arial", 13)).pack(side="left", padx=4)
 
     def _build_bottom_routing(self):
-        """Bottom strip: probe routing matrix + SCPI terminal at its side
-        (the Execution Log swapped into the left sidebar). Scrollable when
-        the window is smaller than the matrix; pane sash resizes it.
-        Collapsible via the toolbar's ▾ Hide Routing button so the tabs
-        above can use the freed vertical space."""
         lf = ttk.LabelFrame(self._main_pane, text="Switch Routing")
         self._bottom_routing_frame = lf
         self._routing_visible = True
@@ -155,9 +123,6 @@ class AtomicaDashboard(tk.Tk):
         holder.pack(fill="both", expand=True)
 
     def cmd_toggle_routing(self):
-        """▾ Hide Switch / ▸ Show Switch — collapse or restore the bottom
-        Switch Routing strip; the main tabs pane (weight=1) fills whatever
-        space is freed."""
         if self._routing_visible:
             self._main_pane.forget(self._bottom_routing_frame)
             self._routing_toggle_btn.config(text="▸ Show Switch")
@@ -167,24 +132,11 @@ class AtomicaDashboard(tk.Tk):
         self._routing_visible = not self._routing_visible
 
     def cmd_fit_windows(self):
-        """⛶ Fit Windows — resets every resizable pane (main window split,
-        and every PanedWindow nested inside any tab) to fit the CURRENT
-        window size, proportional to what each side naturally wants.
-        Needed when the screen this was last arranged on was a different
-        size, or the window isn't maximized -- sashes left over from a
-        bigger layout can otherwise push controls off-screen. Purely
-        cosmetic: touches only sash positions, never data/connections/
-        run state."""
         self.update_idletasks()
         self._fit_all_panes(self)
         self.log("[UI] Fit Windows: resized all panes to the current window size.")
 
     def _fit_all_panes(self, widget):
-        """Recurse the whole widget tree and re-fit every ttk.PanedWindow
-        found (main-window split, and any nested ones inside tabs).
-        Flushes geometry right after each fit so a PanedWindow nested
-        inside another one is measured against its POST-fit allocated
-        space, not a stale pre-fit size."""
         for child in widget.winfo_children():
             if isinstance(child, ttk.PanedWindow):
                 self._fit_one_pane(child)
@@ -193,19 +145,13 @@ class AtomicaDashboard(tk.Tk):
 
     @staticmethod
     def _fit_one_pane(pane, min_px=40):
-        """Redistribute one PanedWindow's sashes across its current total
-        size, giving each pane a share proportional to what it naturally
-        requests (its own content's ideal size) rather than wherever the
-        sash happens to be -- that's what actually adapts to a smaller/
-        larger window instead of just leaving stale pixel positions.
-        Every pane keeps at least min_px so nothing collapses to nothing."""
         panes = pane.panes()
         if len(panes) < 2:
             return
         horizontal = str(pane.cget("orient")) == "horizontal"
         total = pane.winfo_width() if horizontal else pane.winfo_height()
         if total < min_px * len(panes):
-            return   # window too small right now to meaningfully redistribute
+            return
         reqs = []
         for p in panes:
             w = pane.nametowidget(p)
@@ -213,7 +159,7 @@ class AtomicaDashboard(tk.Tk):
         remainder = total - min_px * len(panes)
         req_sum = sum(reqs)
         sizes = [min_px + int(remainder * r / req_sum) for r in reqs]
-        sizes[-1] += total - sum(sizes)   # give any rounding leftover to the last pane
+        sizes[-1] += total - sum(sizes)
         pos = 0
         for i in range(len(panes) - 1):
             pos += sizes[i]
@@ -267,13 +213,6 @@ class AtomicaDashboard(tk.Tk):
         self.check_system_ready()
 
     def check_system_ready(self):
-        """Recomputed live from actual state every call (never a manually-
-        maintained flag that can drift out of sync) — starting a run only
-        needs an Accretech wafer map, a probe card pinout, a loaded
-        recipe, and every instrument connected. Prober STB=65 ("ready to
-        start probing") is shown separately (see _update_prober_status_label)
-        as an informational, always-yellow line — it never adds to
-        PENDING and never affects whether Full Die / Test Die can start."""
         missing = []
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
         if not (exec2_wm and exec2_wm._last_dies):
@@ -293,7 +232,6 @@ class AtomicaDashboard(tk.Tk):
         else:
             self.ui.status_label.config(text=f"PENDING: {', '.join(missing)}", foreground="red")
 
-        # Log only on a state TRANSITION, not every 2s poll.
         if ready != self._sys_ready_prev:
             if ready:
                 self.ui.exec_panel.log("[SYSTEM] All criteria met. System is READY for a run.")
@@ -304,9 +242,6 @@ class AtomicaDashboard(tk.Tk):
         self._update_prober_status_label()
 
     def _update_prober_status_label(self):
-        """Purely informational prober-STB display (sidebar, under SYSTEM
-        READY / PENDING) — always yellow/amber, never red, never factored
-        into readiness or into whether a run can start."""
         lbl = getattr(self.ui, "prober_status_label", None)
         if lbl is None:
             return
@@ -346,14 +281,9 @@ class AtomicaDashboard(tk.Tk):
         self._routing_toggle_btn.pack(side="right", padx=6, pady=2)
         ttk.Button(toolbar, text="⛶ Fit Windows", command=self.cmd_fit_windows).pack(
             side="right", padx=2, pady=2)
-        # Populate the picker once up front so it isn't empty before the
-        # user's first click (postcommand keeps it fresh on every open).
         self.after(200, self._refresh_ata_picker)
 
     def _find_ata_folders(self):
-        """Subfolders of the working directory (Results tab) whose name
-        ends with "ata" (case-insensitive) — auto-detected ATA output
-        folders, newest first."""
         working_dir = self.ui.working_dir_var.get() if hasattr(self, "ui") else ""
         if not working_dir or not os.path.isdir(working_dir):
             return []
@@ -408,8 +338,6 @@ class AtomicaDashboard(tk.Tk):
         self.check_system_ready()
 
     def cmd_import_map(self):
-        """Manual browse — backup for the toolbar's ATA Folder auto-detect
-        picker (lives on the ATA Folder tab)."""
         initial = self.ui.working_dir_var.get() if hasattr(self, "ui") else None
         folder = filedialog.askdirectory(
             title="Select ATA Output Folder",
@@ -419,8 +347,6 @@ class AtomicaDashboard(tk.Tk):
         self._do_load_ata_folder(folder)
 
     def cmd_refresh_ata(self):
-        """Re-sync all tabs (map, pads, wiring, alignment, recipes) with the
-        loaded ATA folder — picks up files added or changed on disk."""
         folder = self.ui._ata_folder
         if not folder:
             self.log("[SYSTEM] No ATA folder loaded — pick one from the "
@@ -480,11 +406,6 @@ class AtomicaDashboard(tk.Tk):
         fieldnames = ["timestamp", "recipe", "die", "step", "type", "mode", "value", "unit"]
         try:
             with open(filepath, mode='w', newline='') as file:
-                # extrasaction="ignore": results_data rows carry extra
-                # die_id/switch/set_voltage/voltage keys for Test PMA runs
-                # (see Export SQL (LaMP Format)) that this general CSV
-                # export doesn't include — DictWriter otherwise raises on
-                # unlisted keys.
                 writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
                 writer.writerows(self.results_data)
@@ -495,20 +416,6 @@ class AtomicaDashboard(tk.Tk):
             self.ui.exec_panel.log(f"[ERROR] Failed to save CSV file: {e}")
 
     def cmd_export_sql(self):
-        """💾 Export — write results_data per the format currently picked on
-        the Results tab's dropdown (see export_formats.py). Two format
-        "type"s exist:
-
-          - "sql" (e.g. the shipped LaMP layout) — one INSERT INTO
-            statement per eligible reading.
-          - "csv" (e.g. the shipped MAD-X resistance layout) — one CSV row
-            per die touchdown, built by grouping that touchdown's readings
-            back together (current, voltage, resistance, ...).
-
-        Every format's column list, table/file-base name, and per-column
-        value source is data (ata_export_formats.json in the ATA folder),
-        not code; pick a different one, or ➕ New Format… to define
-        another SQL table layout."""
         export_dir = self.ui.export_path_var.get()
         current_lot = self.ui.lot_id.get()
         if not os.path.exists(export_dir):
@@ -564,7 +471,6 @@ class AtomicaDashboard(tk.Tk):
         self.ui.exec_panel.log("[ALIGN] Alignment locked by operator.")
 
     def cmd_buzzer_clear(self):
-        """E then es — read the pending error code, clear the alarm buzzer."""
         drv = self.drivers.get("prober")
         if not (drv and drv.inst):
             self.log("[BUZZER] Prober not connected.")

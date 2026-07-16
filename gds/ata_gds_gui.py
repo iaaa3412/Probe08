@@ -1,16 +1,3 @@
-"""
-ATA GDSII GUI Parser
---------------------
-Desktop GUI for Phase 1 of the Atomica Test Automation project.
-
-Features:
-- Open a GDS/GDSII file from the File menu or button.
-- Select the top/device cell from a dropdown.
-- Display parsed cells, layers, labels, references, and pad candidates.
-- Plot a first-pass device layout preview.
-- Plot a first-pass wafer map preview.
-- Export ATA-ready CSV/JSON files.
-"""
 
 from __future__ import annotations
 
@@ -28,8 +15,6 @@ import matplotlib
 try:
     matplotlib.use("TkAgg")
 except ImportError:
-    # A normal Windows desktop Python install can use TkAgg.
-    # This fallback only helps automated/headless syntax checks.
     pass
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
@@ -270,7 +255,6 @@ class AtaGdsGui(tk.Tk):
             lib = read_gds_library(self.gds_path)
             self.library = lib
             metadata, metadata_path = discover_layout_metadata(self.gds_path)
-            # First parse to get top-cell list and apply any sidecar metadata.
             data = collect_records(
                 lib,
                 alignment_mark_names=self.alignment_mark_names_var.get(),
@@ -321,7 +305,6 @@ class AtaGdsGui(tk.Tk):
 
     def _after_parse(self, data: Dict[str, Any]) -> None:
         self.data = data
-        # If die pitch entries are blank, fill from selected cell bounding box.
         pitch_x, pitch_y = default_die_pitch_from_summary(data)
         if not self.die_pitch_x_var.get().strip() and pitch_x > 0:
             self.die_pitch_x_var.set(f"{pitch_x:.3f}")
@@ -452,7 +435,6 @@ class AtaGdsGui(tk.Tk):
         pads = self.data.get("pads", [])
         alignment_marks = self.data.get("alignment_marks", [])
 
-        # Draw direct polygons by bounding box. This keeps preview fast for large files.
         drawn = 0
         for poly in polygons[:10000]:
             try:
@@ -467,7 +449,6 @@ class AtaGdsGui(tk.Tk):
             except Exception:
                 continue
 
-        # Draw references as larger dashed boxes if the selected cell is mostly hierarchical.
         for ref in refs[:2000]:
             try:
                 x = float(ref.get("bbox_min_x_um", ref.get("origin_x_um", 0)))
@@ -501,7 +482,6 @@ class AtaGdsGui(tk.Tk):
             except Exception:
                 continue
 
-        # Draw key ATA convention anchors.
         for rec in self.data.get("ata_metadata", [])[:500]:
             if rec.get("record_class") in {"die_origin", "wafer_origin", "reticle_origin", "device", "test_structure", "probe_site", "nanoz_channel"}:
                 try:

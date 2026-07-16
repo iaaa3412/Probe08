@@ -1,41 +1,3 @@
-"""Results tab data export — format DEFINITIONS (table/column list + where
-each column's value comes from) are data, not code, so the LaMP SQL layout
-is just one example rather than the only option. Definitions are persisted
-per-project as ATA_EXPORT_FORMATS_FILENAME in the ATA folder (see
-load_formats/save_formats/add_format) and picked from a dropdown on the
-Results tab (see instrument_panel.py's _tab_results).
-
-Two format "type"s are supported:
-
-  - "sql" (default, e.g. LAMP_FORMAT) — one INSERT INTO statement per
-    eligible results_data row (see rows_for_format/build_insert_statements).
-    This is what the ➕ New Format… dialog builds.
-
-  - "csv" (e.g. MADX_FORMAT) — one CSV row per die touchdown, built by
-    grouping all the readings recorded during that touchdown (current,
-    voltage, resistance, ...) back into a single row (see
-    group_results_by_die/build_csv_rows). Not (yet) buildable from the ➕
-    New Format… dialog — ship additional ones as code, the same way
-    MADX_FORMAT is shipped alongside LAMP_FORMAT.
-
-A "sql"-type format definition is a plain dict:
-    {
-        "name": "LaMP Electrical (tblLampElectricalMeasurements)",
-        "table": "tblLampElectricalMeasurements",
-        "requires_die_id": True,   # only rows from a Test PMA run are eligible
-        "columns": [
-            {"field": "fldTestSerial", "source": "test_serial", "quote": False},
-            {"field": "fldDieID",      "source": "die_id",      "quote": True},
-            ...
-        ],
-    }
-
-`source` picks a value per output row — either straight off a
-results_data row dict (see instrument_panel.py's record_result: die_id,
-switch, set_voltage, voltage, value, unit, recipe, die, step, type, mode,
-timestamp, connection, instrument) or a computed extra (test_serial,
-iteration) — see SOURCE_FIELDS/resolve_source.
-"""
 from __future__ import annotations
 
 import json
@@ -45,9 +7,6 @@ from typing import Any, Dict, List, Optional
 
 ATA_EXPORT_FORMATS_FILENAME = "ata_export_formats.json"
 
-# Sources a column can be mapped to when defining a new format — the
-# well-known fields on a results_data row, plus a couple of computed
-# extras that only make sense for a PMA-linked export.
 SOURCE_FIELDS = {
     "die_id":      "Shot device-ID string (e.g. 94-60/94-50/94-61/94-51) — Test PMA only",
     "switch":      "Which of the shot's co-touched dies (1-4) — Test PMA only",
@@ -65,8 +24,6 @@ SOURCE_FIELDS = {
     "iteration":   "Always 1 (one row per die's final averaged reading)",
 }
 
-# Shipped as the default/example format — seeded into a fresh ATA folder's
-# format file so there's always at least one usable format to pick.
 LAMP_FORMAT: Dict[str, Any] = {
     "name": "LaMP Electrical (tblLampElectricalMeasurements)",
     "table": "tblLampElectricalMeasurements",
@@ -83,12 +40,6 @@ LAMP_FORMAT: Dict[str, Any] = {
     ],
 }
 
-# A second shipped example — a plain CSV (not SQL) layout, matching a
-# legacy MAD-X-lot resistance-test export:
-#   LotID,WaferID,ChipID,Row,Column,Connection,Voltage,Current,Resistance,
-#   Voltage_DMM,Compliance,Time_Stamp
-# One row per die touchdown rather than one row per reading — see
-# group_results_by_die/build_csv_rows.
 MADX_FORMAT: Dict[str, Any] = {
     "name": "MAD-X Resistance CSV (LotID/WaferID/ChipID...)",
     "table": "madx_resistance",
@@ -112,21 +63,11 @@ MADX_FORMAT: Dict[str, Any] = {
 
 
 def compute_test_serial(lot_id: str, wafer_id: str) -> int:
-    """No original schema was available to confirm the real numbering
-    scheme, so for now this is Lot ID + Wafer ID's digits concatenated
-    into one number (same identifiers the CSV export's filename already
-    uses), constant across the whole export rather than incrementing per
-    row."""
     digits = "".join(ch for ch in f"{lot_id}{wafer_id}" if ch.isdigit())
     return int(digits) if digits else 0
 
 
 def sql_num(value, default: float = 0.0) -> str:
-    """A value formatted as a bare SQL numeric literal: whole numbers with
-    no decimal point (10, not 10.0 — matches the legacy example),
-    fractional values in full decimal notation up to 15 places with
-    trailing zeros trimmed (never scientific notation — SQL literal
-    parsing doesn't want "1.57e-09")."""
     try:
         f = float(value)
     except (TypeError, ValueError):
@@ -138,16 +79,10 @@ def sql_num(value, default: float = 0.0) -> str:
 
 
 def sql_string(value) -> str:
-    """A value formatted as a quoted SQL string literal, embedded single
-    quotes doubled (the standard SQL escape)."""
     return "'" + str(value).replace("'", "''") + "'"
 
 
 def load_formats(folder: str) -> List[Dict[str, Any]]:
-    """Read ATA_EXPORT_FORMATS_FILENAME from folder, seeding it with the
-    built-in LaMP + MAD-X formats if it doesn't exist yet (or is
-    empty/corrupt) so a fresh ATA folder always has usable formats. Never
-    returns an empty list; never raises."""
     path = os.path.join(folder, ATA_EXPORT_FORMATS_FILENAME)
     if os.path.exists(path):
         try:
@@ -170,8 +105,6 @@ def save_formats(folder: str, formats: List[Dict[str, Any]]):
 
 
 def add_format(folder: str, fmt: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Append a new format definition (replacing any existing one with the
-    same name) and persist. Returns the updated list."""
     formats = [f for f in load_formats(folder) if f["name"] != fmt["name"]]
     formats.append(fmt)
     save_formats(folder, formats)
@@ -199,9 +132,6 @@ def rows_for_format(fmt: Dict[str, Any],
 
 def build_insert_statements(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
                             lot_id: str, wafer_id: str) -> List[str]:
-    """One "INSERT INTO <table> (...) VALUES (...)" line per eligible row
-    in results_data (see rows_for_format), per the given format
-    definition's column list."""
     rows = rows_for_format(fmt, results_data)
     context = {"test_serial": compute_test_serial(lot_id, wafer_id)}
     cols = fmt["columns"]
@@ -216,21 +146,11 @@ def build_insert_statements(fmt: Dict[str, Any], results_data: List[Dict[str, An
     return out
 
 
-# ── "csv"-type formats — one row per die touchdown ─────────────────────────
-#
-# A results_data row is one reading (one record_result() call); a single
-# die touchdown runs several steps and so produces several readings (a
-# current, maybe a resistance, maybe a DMM voltage...) all sharing the same
-# `die` label. A "csv"-type format wants one output row per touchdown, so
-# these readings need to be grouped back together first.
 
 _DIE_RC_RE = re.compile(r"R(\d+)C(\d+)")
 
 
 def _parse_die_rc(die_label: str):
-    """"R{row}C{col}  (X.. Y..)" (the die_label the Run tab uses for every
-    Accretech-sourced touchdown — see instrument_panel.py) -> (row, col)
-    ints, or (None, None) if it doesn't match (e.g. a GDS-sourced label)."""
     m = _DIE_RC_RE.search(die_label or "")
     if not m:
         return None, None
@@ -238,8 +158,6 @@ def _parse_die_rc(die_label: str):
 
 
 def _col_letter(col: int) -> str:
-    """0-based column index -> spreadsheet-style letter (0->A, 8->I,
-    25->Z, 26->AA), matching the legacy MAD-X ChipID scheme."""
     n = col + 1
     letters = ""
     while n > 0:
@@ -249,12 +167,6 @@ def _col_letter(col: int) -> str:
 
 
 def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Group flat results_data rows into one entry per die touchdown (all
-    readings sharing the same `die` label), in first-seen order. Returns a
-    context dict per touchdown with the fields a "csv"-type format's
-    columns can reference (see MADX_FORMAT): die, chip_id, row_num,
-    column_letter, connection, current, voltage, resistance, voltage_dmm,
-    compliance, time_stamp."""
     order: List[str] = []
     rows_by_die: Dict[str, List[Dict[str, Any]]] = {}
     for r in results_data:
@@ -305,7 +217,7 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
             "voltage": voltage_val,
             "resistance": resistance_val,
             "voltage_dmm": dmm_voltage_row.get("value") if dmm_voltage_row else "",
-            "compliance": "FALSE",   # not measured/tracked yet — always False for now
+            "compliance": "FALSE",
             "time_stamp": rows[0].get("timestamp", "") if rows else "",
         })
     return out
@@ -313,9 +225,6 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
 
 def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
                    lot_id: str, wafer_id: str) -> List[Dict[str, Any]]:
-    """One dict per die touchdown that actually measured something (see
-    group_results_by_die), keyed by the format's field names — ready for
-    csv.DictWriter."""
     context = {"lot_id": lot_id, "wafer_id": wafer_id}
     out = []
     for g in group_results_by_die(results_data):
@@ -327,9 +236,6 @@ def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
 
 
 def has_data_for_format(fmt: Dict[str, Any], results_data: List[Dict[str, Any]]) -> bool:
-    """Whether an export of this format would produce at least one row —
-    used to give a clear "nothing to export yet" error instead of writing
-    an empty file."""
     if fmt.get("type") == "csv":
         return any(g["current"] or g["resistance"]
                   for g in group_results_by_die(results_data))

@@ -1,41 +1,3 @@
-"""Cassette Panel — cassette-level wafer load/unload workflow testing.
-
-This is a TESTING tool for the cassette-automation command sequence, kept
-deliberately separate from the Run tab's Full Die / Test Die die-walk
-engine (which uses the G/Z/D/J commands and their own, DIFFERENT STB
-meanings — see instruments/accretech_uf200r.py's cassette-workflow
-section for why the two are never mixed). It exercises exactly the
-commands and lets the operator validate them against real hardware
-before this workflow is wired into production test flow. Real per-die
-measurement (SMU/DMM) is NOT implemented here yet — each die just logs a
-placeholder "measured" row (timestamp/lot/wafer/die) to the results table
-and, optionally, a CSV — swap in real instrument calls where noted once
-this is ready to become the production path.
-
-The end-to-end workflow (operator + prober + this GUI):
-
-  1. Operator setup (outside this GUI): loads the cassette and presses
-     NEW CST on the prober's touchscreen per EOI §8.4.1-8.4.10. The
-     prober pulls Wafer #1, aligns it, and drives the chuck up so the
-     needles touch Die #1.
-  2. Handover: the instant the needles touch Die #1, the prober
-     broadcasts STB=65. Enter Lot ID + starting Wafer #, click "Go" —
-     this GUI polls for STB=65, and once seen, locks its controls and
-     starts the wafer loop.
-  3. Wafer loop (repeats for every die): run the (placeholder)
-     measurement, send J (Next Die), poll ignoring STB=100 (Moving)
-     until STB=66 (Next Die Arrived) — log and repeat.
-  4. Cassette swap: J eventually returns STB=67 (End of Wafer Map,
-     chuck didn't move) instead of 66. This GUI sends U (Unload and
-     Load Next Wafer); the prober racks the finished wafer, pulls the
-     next one, aligns it, and touches Die #1 — another STB=65 — and the
-     GUI drops back into the wafer loop for the new wafer.
-  5. Lot end: after the last wafer's U, the prober empties the cassette
-     and goes idle (STB=0, "DONE !!" on the touchscreen) instead of
-     sending 65. This GUI detects that (or simply times out waiting for
-     65), closes out the CSV, and reports "Lot Complete." The operator
-     then removes the finished cassette per EOI §8.4.14-8.4.19.
-"""
 from __future__ import annotations
 
 import csv
@@ -52,7 +14,7 @@ class CassettePanel(ttk.Frame):
         self.controller = controller
         self._running = False
         self._abort = False
-        self._results: list = []   # placeholder per-die log rows (dicts)
+        self._results: list = []
 
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -61,7 +23,6 @@ class CassettePanel(ttk.Frame):
         self._build_manual()
         self._build_progress()
 
-    # ── UI construction ───────────────────────────────────────────────────
 
     def _build_topbar(self):
         bar = ttk.Frame(self, padding=(6, 4))
@@ -143,7 +104,6 @@ class CassettePanel(ttk.Frame):
         tsb.grid(row=2, column=1, sticky="ns")
         self._tree.configure(yscrollcommand=tsb.set)
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _log(self, msg: str):
         self.controller.log(msg)
@@ -170,7 +130,6 @@ class CassettePanel(ttk.Frame):
         drv = self.controller.drivers.get("prober")
         return drv if (drv and drv.inst) else None
 
-    # ── Manual single-command tests ─────────────────────────────────────────
 
     def _manual_wait_ready(self):
         drv = self._drv()
@@ -226,7 +185,6 @@ class CassettePanel(ttk.Frame):
             self._log(f"[CASSETTE] STB={stb}  {desc}")
         threading.Thread(target=_run, daemon=True).start()
 
-    # ── Full lot run ─────────────────────────────────────────────────────────
 
     def _start_lot(self):
         if self._running:
@@ -277,7 +235,7 @@ class CassettePanel(ttk.Frame):
                 self._log(f"[CASSETTE] Waiting for STB=65 (Wafer #{wafer_num} ready)...")
                 if sim:
                     time.sleep(0.2)
-                    ready = wafer_num <= 3   # bounded simulated lot (3 wafers)
+                    ready = wafer_num <= 3
                 else:
                     ready = drv.cassette_wait_for_wafer_ready(timeout_s=60) == 65
                 if not ready:
@@ -292,15 +250,13 @@ class CassettePanel(ttk.Frame):
                 die_num = 1
                 while not self._abort:
                     self.after(0, lambda d=die_num: self._die_count_var.set(f"Die: {d}"))
-                    # Placeholder measurement — swap in real recipe/SMU/DMM
-                    # execution here once this workflow goes into production.
                     self._log(f"[CASSETTE] Die #{die_num}: running measurements "
                              "(placeholder)...")
                     self._record(wafer_num, die_num, "measured (placeholder)")
 
                     if sim:
                         time.sleep(0.05)
-                        stb = 67 if die_num >= 5 else 66   # bounded simulated wafer
+                        stb = 67 if die_num >= 5 else 66
                     else:
                         self._log("[CASSETTE] >> J  (Next Die)")
                         stb = drv.cassette_next_die(timeout_s=60)
@@ -325,7 +281,7 @@ class CassettePanel(ttk.Frame):
                 self._log("[CASSETTE] >> U  (Unload / Load Next Wafer)")
                 if sim:
                     time.sleep(0.1)
-                    next_ready = wafer_num < 3   # bounded simulated lot
+                    next_ready = wafer_num < 3
                 else:
                     next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 65
                 if next_ready:

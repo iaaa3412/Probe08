@@ -1,20 +1,6 @@
-"""Probe Routing Panel — semantic view of the 707B switch matrix wiring.
-
-Row-to-instrument assignment (user-defined physical wiring):
-  A → SMU ChA HI      B → SMU ChA LO/GND
-  C → SMU ChB HI      D → SMU ChB LO/GND
-  E → DMM LO          F → DMM HI
-  G → Wave CH1 Out    H → Wave CH2 Out
-
-Probe-to-slot assignment:
-  Probes  1–12  → Slot 2, card columns 1–12
-  Probes 13–24  → Slot 4, card columns 1–12
-"""
 import tkinter as tk
 from tkinter import ttk
 
-# ── Instrument row definitions ────────────────────────────────────────────────
-# (row_letter, display_label, label_colour)
 _ROW_MAP = [
     ("A", "SMU A HI",  "#60a5fa"),
     ("B", "SMU A LO",  "#93c5fd"),
@@ -30,23 +16,20 @@ _N_PROBES = 24
 
 
 def _probe_slot_col(probe: int):
-    """Return (slot_str, card_col) for a 1-indexed probe wire."""
     if probe <= 12:
         return ("2", probe)
     return ("4", probe - 12)
 
 
-# ── Canvas geometry ───────────────────────────────────────────────────────────
-_LBL_W    = 88    # pixels reserved for instrument-name label on the left
-_DOT_R    = 8     # dot radius
-_DOT_STEP = 22    # centre-to-centre spacing
-_GAP      = 14    # extra gap between the two slot groups
-_HDR_H    = 38    # header area height (slot labels + probe numbers)
+_LBL_W    = 88
+_DOT_R    = 8
+_DOT_STEP = 22
+_GAP      = 14
+_HDR_H    = 38
 
 _CANVAS_W = _LBL_W + _N_PROBES * _DOT_STEP + _GAP + _DOT_R * 2 + 8
 _CANVAS_H = _HDR_H + len(_ROW_MAP) * _DOT_STEP + 8
 
-# ── Colours ───────────────────────────────────────────────────────────────────
 _C_OPEN      = "#6b7566"
 _C_CLOSED    = "#22c55e"
 _C_HL_OPEN   = "#9ba89a"
@@ -54,23 +37,15 @@ _C_HL_CLOSED = "#86efac"
 
 
 def _cx(probe: int) -> int:
-    """Canvas x-centre for probe column (1-indexed)."""
     extra = _GAP if probe > 12 else 0
     return _LBL_W + (probe - 1) * _DOT_STEP + _DOT_R + extra
 
 
 def _cy(row_idx: int) -> int:
-    """Canvas y-centre for instrument row (0-indexed)."""
     return _HDR_H + row_idx * _DOT_STEP + _DOT_R
 
 
 def scrollable_routing(parent, controller):
-    """ProbeRoutingPanel inside a scrollable container.
-
-    The matrix canvas has a fixed pixel size, so hosts narrower/shorter than
-    the panel get scrollbars; when the host is wider, the panel stretches so
-    the side terminal fills the leftover width. Returns (holder, panel).
-    """
     holder = ttk.Frame(parent)
     holder.rowconfigure(0, weight=1)
     holder.columnconfigure(0, weight=1)
@@ -100,9 +75,7 @@ class ProbeRoutingPanel(ttk.Frame):
         super().__init__(parent)
         self.controller = controller
 
-        # (slot, row_letter, card_col) → bool
         self._state: dict = {}
-        # (slot, row_letter, card_col) → (body_canvas_id, highlight_canvas_id)
         self._dot_ids: dict = {}
 
         self._scpi_history: list = []
@@ -112,12 +85,9 @@ class ProbeRoutingPanel(ttk.Frame):
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
 
-        # Compact SCPI/TSP terminal lives inline in the topbar, next to
-        # Read State — see _build_topbar.
         self._build_topbar()
         self._build_matrix()
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _drv(self):
         drv = self.controller.drivers.get("switch")
@@ -126,7 +96,6 @@ class ProbeRoutingPanel(ttk.Frame):
     def _log(self, msg: str):
         self.controller.log(msg)
 
-    # ── Top bar ───────────────────────────────────────────────────────────────
 
     def _build_topbar(self):
         bar = tk.Frame(self, bg="#c8c8c8", relief="flat")
@@ -151,7 +120,6 @@ class ProbeRoutingPanel(ttk.Frame):
             command=self._read_all,
         ).grid(row=1, column=1, sticky="w", padx=(4, 8), pady=(2, 6))
 
-        # ── Compact SCPI/TSP terminal (single line — see _scpi_send) ───────
         ttk.Separator(bar, orient="vertical").grid(
             row=1, column=2, sticky="ns", padx=4, pady=(2, 6))
         tk.Label(bar, text="SCPI/TSP:", bg="#c8c8c8", fg="#374151",
@@ -174,7 +142,6 @@ class ProbeRoutingPanel(ttk.Frame):
                  anchor="w").grid(
                  row=1, column=6, sticky="ew", padx=(2, 4), pady=(2, 6))
 
-    # ── Routing matrix ────────────────────────────────────────────────────────
 
     def _build_matrix(self):
         outer = tk.Frame(self, bg="#b8b8b8", relief="groove", bd=2)
@@ -185,7 +152,6 @@ class ProbeRoutingPanel(ttk.Frame):
         c.pack(padx=8, pady=8)
         self._canvas = c
 
-        # ── Column header: slot group labels ──────────────────────────────
         cx_s2_mid = (_cx(1) + _cx(12)) // 2
         cx_s4_mid = (_cx(13) + _cx(24)) // 2
         c.create_text(cx_s2_mid, 6, text="Slot 2  (Probes 1–12)",
@@ -193,17 +159,14 @@ class ProbeRoutingPanel(ttk.Frame):
         c.create_text(cx_s4_mid, 6, text="Slot 4  (Probes 13–24)",
                       fill="#1f2937", font=("Segoe UI", 7, "bold"), anchor="n")
 
-        # ── Column header: probe numbers ──────────────────────────────────
         for p in range(1, _N_PROBES + 1):
             c.create_text(_cx(p), 22, text=str(p),
                           fill="#374151", font=("Courier", 7), anchor="n")
 
-        # ── Slot separator line ───────────────────────────────────────────
         sep_x = (_cx(12) + _cx(13)) // 2
         c.create_line(sep_x, 0, sep_x, _CANVAS_H,
                       fill="#6b7280", width=1, dash=(4, 3))
 
-        # ── Row labels and dots ───────────────────────────────────────────
         for ri, (row_letter, label, color) in enumerate(_ROW_MAP):
             cy = _cy(ri)
             c.create_text(_LBL_W - 4, cy,
@@ -255,7 +218,6 @@ class ProbeRoutingPanel(ttk.Frame):
         if not (0 <= ri < len(_ROW_MAP)):
             return
 
-        # Find nearest probe column within hit radius
         probe = None
         for p in range(1, _N_PROBES + 1):
             if abs(x - _cx(p)) <= _DOT_R + 2:
@@ -282,7 +244,6 @@ class ProbeRoutingPanel(ttk.Frame):
             self._log(f"[SW] close {ch}  (probe {probe})")
         self._refresh_dot(slot, row_letter, card_col)
 
-    # ── Hardware actions ──────────────────────────────────────────────────────
 
     def _open_all(self):
         drv = self._drv()
@@ -291,8 +252,6 @@ class ProbeRoutingPanel(ttk.Frame):
         self.mark_all_open()
         self._log("[SW] All channels open")
 
-    # ── Live visual sync (no hardware I/O) — called from a running recipe
-    #    so this matrix mirrors the actual closures as they happen ───────────
 
     @staticmethod
     def _parse_channel(ch: str):
@@ -302,8 +261,6 @@ class ProbeRoutingPanel(ttk.Frame):
         return None, None, None
 
     def mark_closed(self, ch: str):
-        """Reflect a channel the run loop just closed — visual only, no
-        driver call (the caller already did that)."""
         slot, row, col = self._parse_channel(ch)
         if slot is None:
             return
@@ -326,8 +283,6 @@ class ProbeRoutingPanel(ttk.Frame):
                 self._refresh_dot(slot, row_letter, card_col)
 
     def read_state(self):
-        """Poll the real 707B state and resync every dot — the periodic
-        accuracy check the run loop calls every few dies."""
         self._read_all()
 
     def _read_all(self):
@@ -361,8 +316,6 @@ class ProbeRoutingPanel(ttk.Frame):
             except Exception as e:
                 self._log(f"[SW] Read error slot {slot_str}: {e}")
 
-    # ── SCPI / TSP terminal (compact — single response label, full history
-    #    goes to the main execution log via self._log) ──────────────────────
 
     def _scpi_send(self):
         cmd = self._scpi_entry.get().strip()

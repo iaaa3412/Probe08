@@ -22,12 +22,6 @@ from engineering_units import parse_engineering, format_engineering
 
 
 def _parse_q_response(raw: str):
-    """Parse Accretech Q command response into (x_die, y_die).
-
-    Manual §4.24: response is  Q Y<3 chars> X<3 chars>  — die map coordinates
-    (-99…511), Y before X, values below -99 clip to -99. Only meaningful
-    during probing (response is indefinite otherwise).
-    """
     import re
     raw = (raw or "").strip()
     m = re.search(r'Y\s*([+-]?\d+)\s*X\s*([+-]?\d+)', raw)
@@ -35,16 +29,11 @@ def _parse_q_response(raw: str):
         return float(m.group(2)), float(m.group(1))
     parts = re.findall(r'[+-]?\d+\.?\d*', raw)
     if len(parts) >= 2:
-        return float(parts[1]), float(parts[0])  # Y comes first on the wire
+        return float(parts[1]), float(parts[0])
     raise ValueError(f"Cannot parse Q response: {raw!r}")
 
 
 def _compute_alignment_transform(expected, measured):
-    """Return (dx, dy, theta_deg) from paired expected/measured mark positions.
-
-    dx, dy   — centroid translation offset (µm)
-    theta    — rotation angle in degrees (positive = CCW)
-    """
     import math
     cx_e = sum(p[0] for p in expected) / len(expected)
     cy_e = sum(p[1] for p in expected) / len(expected)
@@ -81,11 +70,7 @@ class AlignmentPanel(ttk.LabelFrame):
             self._draw_grid()
             self.canvas.create_text(100, 100, text="NO SIGNAL", fill="red")
 
-    # ------------------------------------------------------------------
-    # Load marks from ATA folder
-    # ------------------------------------------------------------------
     def load_from_ata(self, folder_path):
-        """Read alignment CSV and draw marks. Returns list of mark dicts."""
         import csv
         marks = []
         for fname in ("ata_alignment_marks.csv", "alignment_marks.csv"):
@@ -167,9 +152,6 @@ class AlignmentPanel(ttk.LabelFrame):
         self.canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill=color, outline="")
         self.canvas.create_text(cx + arm + 4, cy, text=label, fill=color, anchor="w", font=("Arial", 8))
 
-    # ------------------------------------------------------------------
-    # Confirm alignment locked
-    # ------------------------------------------------------------------
     def lock_alignment(self):
         self.canvas.delete("all")
         self._draw_grid()
@@ -182,11 +164,7 @@ class AlignmentPanel(ttk.LabelFrame):
         self.canvas.create_oval(w/2 - 4, h/2 - 4, w/2 + 4, h/2 + 4, fill="lime", outline="")
         self.canvas.create_text(w/2, h/2 + 50, text="✓  LOCKED", fill="lime", font=("Arial", 10, "bold"))
 
-    # ------------------------------------------------------------------
-    # Handshake helpers
-    # ------------------------------------------------------------------
     def highlight_mark(self, index: int):
-        """Redraw marks then highlight the one at `index` (0-based) in white."""
         marks = self._last_marks
         if not marks or index >= len(marks):
             return
@@ -226,7 +204,6 @@ class AlignmentPanel(ttk.LabelFrame):
         self.update_idletasks()
 
     def show_alignment_result(self, dx, dy, theta_deg):
-        """Overlay the computed transform on the canvas."""
         self.update_idletasks()
         W = self.canvas.winfo_width() or 300
         H = self.canvas.winfo_height() or 300
@@ -246,20 +223,11 @@ class MainLayout(ttk.Frame):
         super().__init__(parent)
         self.controller = controller
         self.export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser('~'), 'Downloads'))
-        # Parent folder the toolbar's ATA picker scans for subfolders whose
-        # name ends with "ata" (case-insensitive) — see app.py's
-        # _find_ata_folders/_refresh_ata_picker.
         self.working_dir_var = tk.StringVar(value="C:/automationproject")
         self.lot_id = tk.StringVar()
-        # Auto-filled from the ATA folder name on load (see
-        # AtomicaDashboard._do_load_ata_folder); editable afterwards.
         self.wafer_id_var = tk.StringVar()
         self.status_labels = {}
         self._ata_folder = None
-        # Custom Pad to Probe layout (reference_pad_layout.csv) is only
-        # read from disk once per ATA folder load -- see
-        # _on_pad_source_change -- so toggling ATA<->Custom mid-session
-        # doesn't clobber unsaved edits with the last-saved file.
         self._pad_custom_loaded = False
         self._smu_output_lf: dict = {}
         self._wg_output_lf: dict = {}
@@ -278,11 +246,7 @@ class MainLayout(ttk.Frame):
         self._build_sidebar(paned)
         self._build_notebook(paned)
 
-    # ------------------------------------------------------------------
-    # Sidebar (always visible)
-    # ------------------------------------------------------------------
     def _build_sidebar(self, paned):
-        # Initial width only — the pane sash makes it freely resizable
         sidebar = ttk.Frame(paned, width=280, relief="sunken", padding=5)
         paned.add(sidebar, weight=0)
         sidebar.pack_propagate(False)
@@ -293,9 +257,6 @@ class MainLayout(ttk.Frame):
         )
         self.status_label.pack(anchor="w", pady=(0, 4))
 
-        # Informational only — never gates SYSTEM READY / PENDING and never
-        # affects whether Full Die / Test Die can start (see
-        # AtomicaDashboard._poll_prober_ready / check_system_ready).
         self.prober_status_label = ttk.Label(
             sidebar, text="Prober: —", foreground="orange",
             font=("Arial", 9)
@@ -313,9 +274,6 @@ class MainLayout(ttk.Frame):
             command=self.controller.init_hardware
         ).pack(pady=(8, 4), padx=4, fill="x")
 
-        # Statistics widgets kept but NOT packed — the controller's
-        # update_statistics_visuals still writes them; visible statistics
-        # live on the Results tab.
         self.lbl_progress = ttk.Label(sidebar, text="No wafer loaded")
         self.sidebar_canvas = tk.Canvas(
             sidebar, width=110, height=110, bg="#f0f0f0", highlightthickness=0
@@ -324,8 +282,6 @@ class MainLayout(ttk.Frame):
             sidebar, text="Pass: 0  |  Fail: 0\nUntested: 0", justify="center"
         )
 
-        # ── Execution log (swapped here from the bottom strip; the probe
-        #    routing matrix now lives at the bottom of the main window) ─────
         log_frame = ttk.LabelFrame(sidebar, text="Execution Log")
         log_frame.pack(fill="both", expand=True, pady=4)
         self.log_text = tk.Text(
@@ -338,12 +294,8 @@ class MainLayout(ttk.Frame):
         log_sb.pack(side="right", fill="y", pady=2)
         self.log_text.pack(fill="both", expand=True, padx=(2, 0), pady=2)
 
-    # ------------------------------------------------------------------
-    # Main notebook
-    # ------------------------------------------------------------------
     @staticmethod
     def _enable_tab_drag(nb: ttk.Notebook):
-        """Allow tabs to be reordered by dragging."""
         state = {}
 
         def on_press(event):
@@ -370,7 +322,6 @@ class MainLayout(ttk.Frame):
         top_nb = ttk.Notebook(paned)
         paned.add(top_nb, weight=1)
 
-        # ── Main tab ─────────────────────────────────────────────────────
         main_frame = ttk.Frame(top_nb)
         top_nb.add(main_frame, text="  Main  ")
         main_nb = ttk.Notebook(main_frame)
@@ -386,7 +337,6 @@ class MainLayout(ttk.Frame):
         self._tab_accr_wafer(main_nb)
         self._tab_pma_wafer(main_nb)
 
-        # ── Debug tab ─────────────────────────────────────────────────────
         debug_frame = ttk.Frame(top_nb)
         top_nb.add(debug_frame, text="  Debug  ")
         debug_nb = ttk.Notebook(debug_frame)
@@ -402,11 +352,6 @@ class MainLayout(ttk.Frame):
         self._tab_cassette(debug_nb)
         self._tab_alignment(debug_nb)
 
-        # ── NanoZ tab — alternate measurement setup (6x serial EK-IV eval
-        #    boards instead of the Keithley/Keysight GPIB instruments the
-        #    tabs above drive). Self-contained: see gui/nanoz_panel.py.
-        #    Shares the prober connection (controller.drivers["prober"])
-        #    but touches nothing else belonging to Main/Debug. ─────────────
         nanoz_frame = ttk.Frame(top_nb)
         top_nb.add(nanoz_frame, text="  NanoZ  ")
         self.nanoz_panel = NanoZPanel(nanoz_frame, controller=self.controller, main_layout=self)
@@ -418,7 +363,6 @@ class MainLayout(ttk.Frame):
         tab.rowconfigure(2, weight=1)
         tab.columnconfigure(0, weight=1)
 
-        # ── Global reset + query bar (row 0) ──────────────────────────────
         rst = tk.Frame(tab, bg="#7f1d1d")
         rst.grid(row=0, column=0, sticky="ew")
         tk.Button(
@@ -439,7 +383,6 @@ class MainLayout(ttk.Frame):
                 target=self._query_all_status, daemon=True).start(),
         ).pack(side="left", padx=4, pady=4)
 
-        # ── Live status bar (row 1) ───────────────────────────────────────
         sbar = tk.Frame(tab, bg="#0f172a")
         sbar.grid(row=1, column=0, sticky="ew")
         for key, lbl in [("smua", "SMU A"), ("smub", "SMU B"),
@@ -467,9 +410,6 @@ class MainLayout(ttk.Frame):
         self._build_smu_card(smu_pane)
         self._build_wavegen_card(wg_pane)
 
-    # ------------------------------------------------------------------
-    # Instrument card builders
-    # ------------------------------------------------------------------
     def _build_dmm_card(self, parent):
         card = ttk.LabelFrame(parent, text="Keysight 34461A  (DMM)")
         card.pack(fill="both", expand=True, padx=6, pady=6)
@@ -514,7 +454,6 @@ class MainLayout(ttk.Frame):
         for lbl, mode in [("VDC", "VDC"), ("IDC", "IDC"), ("Ω 2W", "R2W"), ("Ω 4W", "R4W")]:
             ttk.Button(btn_row, text=f"Meas {lbl}", command=lambda m=mode: measure(m)).pack(side="left", padx=2, pady=2)
 
-        # All-readings display + Meas All button
         all_lf = ttk.LabelFrame(card, text="All Readings", padding=(6, 4))
         all_lf.pack(fill="x", padx=6, pady=(2, 0))
         all_lf.columnconfigure(1, weight=1)
@@ -558,7 +497,6 @@ class MainLayout(ttk.Frame):
 
         ttk.Separator(card, orient="horizontal").pack(fill="x", padx=6, pady=6)
 
-        # ── DMM configuration ─────────────────────────────────────────────
         cfg_lf = ttk.LabelFrame(card, text="Configuration", padding=(8, 4))
         cfg_lf.pack(fill="x", padx=6, pady=(0, 4))
 
@@ -590,7 +528,6 @@ class MainLayout(ttk.Frame):
                 rng   = dmm_range_var.get().strip()
                 nplc  = float(dmm_nplc_var.get())
                 drv.set_nplc(nplc)
-                # Set range / function via SCPI
                 func_map = {
                     "VDC": ("VOLT:DC", "VOLT:DC:RANG"),
                     "IDC": ("CURR:DC", "CURR:DC:RANG"),
@@ -611,7 +548,6 @@ class MainLayout(ttk.Frame):
         ttk.Button(cfg_lf, text="Apply Configuration",
                    command=_dmm_configure).pack(fill="x", pady=(4, 2))
 
-        # ── Continuous read ───────────────────────────────────────────────
         cont_lf = ttk.LabelFrame(card, text="Continuous Read", padding=(6, 4))
         cont_lf.pack(fill="x", padx=6, pady=(4, 0))
 
@@ -677,13 +613,11 @@ class MainLayout(ttk.Frame):
                   foreground="gray", font=("Consolas", 8)).pack(
                   anchor="w", padx=8, pady=(4, 6))
 
-        # ── Two-channel panel ─────────────────────────────────────────────
         ch_frame = ttk.Frame(card)
         ch_frame.pack(fill="both", expand=True, padx=6)
         ch_frame.columnconfigure(0, weight=1)
         ch_frame.columnconfigure(1, weight=1)
 
-        # Store per-channel last-read values for compliance check
         self._smu_last = {
             "smua": {"I": None, "V": None, "R": None},
             "smub": {"I": None, "V": None, "R": None},
@@ -694,11 +628,9 @@ class MainLayout(ttk.Frame):
 
         ttk.Separator(card, orient="horizontal").pack(fill="x", padx=6, pady=6)
 
-        # ── Compliance thresholds ─────────────────────────────────────────
         comp_lf = ttk.LabelFrame(card, text="Compliance Thresholds", padding=(8, 6))
         comp_lf.pack(fill="x", padx=6, pady=(0, 4))
 
-        # Threshold entries
         thresh_row = ttk.Frame(comp_lf)
         thresh_row.pack(fill="x", pady=(0, 6))
 
@@ -717,7 +649,6 @@ class MainLayout(ttk.Frame):
             ttk.Label(f, text=unit, foreground="gray").pack(side="left")
             self._smu_thr[key] = var
 
-        # Check buttons + result
         btn_row = ttk.Frame(comp_lf)
         btn_row.pack(fill="x")
         self._smu_comp_result = tk.StringVar(value="—")
@@ -738,14 +669,12 @@ class MainLayout(ttk.Frame):
         self._scpi_row(card, "smu")
 
     def _build_smu_channel(self, parent, ch: str, col: int):
-        """Build one channel sub-panel (smua or smub) inside the SMU card."""
         lf = ttk.LabelFrame(parent, text=f"{ch.upper()}  ○ OFF", padding=(8, 6))
         lf.grid(row=0, column=col, sticky="nsew",
                 padx=(0 if col == 0 else 6, 0), pady=0)
         lf.columnconfigure(1, weight=1)
         self._smu_output_lf[ch] = lf
 
-        # Source mode
         src_row = ttk.Frame(lf)
         src_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
         ttk.Label(src_row, text="Source:").pack(side="left")
@@ -755,7 +684,6 @@ class MainLayout(ttk.Frame):
                                 width=8, state="readonly")
         src_cb.pack(side="left", padx=(4, 0))
 
-        # Level
         level_row = ttk.Frame(lf)
         level_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=2)
         ttk.Label(level_row, text="Level:", width=9, anchor="e").pack(side="left")
@@ -765,7 +693,6 @@ class MainLayout(ttk.Frame):
         level_unit = ttk.Label(level_row, text="V", foreground="gray")
         level_unit.pack(side="left")
 
-        # Current / Voltage limit (compliance)
         comp_row = ttk.Frame(lf)
         comp_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=2)
         comp_lbl = ttk.Label(comp_row, text="I Limit:", width=9, anchor="e")
@@ -786,7 +713,6 @@ class MainLayout(ttk.Frame):
                 comp_unit.config(text="V")
         src_var.trace_add("write", _on_src)
 
-        # NPLC
         nplc_row = ttk.Frame(lf)
         nplc_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=2)
         ttk.Label(nplc_row, text="NPLC:", width=9, anchor="e").pack(side="left")
@@ -794,7 +720,6 @@ class MainLayout(ttk.Frame):
         ttk.Entry(nplc_row, textvariable=nplc_var, width=7).pack(side="left", padx=2)
         ttk.Label(nplc_row, text="PLC", foreground="gray").pack(side="left")
 
-        # Output buttons
         out_row = ttk.Frame(lf)
         out_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 2))
         ttk.Button(out_row, text="Set & On",
@@ -805,9 +730,6 @@ class MainLayout(ttk.Frame):
         ttk.Separator(lf, orient="horizontal").grid(
             row=5, column=0, columnspan=2, sticky="ew", pady=6)
 
-        # Readings grid — the value itself carries its own auto-scaled
-        # unit (e.g. "430.000 nA"), so the row label is just the
-        # quantity, not a fixed base unit.
         reading_vars = {}
         for r_idx, (meas, key) in enumerate([
             ("I",  "I"),
@@ -823,7 +745,6 @@ class MainLayout(ttk.Frame):
                       row=6 + r_idx, column=1, sticky="ew", padx=(4, 0))
             reading_vars[key] = var
 
-        # Measure buttons
         meas_row = ttk.Frame(lf)
         meas_row.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 1))
         ttk.Button(meas_row, text="Meas I",
@@ -839,7 +760,6 @@ class MainLayout(ttk.Frame):
                    command=_meas_all).grid(
                    row=10, column=0, columnspan=2, sticky="ew", pady=(1, 0))
 
-        # Continuous read row (command wired up in handlers section below)
         cont_row = ttk.Frame(lf)
         cont_row.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         _cont_iv = tk.StringVar(value="500")
@@ -849,7 +769,6 @@ class MainLayout(ttk.Frame):
         _cont_btn = ttk.Button(cont_row, text="▶ Cont.")
         _cont_btn.pack(side="right", padx=(4, 0))
 
-        # ── Handlers ─────────────────────────────────────────────────────
         def _drv():
             drv = self.controller.drivers.get("smu")
             if not drv or not drv.inst:
@@ -917,7 +836,6 @@ class MainLayout(ttk.Frame):
                 reading_vars[what].set("ERROR")
                 self.controller.log(f"[SMU] {ch} meas_{what} error: {e}")
 
-        # Wire up continuous read toggle (layout created above, needs _meas_all in scope)
         self._smu_cont_active[ch] = False
 
         def _toggle_cont():
@@ -941,7 +859,6 @@ class MainLayout(ttk.Frame):
         _cont_btn.config(command=_toggle_cont)
 
     def _smu_check_compliance(self, which: str):
-        """Compare last-read I/V/R values against the thresholds; update result label."""
         channels = ["smua", "smub"] if which == "both" else [which]
         try:
             i_max = parse_engineering(self._smu_thr["I_max"].get())
@@ -988,19 +905,15 @@ class MainLayout(ttk.Frame):
         self._smu_comp_lbl.config(foreground="#16a34a" if all_pass else "#dc2626")
 
     def _global_reset(self):
-        """Turn off all instrument outputs and open all switch channels."""
         log = self.controller.log
 
-        # Stop all SMU continuous reads
         for ch in list(self._smu_cont_active):
             self._smu_cont_active[ch] = False
 
-        # Stop DMM continuous read
         self._dmm_cont_active = False
         if self._dmm_status_var:
             self._dmm_status_var.set("○ IDLE")
 
-        # SMU: both channels off + set level to 0 V
         drv_smu = self.controller.drivers.get("smu")
         if drv_smu and drv_smu.inst:
             for ch in ("smua", "smub"):
@@ -1023,7 +936,6 @@ class MainLayout(ttk.Frame):
                 if sv:
                     sv.set(f"{ch.upper()}: ○ OFF  0 V")
 
-        # Wave gen: both channels off
         drv_wg = self.controller.drivers.get("wave_gen")
         if drv_wg and drv_wg.inst:
             for ch_num in (1, 2):
@@ -1042,7 +954,6 @@ class MainLayout(ttk.Frame):
                 if sv:
                     sv.set(f"WG CH{ch_num}: ○ OFF")
 
-        # Switch matrix: open all
         drv_sw = self.controller.drivers.get("switch")
         if drv_sw and drv_sw.inst:
             try:
@@ -1054,20 +965,17 @@ class MainLayout(ttk.Frame):
         log("[RESET] Global reset complete")
 
     def _query_all_status(self):
-        """Query actual hardware state for all instruments; update status bar labels."""
         def _sv(key, text):
             v = self._inst_status_vars.get(key)
             if v:
                 v.set(text)
 
-        # ── SMU ──────────────────────────────────────────────────────────
         drv_smu = self.controller.drivers.get("smu")
         if drv_smu and drv_smu.inst:
             for ch in ("smua", "smub"):
                 key = ch
                 try:
                     raw = drv_smu.query(f"print({ch}.source.output)")
-                    # 2636B: 0=OFF, 1=ON, 2=HIGH_Z
                     is_on = str(raw).strip().startswith("1")
                     lf = self._smu_output_lf.get(ch)
                     if is_on:
@@ -1083,7 +991,6 @@ class MainLayout(ttk.Frame):
             for ch in ("smua", "smub"):
                 _sv(ch, f"{ch.upper()}: —")
 
-        # ── Wave Gen ─────────────────────────────────────────────────────
         drv_wg = self.controller.drivers.get("wave_gen")
         if drv_wg and drv_wg.inst:
             for ch_num in (1, 2):
@@ -1105,7 +1012,6 @@ class MainLayout(ttk.Frame):
             for ch_num in (1, 2):
                 _sv(f"wg{ch_num}", f"WG CH{ch_num}: —")
 
-        # ── DMM ──────────────────────────────────────────────────────────
         drv_dmm = self.controller.drivers.get("dmm")
         if drv_dmm and drv_dmm.inst:
             try:
@@ -1117,7 +1023,6 @@ class MainLayout(ttk.Frame):
         else:
             _sv("dmm", "DMM: —")
 
-        # ── Accretech Prober ─────────────────────────────────────────────
         drv_prb = self.controller.drivers.get("prober")
         if drv_prb and drv_prb.inst:
             try:
@@ -1236,7 +1141,6 @@ class MainLayout(ttk.Frame):
         ttk.Button(out_row, text="Output OFF", command=_off).pack(side="left", expand=True, fill="x", padx=(2, 0))
 
     def _scpi_row(self, parent, driver_key):
-        """Manual SCPI command entry + response, appended to any instrument card."""
         cmd_var  = tk.StringVar()
         resp_var = tk.StringVar(value="")
 
@@ -1275,13 +1179,9 @@ class MainLayout(ttk.Frame):
         tab.rowconfigure(1, weight=1)
         tab.columnconfigure(0, weight=1)
 
-        # ── Top control bar ──────────────────────────────────────────
         ctrl = ttk.Frame(tab)
         ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
 
-        # ATA loading normally happens via the toolbar's ATA Folder picker
-        # (auto-detects subfolders of the Results tab's working directory
-        # whose name ends with "ata"); this button is the manual backup.
         ttk.Button(ctrl, text="📁 Load ATA Folder…",
                   command=self.controller.cmd_import_map).pack(side="left", padx=(0, 10))
         self._ata_path_lbl = ttk.Label(ctrl, text="No folder selected", foreground="gray")
@@ -1295,11 +1195,9 @@ class MainLayout(ttk.Frame):
         map_source_cb.pack(side="right")
         map_source_cb.bind("<<ComboboxSelected>>", lambda _e: self._reload_wafer_map_source())
 
-        # ── Split: file list (left) | wafer canvas (right) ───────────
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
         split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        # File list pane
         list_frame = ttk.LabelFrame(split, text="ATA Files", width=240)
         split.add(list_frame, weight=0)
         list_frame.pack_propagate(False)
@@ -1320,28 +1218,18 @@ class MainLayout(ttk.Frame):
         vsb.pack(side="right", fill="y")
         self._ata_tree.pack(fill="both", expand=True)
 
-        # Tag colours
         self._ata_tree.tag_configure("found",   foreground="#006400")
         self._ata_tree.tag_configure("missing", foreground="#999999")
         self._ata_tree.tag_configure("other",   foreground="#333333")
 
-        # Wafer map canvas pane
         self.wafer_map = WaferMapPanel(split)
         split.add(self.wafer_map, weight=1)
 
-    # ------------------------------------------------------------------
-    # Called by controller after the user picks a folder
-    # ------------------------------------------------------------------
     def load_ata_folder(self, folder_path):
-        """Populate the ATA file list, draw the wafer map, and propagate to other tabs."""
         self._ata_folder = folder_path
         self._ata_path_lbl.config(text=folder_path, foreground="black")
-        self._pad_custom_loaded = False   # re-read this folder's own reference_pad_layout.csv next Custom switch
+        self._pad_custom_loaded = False
 
-        # Probe cards first — an ATA folder can define multiple, and a
-        # recipe belongs to exactly one. Loading fires _on_probe_card_change
-        # for the default/previously-active card, which loads THAT card's
-        # recipes — so the folder listing below already reflects them.
         self.pin_wiring.load_from_ata(folder_path)
 
         all_files = {f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))}
@@ -1356,8 +1244,6 @@ class MainLayout(ttk.Frame):
             else:
                 self._ata_tree.insert("", "end", values=("–", fname, desc), tags=("missing",))
 
-        # Probe cards — each is one probe_cards/<Card>.csv holding both its
-        # wiring and all of its recipes together.
         active_card = self.pin_wiring.get_active_card()
         card_names = sorted(self.pin_wiring.get_card_names())
         if card_names:
@@ -1385,20 +1271,10 @@ class MainLayout(ttk.Frame):
         n_dies = self.wafer_map.load_from_ata(
             folder_path, filename=WAFER_MAP_SOURCES[self._map_source_var.get()])
 
-        # Auto-populate the other tabs from the same folder
         self.load_pad_layout(folder_path)
-        # load_pad_layout() always redraws the ATA-sourced view on the pad
-        # canvas -- if Custom is the active layout source (the default),
-        # re-apply it now so the canvas shows THIS folder's own hand-drawn
-        # sketch instead of silently falling back to the ATA one.
         self._on_pad_source_change()
         self.load_alignment_marks(folder_path)
 
-        # Opportunistically restore a previously-extracted Accretech wafer
-        # map into the Accr Wafer tab's preview and default the Run tab's
-        # wafer map to it too (Full Die / Test Die both require the
-        # Accretech source loaded before they'll start) — no-op if this
-        # ATA folder doesn't have ata_wafer_map_accretech.csv yet.
         self.accr_wafer.load_from_ata(folder_path)
         self.pma_wafer.load_from_ata(folder_path)
         self._exec2_map_folder = folder_path
@@ -1406,11 +1282,6 @@ class MainLayout(ttk.Frame):
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._refresh_export_formats()
 
-        # Same auto-population fan-out as accr_wafer/pma_wafer/exec2 above,
-        # extended to the NanoZ tab's own wafer map (Run tab) — additive
-        # only, guarded so it can never affect this method's existing
-        # return value or the Main/Debug tabs above if NanoZ isn't ready
-        # for any reason.
         nanoz = getattr(self, "nanoz_panel", None)
         if nanoz is not None:
             try:
@@ -1421,9 +1292,6 @@ class MainLayout(ttk.Frame):
         return n_dies
 
     def _reload_wafer_map_source(self):
-        """Re-draw the Wafer Map tab's canvas from the newly-picked source
-        file (GDS-derived vs. Accretech-extracted) in the already-loaded
-        ATA folder."""
         if not self._ata_folder:
             return
         filename = WAFER_MAP_SOURCES[self._map_source_var.get()]
@@ -1478,7 +1346,6 @@ class MainLayout(ttk.Frame):
         self.align_panel = AlignmentPanel(split)
         split.add(self.align_panel, weight=1)
 
-        # ── Result bar ──────────────────────────────────────────────────
         result_bar = ttk.LabelFrame(tab, text="Computed Alignment Transform")
         result_bar.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
         for col_idx in range(4):
@@ -1494,7 +1361,6 @@ class MainLayout(ttk.Frame):
         self._align_st_lbl.grid(row=0, column=3, padx=14, pady=6, sticky="w")
 
     def load_alignment_marks(self, folder_path):
-        """Populate the Alignment tab from the given ATA folder."""
         self._align_path_lbl.config(text=folder_path, foreground="black")
         marks = self.align_panel.load_from_ata(folder_path)
 
@@ -1519,11 +1385,7 @@ class MainLayout(ttk.Frame):
             ))
         return marks
 
-    # ------------------------------------------------------------------
-    # Alignment handshake
-    # ------------------------------------------------------------------
     def _run_alignment_handshake(self):
-        """Drive prober to each mark, prompt operator to jog, read Q, compute transform."""
         import random
 
         marks = self.align_panel._last_marks
@@ -1564,10 +1426,8 @@ class MainLayout(ttk.Frame):
             name = (mark.get(n_key, "") if n_key else "") or f"Mark {i+1}"
             expected.append((ex, ey))
 
-            # Highlight current mark on canvas
             self.align_panel.highlight_mark(i)
 
-            # Drive prober to expected position (A command)
             if prober:
                 try:
                     self.controller.log(f"[ALIGN] A {ex:.1f} {ey:.1f} → driving to {name}")
@@ -1579,10 +1439,8 @@ class MainLayout(ttk.Frame):
             else:
                 self.controller.log(f"[ALIGN] (sim) A {ex:.1f} {ey:.1f} → {name}")
 
-            # Operator jogs to centre the mark
             self._show_jog_popup(i + 1, name, ex, ey, prober is not None)
 
-            # Read actual position (Q command)
             if prober:
                 try:
                     raw = prober.get_xy_position()
@@ -1613,7 +1471,6 @@ class MainLayout(ttk.Frame):
         self._align_th_lbl.config(text=f"θ:   {theta_deg:+.4f}°")
         self._align_st_lbl.config(text="Status: ✓ complete", foreground="green")
 
-        # Push result into execution panel
         if hasattr(self, "exec_panel"):
             self.exec_panel.alignment.update({
                 "offset_x_um": dx,
@@ -1692,7 +1549,6 @@ class MainLayout(ttk.Frame):
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
         split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        # Left column: pads list on top, probe-card wiring below
         left_col = ttk.PanedWindow(split, orient=tk.VERTICAL, width=310)
         split.add(left_col, weight=0)
 
@@ -1730,23 +1586,9 @@ class MainLayout(ttk.Frame):
                                         get_pins=self.pin_wiring.get_wiring)
         split.add(self.pad_panel, weight=1)
 
-        # Custom is the default layout source (set above via _pad_source_var)
-        # -- apply that now through the normal toggle path so the panel's
-        # source, button states, and Pads list all start consistent with it,
-        # same as if the user had just picked "Custom" from the dropdown.
         self._on_pad_source_change()
 
     def _on_pad_source_change(self):
-        """ATA <-> Custom switch (Pad to Probe tab). Custom is a purely
-        visual sketch (PadLayoutPanel.set_source) that never feeds
-        recipes/wiring — those only ever read the ATA-loaded layout via
-        self._pad_tree / ProbeCardWiringFrame. Only loads from disk once
-        per ATA folder (see _pad_custom_loaded, reset in load_ata_folder)
-        so toggling back to ATA and returning to Custom doesn't clobber
-        unsaved in-session edits with the last-saved file. The left Pads
-        list mirrors whichever source is active — ATA pads while on ATA,
-        the hand-drawn pads (kept live via on_custom_change) while on
-        Custom."""
         source = self._pad_source_var.get()
         if source == "Custom":
             if not self._pad_custom_loaded and self._ata_folder:
@@ -1765,11 +1607,6 @@ class MainLayout(ttk.Frame):
             self._populate_pad_tree_from_ata(self.pad_panel._last_pads or [])
 
     def _refresh_pad_tree_from_custom(self):
-        """Live mirror of the custom editor's pads into the left Pads
-        list — wired as PadLayoutPanel's on_custom_change callback, so
-        it fires after every add/move/rename/delete. Dies aren't rows
-        here (this list is pads only, matching its existing Pad/Net/X/Y
-        columns); Net is left blank since a hand-drawn pad has none."""
         for item in self._pad_tree.get_children():
             self._pad_tree.delete(item)
         for pad in self.pad_panel._custom_pads:
@@ -1814,15 +1651,6 @@ class MainLayout(ttk.Frame):
         self.controller.log(f"[PAD] Custom layout saved to {path}")
 
     def _on_probe_card_change(self, card_name: str):
-        """Fired by ProbeCardWiringFrame (ATA load, picker switch, ＋New,
-        🗑 Delete, ✎ Rename) — a recipe belongs to exactly one probe card,
-        so reload the Recipe tab's list for the newly-active card (its
-        recipes live in that same card's .csv file — see
-        ProbeCardWiringFrame.get_recipes()). Also clears anything already
-        staged on the Run tab, since a loaded recipe's steps reference the
-        PREVIOUS card's pins/wiring and running them against a different
-        card's probe card would be meaningless (or unsafe, if the pin
-        numbers happen to overlap but mean something else physically)."""
         if not hasattr(self, "recipe_panel"):
             return
         self.recipe_panel.load_recipes(card_name, self.pin_wiring.get_recipes())
@@ -1839,10 +1667,6 @@ class MainLayout(ttk.Frame):
             self.controller.check_system_ready()
 
     def load_pad_layout(self, folder_path):
-        """Populate the Pad Layout tab's device-pad geometry from the given
-        ATA folder (probe-card wiring loads separately — see
-        ProbeCardWiringFrame.load_from_ata, called earlier in
-        load_ata_folder since recipes depend on knowing the active card)."""
         self._pad_path_lbl.config(text=folder_path, foreground="black")
         pads = self.pad_panel.load_from_ata(folder_path)
         return self._populate_pad_tree_from_ata(pads)
@@ -1860,8 +1684,6 @@ class MainLayout(ttk.Frame):
         nb.add(tab, text="Recipe")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        # get_pins/get_wiring are lazy: the Pad Layout tab (and its wiring
-        # table) is built after this tab, and the wiring changes at ATA load.
         self.recipe_panel = RecipePanel(
             tab, controller=self.controller,
             get_pins=lambda: (self.pin_wiring.get_pin_choices()
@@ -1884,7 +1706,6 @@ class MainLayout(ttk.Frame):
         self.switch_debug = SwitchDebugPanel(tab, controller=self.controller)
         self.switch_debug.grid(row=0, column=0, sticky="nsew")
 
-        # The recipe steps' closure report is mirrored here too
         self.recipe_panel.set_connections_viewer(
             self.switch_debug.set_recipe_connections)
 
@@ -1948,24 +1769,18 @@ class MainLayout(ttk.Frame):
         tab.rowconfigure(1, weight=1)
         tab.columnconfigure(0, weight=1)
 
-        # run state
         self._exec2_running  = False
         self._exec2_aborted  = False
-        self._exec2_run_mode = None   # "full" | "test" | None (idle)
+        self._exec2_run_mode = None
         self._exec2_die_num  = 0
-        self._exec2_total_dies = 0  # dies in the current run (wafer or picked sites) —
-                                    # feeds the Results tab's stats, see _exec2_push_stats
-        self._exec2_steps    = []   # measurement steps loaded from a recipe
-        self._exec2_current_rc = None   # (row, col) currently highlighted CURRENT
-        self._exec2_pma_row_offset = 0   # last-confirmed PMA<->Accretech grid alignment
-        self._exec2_pma_col_offset = 0   # nudge — see 🔀 Compare/Merge PMA
-        self._exec2_pma_offset_confirmed = False   # True once the user has explicitly
-                                    # applied an offset (manual or centroid-suggested) —
-                                    # until then, auto-suggest via centroid_offset()
-        self._exec2_current_pma_shot = None   # merged PMA shot dict for the die currently
-                                    # under test (Test PMA only) — see record_result()
+        self._exec2_total_dies = 0
+        self._exec2_steps    = []
+        self._exec2_current_rc = None
+        self._exec2_pma_row_offset = 0
+        self._exec2_pma_col_offset = 0
+        self._exec2_pma_offset_confirmed = False
+        self._exec2_current_pma_shot = None
 
-        # ── Control bar ───────────────────────────────────────────────────
         ctrl = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
         ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
 
@@ -2012,18 +1827,15 @@ class MainLayout(ttk.Frame):
             font=("Segoe UI", 11, "bold"))
         self._exec2_state_lbl.pack(side="right", padx=12)
 
-        # ── Body: resizable 3-pane split ──────────────────────────────────
         body = ttk.PanedWindow(tab, orient="horizontal")
         body.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        # ── Left pane: position + navigate ────────────────────────────────
         left_col = ttk.Frame(body)
         body.add(left_col, weight=1)
         left_col.rowconfigure(0, weight=0)
         left_col.rowconfigure(1, weight=1)
         left_col.columnconfigure(0, weight=1)
 
-        # Position card
         pos_lf = ttk.LabelFrame(left_col, text="Chuck Position", padding=10)
         pos_lf.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
         pos_lf.columnconfigure(0, weight=1)
@@ -2050,7 +1862,6 @@ class MainLayout(ttk.Frame):
         ttk.Button(pos_lf, text="Reset Counts",
                    command=self._exec2_reset_counts).pack(fill="x", pady=(4, 0))
 
-        # Recipe steps card (filled by ⟳ Load Recipe)
         steps_lf = ttk.LabelFrame(left_col, text="Recipe Steps", padding=(6, 4))
         steps_lf.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
         steps_lf.rowconfigure(1, weight=1)
@@ -2075,8 +1886,6 @@ class MainLayout(ttk.Frame):
         ssb.grid(row=1, column=1, sticky="ns")
         self._exec2_steps_tree.configure(yscrollcommand=ssb.set)
 
-        # ── Center pane: wafer map (loadable — full log lives in the
-        #    sidebar's Execution Log, see MainLayout._build_sidebar) ───────
         map_lf = ttk.LabelFrame(body, text="Wafer Map")
         body.add(map_lf, weight=2)
         map_lf.rowconfigure(1, weight=1)
@@ -2115,7 +1924,6 @@ class MainLayout(ttk.Frame):
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
 
-        # ── Right pane: pass / fail stats ────────────────────────────────
         stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
         body.add(stat_lf, weight=1)
         stat_lf.columnconfigure(0, weight=1)
@@ -2142,7 +1950,6 @@ class MainLayout(ttk.Frame):
         ttk.Label(stat_lf, textvariable=self._exec2_pct_var,
                   font=("Consolas", 13, "bold"), foreground="#374151").pack()
 
-    # ── Execution 2 — run loop ────────────────────────────────────────────────
 
     def _exec2_log(self, msg: str):
         ts = time.strftime("%H:%M:%S")
@@ -2159,19 +1966,14 @@ class MainLayout(ttk.Frame):
         self._exec2_draw_wafer_map()
 
     def _exec2_reload_wafer_map_source(self):
-        """Re-draw the Run tab's canvas from the newly-picked source file
-        (GDS-derived vs. Accretech-extracted) in the already-loaded folder."""
         if self._exec2_map_folder:
             self._exec2_draw_wafer_map()
 
     def _exec2_draw_wafer_map(self, quiet_if_missing: bool = False):
-        """quiet_if_missing suppresses the log line (not the path label) when
-        the file isn't found — used by the automatic load-on-ATA-folder path
-        so folders without an Accretech extraction yet don't spam the log."""
         folder = self._exec2_map_folder
         filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
         n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
-        self._exec2_wafer_map.clear_picks()   # row/col keys may no longer match
+        self._exec2_wafer_map.clear_picks()
         name = os.path.basename(folder)
         self._exec2_map_path_var.set(
             f"{name}  ({n} dies)" if n else f"{name} — {filename} not found")
@@ -2206,9 +2008,6 @@ class MainLayout(ttk.Frame):
             threading.Thread(target=_stop_and_clear, daemon=True).start()
 
     def _exec2_finish_run(self, msg: str, color: str):
-        """Common run-thread teardown: re-enable the mode buttons and site
-        picker, and report the final state (unless the user already aborted,
-        whose state message/color take priority)."""
         self._exec2_running  = False
         self._exec2_run_mode = None
         self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
@@ -2221,30 +2020,12 @@ class MainLayout(ttk.Frame):
             self.after(0, lambda: self._exec2_set_state(msg, color))
 
     def _exec2_ensure_separated(self, prober, stb: int, sim: bool):
-        """Contact guard: G/J restore the chuck's PRIOR height, so a travel
-        can finish chuck UP (STB=67 — contact). Separate again immediately —
-        contact should only happen deliberately, inside
-        _exec2_zup_measure_zdown."""
         if sim or stb != 67:
             return
         self._exec2_log("[RUN] ⚠ finished chuck UP (STB=67 — contact) >> D  (Separate)")
         prober.z_down()
 
     def _exec2_zup_measure_zdown(self, sim: bool, prober, die_label: str) -> bool:
-        """Contact (Z UP) → run the loaded recipe once → separate (Z DOWN).
-        Z DOWN always completes here, before the caller does any further XY
-        travel (next die / move-to-die). Returns True if every step in the
-        recipe ran without error.
-
-        z_up()/z_down() only return once the prober itself confirms the
-        matching completion STB (67 / 68) — see _wait_motion_stb — so a
-        successful call here already means that STB was seen; the returned
-        code is logged explicitly as positive confirmation rather than just
-        trusting "no exception was raised". Z Down specifically is a safety
-        gate: if it's NOT confirmed (wrong STB, timeout, or a real alarm),
-        the whole run is aborted right here — the caller's loop checks
-        _exec2_running/_exec2_aborted before its next XY move, so an
-        unconfirmed separation can never be followed by more chuck travel."""
         self.after(0, lambda: self._exec2_step_var.set("Step: Contact"))
         try:
             self._exec2_log("[RUN] >> Z  (Contact — chuck rises, wafer CONTACTS probe card)")
@@ -2286,18 +2067,12 @@ class MainLayout(ttk.Frame):
         return ok
 
     def _exec2_update_die_color(self, row: int, col: int, ok: bool):
-        """Best-effort live status color on the Run tab's wafer map — a
-        no-op if this (row, col) isn't in the currently-loaded map."""
         try:
             if (row, col) in self._exec2_wafer_map.dies:
                 self._exec2_wafer_map.update_die(row, col, "PASS" if ok else "FAIL")
         except Exception:
             pass
 
-    # ── Live switch-matrix visuals (Probe Routing + Switch Debug tabs, and
-    #    app.py's always-visible bottom strip) — kept in sync with the real
-    #    closures a run makes, plus a periodic hardware read-back so drift
-    #    (a missed update, a manual click elsewhere) self-corrects. ───────────
 
     def _exec2_switch_panels(self):
         panels = [self.probe_routing, self.switch_debug]
@@ -2321,25 +2096,13 @@ class MainLayout(ttk.Frame):
             self.after(0, p.mark_all_open)
 
     def _exec2_maybe_read_state(self):
-        """Every 5th die, poll the real 707B state (channel.getstate) and
-        resync every dot — cheap insurance against the visual silently
-        drifting from reality over a long run."""
         if self._exec2_die_num % 5:
             return
         for p in self._exec2_switch_panels():
             self.after(0, p.read_state)
 
-    # ── Full Die: walk the entire wafer (Accr Wafer's G/J procedure), ─────────
-    # measuring the loaded recipe at every die ─────────────────────────────────
 
     def _exec2_can_start(self) -> bool:
-        """Full Die and Test Die both require a real prober-walked wafer map
-        (the Accretech source specifically — GDS row/col are derived ranks,
-        not real die-grid indices the prober can be sent to), a loaded
-        recipe, AND every instrument actually connected (same 5 keys/same
-        check as the sidebar's SYSTEM READY — a run should never silently
-        fall back to simulated moves/readings just because nothing's
-        plugged in). Logs why and returns False if anything is missing."""
         ok = True
         if not self._exec2_steps:
             self._exec2_log("[RUN] Cannot start — no recipe loaded "
@@ -2366,7 +2129,6 @@ class MainLayout(ttk.Frame):
             return
         if not self._exec2_can_start():
             return
-        # each run's Pass/Fail starts from zero; total = whole wafer's die count
         self._exec2_reset_counts(total_dies=len(self._exec2_wafer_map._last_dies or []))
         self._exec2_running  = True
         self._exec2_aborted  = False
@@ -2381,12 +2143,9 @@ class MainLayout(ttk.Frame):
         threading.Thread(target=self._exec2_full_die_thread, daemon=True).start()
 
     def _exec2_full_die_thread(self):
-        """D (separate) → G (start die) → loop[ Q, Z UP → measure → Z DOWN, J ]
-        until STB=81 (wafer end) — same procedure as AccrWaferPanel's dry-run
-        extraction, with a measurement inserted at every die."""
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
-        self._exec2_current_pma_shot = None   # Full Die never has a PMA shot association
+        self._exec2_current_pma_shot = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
             if sim:
@@ -2403,7 +2162,7 @@ class MainLayout(ttk.Frame):
             self._exec2_log(f"[RUN] << STB={stb}")
             self._exec2_ensure_separated(prober, stb, sim)
 
-            sim_dies_remaining = 12   # bounded simulated raster (no real wafer end signal)
+            sim_dies_remaining = 12
             while self._exec2_running and not self._exec2_aborted:
                 if sim:
                     x, y = float(self._exec2_die_num % 5), float(self._exec2_die_num // 5)
@@ -2415,10 +2174,6 @@ class MainLayout(ttk.Frame):
                 self.after(0, lambda d=die_label: self._exec2_die_var.set(f"Die: {d}"))
                 self.after(0, lambda x=x, y=y:
                            self._exec2_xy_var.set(f"X: {x:.0f} die\nY: {y:.0f} die"))
-                # Called directly (not via self.after) so it's strictly
-                # ordered before the PASS/FAIL color set below — both touch
-                # the same die and run in this thread, same as
-                # _exec2_update_die_color already does.
                 self._exec2_highlight_current(int(y), int(x))
                 self._exec2_log(f"[RUN] << Q  die X={x:.0f} Y={y:.0f}")
 
@@ -2449,7 +2204,6 @@ class MainLayout(ttk.Frame):
         finally:
             self._exec2_finish_run("DONE (Full Die)", "#16a34a")
 
-    # ── Test Die: any number of manually-picked sites, or 5 random ones ────────
 
     def _exec2_on_sites_changed(self, picks):
         self._exec2_sites_var.set(
@@ -2468,20 +2222,11 @@ class MainLayout(ttk.Frame):
         self._exec2_log("[RUN] Randomized test sites: "
                         + ", ".join(f"R{r}C{c}" for r, c in picks))
 
-    # ── Compare / Merge with the PMA tab's legacy wafer/shot map ───────────
 
     def _exec2_pma_accretech_rc(self):
-        """(row, col) of every die the Accretech prober actually walked —
-        read straight from the Accr Wafer tab's in-memory extraction (the
-        authoritative real-hardware row/col grid), independent of whether
-        the Run tab's own map is currently showing the GDS or Accretech
-        source."""
         return {(y, x) for (x, y, _raw) in self.accr_wafer._dies}
 
     def _exec2_compute_pma_merge(self, row_offset: int = 0, col_offset: int = 0):
-        """(merged, pma_grid, accretech_rc), or (None, None, None) with a
-        log message if the PMA workbook or the Accretech map isn't loaded
-        yet."""
         data = self.pma_wafer.workbook_data
         if not data:
             self._exec2_log("[RUN] Test PMA / Compare: no PMA workbook loaded — "
@@ -2498,12 +2243,6 @@ class MainLayout(ttk.Frame):
         return merged, pma_grid, accretech_rc
 
     def _exec2_pma_starting_offset(self, pma_grid, accretech_rc):
-        """(row_offset, col_offset) to start from: the offset the user has
-        explicitly confirmed (via the Compare/Merge dialog or a prior Test
-        PMA run), or — before anything's been confirmed — a shape-based
-        suggestion from overlaying the two maps' centers (centroid_offset),
-        which doesn't depend on the align-die math in pma_shots_to_grid
-        being exactly right."""
         if self._exec2_pma_offset_confirmed:
             return self._exec2_pma_row_offset, self._exec2_pma_col_offset
         return centroid_offset(pma_grid, accretech_rc)
@@ -2673,9 +2412,6 @@ class MainLayout(ttk.Frame):
         self._exec2_pma_col_offset = col_off
         self._exec2_pma_offset_confirmed = True
         picks = [(d["row"], d["col"]) for d in merged]
-        # Carried into the run thread so each recorded reading can be
-        # tagged with its shot's device-ID string and die slot — see
-        # record_result()'s die_id/switch fields (legacy LaMP SQL export).
         die_shots_by_rc = {(d["row"], d["col"]): d for d in merged}
         self._exec2_wafer_map.set_picked(picks)
         self._exec2_on_sites_changed(picks)
@@ -2697,7 +2433,6 @@ class MainLayout(ttk.Frame):
         if not sites:
             self._exec2_log("[RUN] No dies available to pick test sites from.")
             return
-        # each run's Pass/Fail starts from zero; total = the picked site count
         self._exec2_reset_counts(total_dies=len(sites))
         self._exec2_running  = True
         self._exec2_aborted  = False
@@ -2713,15 +2448,6 @@ class MainLayout(ttk.Frame):
                          args=(sites, die_shots_by_rc), daemon=True).start()
 
     def _exec2_test_die_thread(self, sites, die_shots_by_rc=None):
-        """D (separate) → position the first picked site → loop[ Z UP →
-        measure → Z DOWN, position next picked site ] until every site is
-        tested — the SAME shape as _exec2_full_die_thread (one try/except
-        around the whole procedure, test-then-move ordering, identical
-        STB=81/90 handling). The only substitution is G/next_die() →
-        move_to_die_xy(col, row), since Test Die targets specific sites
-        instead of stepping the prober's own raster; there's no Q read
-        because the target coordinates are already known (we commanded
-        them), unlike Full Die which must ask where next_die() landed."""
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         die_shots_by_rc = die_shots_by_rc or {}
@@ -2755,16 +2481,9 @@ class MainLayout(ttk.Frame):
                 self.after(0, lambda d=die_label: self._exec2_die_var.set(f"Die: {d}"))
                 self.after(0, lambda x=col, y=row:
                            self._exec2_xy_var.set(f"X: {x} die\nY: {y} die"))
-                # Called directly (not via self.after) so it's strictly
-                # ordered before the PASS/FAIL color set below — same as
-                # _exec2_full_die_thread.
                 self._exec2_highlight_current(row, col)
                 self._exec2_die_num += 1
 
-                # Only set for a Test PMA run (see _exec2_start_test_pma) —
-                # record_result() reads this to tag readings with the
-                # shot's device-ID string (legacy LaMP SQL export); plain
-                # Test Die leaves it None.
                 self._exec2_current_pma_shot = die_shots_by_rc.get((row, col))
 
                 ok = self._exec2_zup_measure_zdown(sim, prober, die_label)
@@ -2795,11 +2514,8 @@ class MainLayout(ttk.Frame):
         finally:
             self._exec2_finish_run("DONE (Test Die)", "#16a34a")
 
-    # ── Execution 2 — recipe loading ──────────────────────────────────────────
 
     def _exec2_load_recipe(self):
-        """⟳ Load Recipe — pull the selected recipe's measurement steps from
-        the Recipe tab into the Run tab."""
         name = self._exec2_recipe_var.get()
         if not name:
             self._exec2_log("[RUN] Pick a recipe first — the dropdown lists the "
@@ -2833,10 +2549,8 @@ class MainLayout(ttk.Frame):
         if hasattr(self.controller, "check_system_ready"):
             self.controller.check_system_ready()
 
-    # ── Execution 2 — single measurement iteration ────────────────────────────
 
     def _exec2_find_loaded_step(self, ref: str):
-        """Resolve an open step's target within the loaded steps."""
         ref = (ref or "").strip()
         if ref.isdigit():
             i = int(ref) - 1
@@ -2847,7 +2561,6 @@ class MainLayout(ttk.Frame):
         return None
 
     def _exec2_reset_output(self, ref, smu, wgen, sim: bool):
-        """Turn off the output an apply/wave step left running."""
         if ref is None:
             return ""
         if ref.get("type") == "wave":
@@ -2863,9 +2576,6 @@ class MainLayout(ttk.Frame):
         return ""
 
     def _exec2_touchdown_measure(self):
-        """🦶 Touchdown/Measure — bring the chuck into CONTACT (Z UP) if a
-        prober is connected, then run one iteration of the loaded recipe
-        at the current die."""
         if self._exec2_running:
             self._exec2_log("[MEASURE] A run is active — stop it first.")
             return
@@ -2890,10 +2600,6 @@ class MainLayout(ttk.Frame):
         self._exec2_run_steps_once()
 
     def _exec2_avg_spec(self, step: dict) -> tuple:
-        """(avg_count, avg_delay_ms) for a measurement step, clamped to
-        valid values (count >= 1, delay >= 0) — recipe_panel already
-        validates these, but the Run tab tolerates a stray bad value by
-        just falling back to "no averaging" rather than crashing mid-run."""
         try:
             count = max(1, int(step.get("avg_count") or 1))
         except ValueError:
@@ -2905,9 +2611,6 @@ class MainLayout(ttk.Frame):
         return count, delay
 
     def _exec2_take_average(self, read_one, avg_count: int, avg_delay_ms: float, unit: str) -> float:
-        """Call read_one() avg_count times (avg_delay_ms apart), logging
-        each individual reading, and return their mean. avg_count<=1 just
-        takes the single reading with no extra logging."""
         readings = []
         for k in range(avg_count):
             readings.append(read_one())
@@ -2919,19 +2622,6 @@ class MainLayout(ttk.Frame):
         return sum(readings) / len(readings)
 
     def _exec2_run_steps_once(self) -> bool:
-        """Execute the loaded steps once: close each step's stored closures,
-        drive/read the instrument per type/mode/chan, honor delay and open
-        steps. Closures and outputs PERSIST between steps until an open step
-        (that is the recipe model) — end recipes with an open all.
-
-        Every step that produces a READING (resistance, voltage/measure,
-        current/measure) is recorded via record_result() for the Results tab
-        and results CSV, and remembered so a later passfail step can check
-        it against a Min/Max spec — passfail steps drive the overall return
-        value (AND of every passfail verdict in the recipe) instead of just
-        "ran without error" when the recipe has at least one. Returns True
-        if the iteration passes (or, with no passfail step, ran without
-        error)."""
         import random
         import re
         switch = self.controller.drivers.get("switch")
@@ -2946,20 +2636,13 @@ class MainLayout(ttk.Frame):
                     if self._exec2_die_num else
                     self._exec2_xy_var.get().replace("\n", " "))
 
-        # Test PMA only (None for Full Die / plain Test Die) — the merged
-        # shot dict for the die under test, feeding record_result()'s
-        # die_id/switch fields for the legacy LaMP SQL export.
         pma_shot = getattr(self, "_exec2_current_pma_shot", None)
         pma_die_id = (pma_shot or {}).get("raw_text") or ""
-        last_set_voltage_by_ch = {}   # SMU channel -> most recently commanded volts,
-                                      # set by a voltage/apply step and still in effect
-                                      # (output stays on until an open step) — this is
-                                      # what a later current/measure(SMU) step was
-                                      # actually biasing at, for fldSetVoltage.
+        last_set_voltage_by_ch = {}
 
         overall_ok = True
-        last_reading = None      # (name, value, unit) — most recent measurement
-        readings_by_name = {}    # step name -> (value, unit)
+        last_reading = None
+        readings_by_name = {}
 
         self._exec2_log(f"[MEASURE] One iteration — {len(self._exec2_steps)} step(s)"
                         + ("  [SIM — no switch matrix connected]" if sim else ""))
@@ -2970,8 +2653,7 @@ class MainLayout(ttk.Frame):
             lvl  = s.get("level") or ""
             conn = (s.get("conn") or "").replace(" ", "")
             chans = [c for c in conn.split(",") if c and c.lower() != "all"]
-            conn_str = "_".join(chans)   # e.g. "4C11_2D02_4E12_2F01" — matches the
-                                          # legacy MAD-X CSV export's Connection column
+            conn_str = "_".join(chans)
             try:
                 if t == "delay":
                     ms = float(lvl or 0)
@@ -3031,7 +2713,6 @@ class MainLayout(ttk.Frame):
                                     f"{ref_name} = {value:.6g} {unit}  spec {spec}")
                     continue
 
-                # Switching step — close its stored closures first
                 mode       = s.get("mode") or ""
                 instrument = s.get("instrument") or ""
                 label = f"{i}. {name} [{t}{('/' + mode) if mode else ''} " \
@@ -3080,7 +2761,7 @@ class MainLayout(ttk.Frame):
                                        unit="V", connection=conn_str, instrument=instrument)
                     last_reading = (name, v, "V")
                     readings_by_name[name] = (v, "V")
-                elif t == "voltage":            # apply — always SMU; Limit = current compliance
+                elif t == "voltage":
                     if not sim and smu and smu.inst:
                         smu.set_voltage(smu_ch, float(lvl or 0))
                         if limit:
@@ -3091,7 +2772,7 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    forcing {lvl or 0} V on SMU "
                                     f"{s.get('chan') or 'A'}{lim_txt} "
                                     "(output ON until an open step)")
-                elif t == "current" and mode == "apply":  # always SMU; Limit = voltage compliance
+                elif t == "current" and mode == "apply":
                     if not sim and smu and smu.inst:
                         smu.set_current(smu_ch, float(lvl or 0))
                         if limit:
@@ -3101,12 +2782,12 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    forcing {lvl or 0} A on SMU "
                                     f"{s.get('chan') or 'A'}{lim_txt} "
                                     "(output ON until an open step)")
-                elif t == "current":            # measure — SMU (bias) or DMM
+                elif t == "current":
                     set_voltage = None
                     actual_voltage = None
                     if instrument == "SMU":
                         if not sim and smu and smu.inst:
-                            if lvl:             # optional bias voltage — set ONCE, not per sample
+                            if lvl:
                                 smu.set_voltage(smu_ch, float(lvl))
                                 if limit:
                                     smu.set_current_limit(smu_ch, float(limit))
@@ -3124,10 +2805,6 @@ class MainLayout(ttk.Frame):
                         bias_txt = "  (via DMM)"
                     i_a = self._exec2_take_average(read_one, avg_count, avg_delay, "A")
                     if instrument == "SMU" and not sim and smu and smu.inst:
-                        # A source-measure unit can read back the voltage it's
-                        # actually sourcing concurrently with the current
-                        # reading above — one un-averaged sample is enough for
-                        # fldVoltage, we're not trying to characterize noise.
                         try:
                             actual_voltage = smu.measure_voltage(smu_ch)
                         except Exception:
@@ -3135,7 +2812,7 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    I = {i_a:.4g} A{bias_txt}{avg_txt}")
                     die_slot_m = _die_slot_re.search(name)
                     if actual_voltage is None:
-                        actual_voltage = set_voltage   # no live readback -- best guess is the setpoint
+                        actual_voltage = set_voltage
                     self.record_result(
                         timestamp=ts, recipe=recipe_name, die=die_label,
                         step=name, type=t, mode=mode, value=f"{i_a:.6g}", unit="A",
@@ -3145,7 +2822,7 @@ class MainLayout(ttk.Frame):
                         connection=conn_str, instrument=instrument)
                     last_reading = (name, i_a, "A")
                     readings_by_name[name] = (i_a, "A")
-                elif t == "wave":               # always WGEN; Limit = output voltage clamp
+                elif t == "wave":
                     shape = s.get("shape") or "SIN"
                     freq = float(s.get("freq") or 1000)
                     if not sim and wgen and wgen.inst:
@@ -3164,25 +2841,10 @@ class MainLayout(ttk.Frame):
                         f"{'PASS' if overall_ok else 'FAIL'}")
         return overall_ok
 
-    # ── Results storage (Results tab table + results_data for CSV export) ─────
 
     def record_result(self, timestamp, recipe, die, step, type, mode, value, unit,
                       die_id=None, switch=None, set_voltage=None, voltage=None,
                       connection=None, instrument=None):
-        """Store one measurement reading — appends to controller.results_data
-        (source for 💾 Save to CSV / 💾 Export on the Results tab) and, if
-        built, the live Results tab table. Safe to call from a worker
-        thread (only touches Tk widgets via self.after).
-
-        die_id/switch/set_voltage/voltage are only populated during a Test
-        PMA run (see _exec2_current_pma_shot) — they feed the legacy LaMP
-        SQL export's fldDieID/fldSwitch/fldSetVoltage/fldVoltage columns.
-        connection/instrument are populated for every reading (the step's
-        closed switch-matrix channels and which instrument took the
-        reading) — they feed the MAD-X-style resistance CSV export's
-        Connection/Voltage_DMM columns (see export_formats.py). All are
-        blank ("") when not applicable, same as any extra column in a CSV
-        that not every row uses."""
         row = {"timestamp": timestamp, "recipe": recipe, "die": die, "step": step,
                "type": type, "mode": mode, "value": value, "unit": unit,
                "die_id": die_id or "", "switch": switch if switch is not None else "",
@@ -3201,12 +2863,10 @@ class MainLayout(ttk.Frame):
             self.after(0, _ui)
 
     def clear_results(self):
-        """Clear stored results (both the CSV-export list and the live table)."""
         self.controller.results_data.clear()
         if hasattr(self, "_results_tree"):
             self._results_tree.delete(*self._results_tree.get_children())
 
-    # ── Execution 2 — manual controls ────────────────────────────────────────
 
     def _exec2_manual_z_up(self):
         prober = self.controller.drivers.get("prober")
@@ -3237,9 +2897,6 @@ class MainLayout(ttk.Frame):
         threading.Thread(target=_run, daemon=True).start()
 
     def _exec2_manual_go_to_start(self):
-        """⏮ First Die (G) — position the start die (also resets the
-        prober's PASS/FAIL counters). Same command Full Die sends at the
-        start of a wafer walk, exposed here to manually re-home."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self._exec2_log("[EXEC2] First Die: prober not connected.")
@@ -3248,9 +2905,6 @@ class MainLayout(ttk.Frame):
                          daemon=True).start()
 
     def _exec2_go_to_start_thread(self, prober):
-        """Background target for _exec2_manual_go_to_start — logs directly
-        (like the Full Die / Test Die threads do) rather than wrapping every
-        line in self.after, which only StringVar/widget-state updates need."""
         try:
             self._exec2_log("[EXEC2] >> G  (Position start die)")
             stb = prober.move_to_start_die()
@@ -3261,9 +2915,6 @@ class MainLayout(ttk.Frame):
             self._exec2_log(f"[EXEC2] First Die error: {e}")
 
     def _exec2_manual_unload(self):
-        """⏏ Unload (U) — release the wafer from the chuck back to the
-        cassette. Deliberately manual only — never part of the Full Die /
-        Test Die sequence."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self._exec2_log("[EXEC2] Unload: prober not connected.")
@@ -3272,8 +2923,6 @@ class MainLayout(ttk.Frame):
                          daemon=True).start()
 
     def _exec2_unload_thread(self, prober):
-        """Background target for _exec2_manual_unload — logs directly (see
-        _exec2_go_to_start_thread)."""
         try:
             self._exec2_log("[EXEC2] >> U  (Unload wafer)")
             stb = prober.unload_wafer()
@@ -3315,11 +2964,6 @@ class MainLayout(ttk.Frame):
         threading.Thread(target=_run, daemon=True).start()
 
     def _exec2_highlight_current(self, row: int, col: int):
-        """Mark (row, col) CURRENT on the Run tab's wafer map. If the
-        previously-current die was never actually measured (still showing
-        the CURRENT color), it's reverted to UNTESTED first so only one die
-        is ever highlighted as "current" at a time; a die that already got
-        a real PASS/FAIL result from this run is left alone."""
         wm = self._exec2_wafer_map
         prev = self._exec2_current_rc
         if prev is not None and prev != (row, col) and prev in wm.dies:
@@ -3354,11 +2998,6 @@ class MainLayout(ttk.Frame):
         self._exec2_push_stats()
 
     def _exec2_push_stats(self):
-        """Feed the Run tab's live Pass/Fail counts into the same
-        controller.on_exec_stats_change() pipeline the Results tab's
-        donut/labels (and the sidebar donut) already read from — so
-        Results shows the actual Full Die / Test Die run in progress,
-        not just whatever the separate legacy Execution tab last did."""
         if not hasattr(self.controller, "on_exec_stats_change"):
             return
         p = self._exec2_pass_var.get()
@@ -3372,11 +3011,6 @@ class MainLayout(ttk.Frame):
         pct = (p / total * 100) if total else 0.0
         self._exec2_pct_var.set(f"Yield:  {pct:.1f}%  ({p}/{total})")
 
-    # =========================================================================
-    # Measurement Debug tab
-    # =========================================================================
-    # Measurement Debug tab
-    # =========================================================================
 
     def _tab_meas_debug(self, nb):
         tab = ttk.Frame(nb)
@@ -3388,7 +3022,6 @@ class MainLayout(ttk.Frame):
         self._meas_comp_tripped    = False
         self._meas_ilimit_exceeded = False
 
-        # Timing / meter parameters (populated from recipe or edited directly)
         self._meas_nplc_var         = tk.StringVar(value="1")
         self._meas_averages_var     = tk.StringVar(value="20")
         self._meas_meter_range_var  = tk.StringVar(value="0.0001")
@@ -3399,31 +3032,26 @@ class MainLayout(ttk.Frame):
         self._meas_delay3_var       = tk.StringVar(value="200")
         self._meas_iterations_var   = tk.StringVar(value="1")
 
-        # Prober status display vars
         self._meas_z_status_var  = tk.StringVar(value="—")
         self._meas_die_info_var  = tk.StringVar(value="—")
         self._meas_xy_var        = tk.StringVar(value="—")
         self._meas_recipe_var    = tk.StringVar(value="no recipe")
 
-        # ── Config bar ────────────────────────────────────────────────────
         cfg = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
         cfg.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
 
-        # Die number
         tk.Label(cfg, text="Die #:", bg="#f1f5f9").pack(side="left", padx=(8, 2), pady=6)
         self._meas_die_var = tk.StringVar(value="1")
         ttk.Entry(cfg, textvariable=self._meas_die_var, width=5).pack(side="left", padx=(0, 8))
 
         ttk.Separator(cfg, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
 
-        # SMU channel
         tk.Label(cfg, text="SMU Ch:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
         self._meas_ch_var = tk.StringVar(value="smua")
         ttk.Combobox(cfg, textvariable=self._meas_ch_var,
                      values=["smua", "smub"], width=6, state="readonly").pack(
                      side="left", padx=(0, 8))
 
-        # Source mode + level
         tk.Label(cfg, text="Source:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
         self._meas_src_var = tk.StringVar(value="Voltage")
         ttk.Combobox(cfg, textvariable=self._meas_src_var,
@@ -3434,7 +3062,6 @@ class MainLayout(ttk.Frame):
         self._meas_level_unit = tk.Label(cfg, text="V", bg="#f1f5f9", width=2)
         self._meas_level_unit.pack(side="left", padx=(0, 8))
 
-        # Compliance
         tk.Label(cfg, text="Compliance:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
         self._meas_comp_limit_var = tk.StringVar(value="100e-6")
         ttk.Entry(cfg, textvariable=self._meas_comp_limit_var, width=9).pack(side="left", padx=(0, 2))
@@ -3452,7 +3079,6 @@ class MainLayout(ttk.Frame):
 
         ttk.Separator(cfg, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
 
-        # Switch channel
         tk.Label(cfg, text="Switch Ch:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
         self._meas_sw_ch_var = tk.StringVar(value="1A1")
         ttk.Entry(cfg, textvariable=self._meas_sw_ch_var, width=6).pack(side="left", padx=(0, 8))
@@ -3470,7 +3096,6 @@ class MainLayout(ttk.Frame):
                                         font=("Segoe UI", 11, "bold"))
         self._meas_state_lbl.pack(side="right", padx=12)
 
-        # ── Second row: meter & timing parameters ─────────────────────────
         cfg2 = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
         cfg2.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
         _MEAS_PARAMS = [
@@ -3490,15 +3115,12 @@ class MainLayout(ttk.Frame):
             ttk.Entry(cfg2, textvariable=svar, width=entry_w).pack(
                 side="left", padx=(0, 4))
 
-        # ── Body: resizable 3-pane split ──────────────────────────────────
         body = ttk.PanedWindow(tab, orient="horizontal")
         body.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        # ── Left pane: prober status ──────────────────────────────────────
         status_lf = ttk.LabelFrame(body, text="Prober Status", padding=(10, 8))
         body.add(status_lf, weight=0)
 
-        # Z position indicator
         ind_row = tk.Frame(status_lf)
         ind_row.pack(fill="x", pady=(4, 8))
         self._meas_z_indicator = tk.Label(
@@ -3524,7 +3146,6 @@ class MainLayout(ttk.Frame):
         ttk.Button(status_lf, text="↻  Check Z / Die",
                    command=self._meas_check_z).pack(fill="x")
 
-        # ── Center pane: results ──────────────────────────────────────────
         res_lf = ttk.LabelFrame(body, text="Results", padding=12)
         body.add(res_lf, weight=1)
         res_lf.columnconfigure(1, weight=1)
@@ -3548,7 +3169,6 @@ class MainLayout(ttk.Frame):
             lbl.grid(row=r, column=1, sticky="w", pady=5)
             self._meas_result_vars[key] = (var, lbl, color)
 
-        # ── Right pane: execution log ─────────────────────────────────────
         log_lf = ttk.LabelFrame(body, text="Execution Log")
         body.add(log_lf, weight=2)
         log_lf.rowconfigure(0, weight=1)
@@ -3566,7 +3186,6 @@ class MainLayout(ttk.Frame):
                    command=self._meas_clear_log).grid(
                    row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 4))
 
-    # ── Measurement Debug helpers ─────────────────────────────────────────────
 
     def _meas_log(self, msg: str):
         ts = time.strftime("%H:%M:%S")
@@ -3595,7 +3214,6 @@ class MainLayout(ttk.Frame):
         self._meas_state_lbl.config(text="IDLE", fg="#6b7280")
 
     def _meas_check_z(self):
-        """Query prober for Z position and current die info."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self._meas_z_status_var.set("prober not connected")
@@ -3616,7 +3234,6 @@ class MainLayout(ttk.Frame):
             self._meas_z_indicator.config(bg="#dc2626")
 
     def _meas_import_recipe(self):
-        """Load a key=value recipe file and populate the measurement parameters."""
         from tkinter import filedialog
         path = filedialog.askopenfilename(
             title="Import Recipe",
@@ -3672,7 +3289,6 @@ class MainLayout(ttk.Frame):
             iterations = 1
 
         try:
-            # ── 1. Check Z position and current die ──────────────────────
             if prober and prober.inst:
                 try:
                     stb, desc = prober.read_stb_decoded()
@@ -3695,12 +3311,10 @@ class MainLayout(ttk.Frame):
                 if iterations > 1:
                     self._meas_log(f"[MEAS] ── Iteration {it + 1}/{iterations} ──")
 
-                # ── 2. Open all switches ──────────────────────────────────
                 if sw and sw.inst:
                     sw.open_all()
                     self._meas_log("[MEAS] Switches open")
 
-                # ── 3. Close switch channel ───────────────────────────────
                 sw_ch = self._meas_sw_ch_var.get().strip()
                 if sw_ch and sw and sw.inst:
                     sw.close_channel(sw_ch)
@@ -3710,7 +3324,6 @@ class MainLayout(ttk.Frame):
                 except ValueError:
                     time.sleep(0.1)
 
-                # ── 4. Configure and enable SMU ───────────────────────────
                 if not (smu and smu.inst):
                     raise RuntimeError("SMU not connected")
                 src   = self._meas_src_var.get()
@@ -3734,7 +3347,6 @@ class MainLayout(ttk.Frame):
                 except ValueError:
                     time.sleep(0.2)
 
-                # ── 5. Configure DMM range/NPLC ───────────────────────────
                 if dmm and dmm.inst:
                     try:
                         m_range = float(self._meas_meter_range_var.get())
@@ -3744,7 +3356,6 @@ class MainLayout(ttk.Frame):
                     except Exception:
                         pass
 
-                # ── 6. Settling delay + measure ───────────────────────────
                 try:
                     time.sleep(float(self._meas_meter_delay_var.get()))
                 except ValueError:
@@ -3779,7 +3390,6 @@ class MainLayout(ttk.Frame):
                 cc = "#dc2626"   if tripped else "#16a34a"
                 self.after(0, lambda s=cs, c=cc: self._meas_set_result("comp", s, c))
 
-                # ── 7. SMU off + open switches ────────────────────────────
                 smu.turn_output_off(ch)
                 try:
                     time.sleep(float(self._meas_delay3_var.get()) / 1000.0)
@@ -3788,7 +3398,6 @@ class MainLayout(ttk.Frame):
                 if sw and sw.inst:
                     sw.open_all()
 
-            # ── Pass / fail ───────────────────────────────────────────────
             passed = not self._meas_comp_tripped and not self._meas_ilimit_exceeded
             if passed:
                 self.after(0, lambda: self._meas_set_result("result", "PASS  ✓", "#16a34a"))
@@ -3868,7 +3477,6 @@ class MainLayout(ttk.Frame):
         ).pack(side="left")
         self._export_formats: list = []
 
-        # ── Measurement results (populated by Run tab 🦶 Touchdown/Measure) ─
         results_lf = ttk.LabelFrame(tab, text="Measurement Results")
         results_lf.pack(fill="both", expand=True, padx=15, pady=(0, 8))
         results_lf.rowconfigure(0, weight=1)
@@ -3907,13 +3515,8 @@ class MainLayout(ttk.Frame):
         )
         self.lbl_results_large.pack(pady=8)
 
-    # ── Results tab: SQL export format picker (see export_formats.py) ──────
 
     def _refresh_export_formats(self, select_name: str = None):
-        """(Re)load the ATA folder's export format definitions and
-        repopulate the dropdown. Called after 📁 Load ATA Folder and after
-        ➕ New Format… saves one. Keeps the current selection if it's still
-        in the list; otherwise defaults to the first format."""
         if not self._ata_folder:
             self._export_formats = []
             self._export_format_cb.config(values=[])
@@ -4038,9 +3641,6 @@ class MainLayout(ttk.Frame):
         dlg.update_idletasks()
         dlg.grab_set()
 
-    # ------------------------------------------------------------------
-    # Shared drawing utility
-    # ------------------------------------------------------------------
     def draw_donut(self, canvas, size, passed, failed, untested):
         canvas.delete("all")
         cx, cy = size / 2, size / 2

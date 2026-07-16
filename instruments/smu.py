@@ -54,10 +54,8 @@ class Keithley2636B(GPIBInstrument):
             return 0.0
 
     def set_nplc(self, channel: str, nplc: float):
-        """Set measurement integration time in power line cycles."""
         self.write(f"{channel}.measure.nplc = {nplc}")
 
     def in_compliance(self, channel) -> bool:
-        """Returns True if the SMU is currently in compliance (limit reached)."""
         reading = self.query(f"print({channel}.source.compliance)")
         return str(reading).strip().lower() == "true"

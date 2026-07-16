@@ -7,14 +7,6 @@ from wafer_map_view import WaferMapPanel
 
 
 class ExecutionDashboard(ttk.Frame):
-    """Simulation execution panel adapted from ATA_Frontend_demo.py.
-
-    Layout (3 columns):
-      [Wafer Map]  |  [Test Sequence + Log]  |  [Cards: Die / NanoZ / Instruments / Stats]
-
-    Call set_wafer_map() after the user loads an ATA folder so the embedded
-    wafer map mirrors the one on the Wafer Map tab and dies are loaded.
-    """
 
     STEPS = [
         ("ALIGN_WAFER",   "Find alignment marks and calculate transform"),
@@ -31,10 +23,9 @@ class ExecutionDashboard(ttk.Frame):
         super().__init__(parent)
         self._log_fn          = log_fn
         self._on_stats_change = on_stats_change
-        self._wafer_map       = None   # main WaferMapPanel (Wafer Map tab)
-        self._prev_die        = None   # (row, col) of last highlighted die
+        self._wafer_map       = None
+        self._prev_die        = None
 
-        # simulation state
         self.running       = False
         self.in_contact    = False
         self.aborted       = False
@@ -55,7 +46,7 @@ class ExecutionDashboard(ttk.Frame):
         self.nanoz_frames          = 0
         self.nanoz_checksum_errors = 0
 
-        self._configure_after_id = None   # debounce resize redraws
+        self._configure_after_id = None
 
         self.rowconfigure(0, weight=0)
         self.rowconfigure(1, weight=1)
@@ -64,22 +55,16 @@ class ExecutionDashboard(ttk.Frame):
         self._build_control_bar()
         self._build_body()
 
-        # compat: app.py may call lbl_die.config(text=...) / lbl_route.config(...)
         self.lbl_die   = _FakeLabel()
         self.lbl_route = _FakeLabel()
 
         self.log("Simulation panel ready.  Load an ATA folder, then press Start.")
 
-    # ------------------------------------------------------------------
-    # Wafer-map integration
-    # ------------------------------------------------------------------
     def set_wafer_map(self, wafer_map_panel, wafer_id="—"):
-        """Wire up the main wafer map and mirror its data into the exec map."""
         self._wafer_map = wafer_map_panel
         self.wafer_id   = wafer_id
 
         if wafer_map_panel._last_dies:
-            # Seed the embedded exec map from the already-parsed die list
             self._exec_map._last_dies = wafer_map_panel._last_dies
             self._exec_map._draw_from_die_list(wafer_map_panel._last_dies)
             n = len(wafer_map_panel.dies)
@@ -88,7 +73,6 @@ class ExecutionDashboard(ttk.Frame):
         self.load_dies()
 
     def load_dies(self):
-        """Populate self.dies from the embedded exec map's die list."""
         src = self._exec_map._last_dies if self._exec_map._last_dies else (
             self._wafer_map._last_dies if self._wafer_map else None
         )
@@ -128,12 +112,8 @@ class ExecutionDashboard(ttk.Frame):
         self._fire_stats()
 
     def load_recipe(self):
-        """Compat: called by app.py after pads are loaded — no-op."""
         pass
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
     def _build_control_bar(self):
         bar = tk.Frame(self, bg="#f1f5f9", bd=1, relief="solid")
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
@@ -162,15 +142,14 @@ class ExecutionDashboard(ttk.Frame):
         body = ttk.Frame(self)
         body.grid(row=1, column=0, sticky="nsew")
         body.rowconfigure(0, weight=1)
-        body.columnconfigure(0, weight=2)   # wafer map
-        body.columnconfigure(1, weight=3)   # sequence + log
-        body.columnconfigure(2, weight=2)   # info cards
+        body.columnconfigure(0, weight=2)
+        body.columnconfigure(1, weight=3)
+        body.columnconfigure(2, weight=2)
 
         self._build_left_map(body)
         self._build_center(body)
         self._build_right(body)
 
-    # ── Left column: wafer map ──────────────────────────────────────────
     def _build_left_map(self, body):
         left = ttk.Frame(body)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
@@ -181,10 +160,8 @@ class ExecutionDashboard(ttk.Frame):
         self._exec_map = WaferMapPanel(left)
         self._exec_map.grid(row=0, column=0, sticky="nsew")
 
-        # Redraw on resize so the map fits the new size (debounced)
         self._exec_map.canvas.bind("<Configure>", self._on_exec_map_configure)
 
-        # Colour legend
         legend = tk.Frame(left, bg="#f9fafb")
         legend.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         for lbl, color in [
@@ -202,7 +179,6 @@ class ExecutionDashboard(ttk.Frame):
                      font=("Segoe UI", 8)).pack(side="left")
 
     def _on_exec_map_configure(self, _event):
-        """Debounced redraw so resizing doesn't call _draw_from_die_list every pixel."""
         if self._configure_after_id is not None:
             self.after_cancel(self._configure_after_id)
         self._configure_after_id = self.after(150, self._redraw_exec_map)
@@ -212,11 +188,9 @@ class ExecutionDashboard(ttk.Frame):
         if not self._exec_map._last_dies:
             return
         self._exec_map._draw_from_die_list(self._exec_map._last_dies)
-        # Re-apply simulation colours lost by the full redraw
         for d in self.dies:
             if d["status"] != "UNTESTED":
                 self._exec_map.update_die(d["row"], d["col"], d["status"])
-        # Re-highlight current die
         if self.current_die:
             r, c = self.current_die["row"], self.current_die["col"]
             if self.current_die["status"] == "UNTESTED":
@@ -224,14 +198,12 @@ class ExecutionDashboard(ttk.Frame):
                     r, c, "CONTACT" if self.in_contact else "CURRENT"
                 )
 
-    # ── Center column: test sequence + log ─────────────────────────────
     def _build_center(self, body):
         center = ttk.Frame(body)
         center.grid(row=0, column=1, sticky="nsew", padx=4)
         center.rowconfigure(1, weight=1)
         center.columnconfigure(0, weight=1)
 
-        # Test sequence treeview
         seq_lf = ttk.LabelFrame(center, text="Test Sequence")
         seq_lf.grid(row=0, column=0, sticky="ew", pady=(0, 4))
 
@@ -252,7 +224,6 @@ class ExecutionDashboard(ttk.Frame):
         for step, desc in self.STEPS:
             self._seq.insert("", "end", values=(step, desc, "Ready"))
 
-        # Execution log
         log_lf = ttk.LabelFrame(center, text="Execution Log")
         log_lf.grid(row=1, column=0, sticky="nsew")
         log_lf.rowconfigure(0, weight=1)
@@ -274,7 +245,6 @@ class ExecutionDashboard(ttk.Frame):
         sb.grid(row=0, column=1, sticky="nse", pady=6)
         self._log_box.configure(yscrollcommand=sb.set)
 
-    # ── Right column: scrollable info cards ────────────────────────────
     def _build_right(self, body):
         outer = tk.Frame(body)
         outer.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
@@ -343,9 +313,6 @@ class ExecutionDashboard(ttk.Frame):
     def _cmd_load_recipe(self):
         self.log("[RECIPE] Load recipe: not yet wired to a recipe file.")
 
-    # ------------------------------------------------------------------
-    # Logging
-    # ------------------------------------------------------------------
     def log(self, message):
         ts = time.strftime("%H:%M:%S")
         self._log_box.configure(state="normal")
@@ -360,9 +327,6 @@ class ExecutionDashboard(ttk.Frame):
         self._log_box.delete("1.0", "end")
         self._log_box.configure(state="disabled")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
     def _update_current_die(self):
         valid = [d for d in self.dies if d["status"] != "SKIP"]
         if not valid:
@@ -372,7 +336,6 @@ class ExecutionDashboard(ttk.Frame):
         self.current_die = valid[self.current_index]
 
     def _map_update_die(self, row, col, status):
-        """Update die colour on BOTH the Wafer Map tab and the embedded exec map."""
         if self._wafer_map:
             self._wafer_map.update_die(row, col, status)
         self._exec_map.update_die(row, col, status)
@@ -383,7 +346,6 @@ class ExecutionDashboard(ttk.Frame):
         self._highlight_maps()
 
     def _highlight_maps(self):
-        # Reset previous die highlight to its actual status colour
         if self._prev_die:
             pr, pc = self._prev_die
             if not self.current_die or (pr, pc) != (self.current_die["row"], self.current_die["col"]):
@@ -480,9 +442,6 @@ class ExecutionDashboard(ttk.Frame):
                 len(self.dies),
             )
 
-    # ------------------------------------------------------------------
-    # Simulation actions
-    # ------------------------------------------------------------------
     def toggle_running(self):
         if not self.dies:
             self.log("[SIM] No dies loaded. Load an ATA folder first.")
@@ -643,7 +602,6 @@ class ExecutionDashboard(ttk.Frame):
                 )
                 self._refresh()
                 return
-        # No untested left — advance anyway
         self.current_index = (self.current_index + 1) % len(valid)
         self.current_die   = valid[self.current_index]
         self.log(f"[PROBER] No untested dies left. At {self.current_die['die_id']}.")

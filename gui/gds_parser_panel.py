@@ -1,9 +1,3 @@
-"""GDS Parser Panel — embedded in the ATA notebook as a tab.
-
-Full GDS2 parsing workflow (all data tabs + matplotlib plots), adapted from
-gds/ata_gds_gui.py as a ttk.Frame. After exporting ATA files, offers to load
-the output folder directly into the Wafer Map, Pad Layout, and Alignment tabs.
-"""
 from __future__ import annotations
 
 import json
@@ -15,7 +9,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional, Sequence
 
-# ── Add gds/ to sys.path so ata_gds_core is importable from gui/ context ──
 _GDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gds")
 if _GDS_DIR not in sys.path:
     sys.path.insert(0, _GDS_DIR)
@@ -67,7 +60,6 @@ class GdsParserPanel(ttk.Frame):
         self._build_vars()
         self._build_ui()
 
-    # ── Variables ────────────────────────────────────────────────────────
 
     def _build_vars(self):
         _default_align = default_alignment_mark_names() if _CORE else "ATA_ALIGN_*, KS_LYR4, KS_Neg_LYR2"
@@ -86,7 +78,6 @@ class GdsParserPanel(ttk.Frame):
         self.metadata_status_var      = tk.StringVar(value="No layout metadata JSON loaded")
         self.status_var               = tk.StringVar(value="Open a GDS/GDSII file to begin.")
 
-    # ── Top-level UI ─────────────────────────────────────────────────────
 
     def _build_ui(self):
         self.rowconfigure(1, weight=1)
@@ -121,7 +112,6 @@ class GdsParserPanel(ttk.Frame):
         )
         ctl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
 
-        # Row 1 — file / cell / actions
         r1 = ttk.Frame(ctl)
         r1.pack(fill="x", pady=2)
         ttk.Button(r1, text="Open GDS File",       command=self.open_gds_file).pack(side="left", padx=(0, 4))
@@ -133,7 +123,6 @@ class GdsParserPanel(ttk.Frame):
         ttk.Button(r1, text="Parse / Refresh",     command=self.reparse_current_file).pack(side="left", padx=4)
         ttk.Button(r1, text="Generate ATA Files",  command=self.export_files).pack(side="left", padx=4)
 
-        # Row 2 — pad settings
         r2 = ttk.Frame(ctl)
         r2.pack(fill="x", pady=2)
         for lbl, var, w in [
@@ -147,7 +136,6 @@ class GdsParserPanel(ttk.Frame):
         ttk.Checkbutton(r2, text="Flatten for pad extraction",
                         variable=self.flatten_pads_var).pack(side="left", padx=4)
 
-        # Row 3 — wafer settings
         r3 = ttk.Frame(ctl)
         r3.pack(fill="x", pady=2)
         for lbl, var, w in [
@@ -163,7 +151,6 @@ class GdsParserPanel(ttk.Frame):
         ttk.Button(r3, text="Update Wafer Map",
                    command=self.update_wafer_map_and_plots).pack(side="left", padx=6)
 
-        # Row 4 — alignment mark names
         r4 = ttk.Frame(ctl)
         r4.pack(fill="x", pady=2)
         ttk.Label(r4, text="Alignment mark names:").pack(side="left")
@@ -171,14 +158,12 @@ class GdsParserPanel(ttk.Frame):
                   width=46).pack(side="left", padx=4)
         ttk.Label(r4, text="(comma-sep, * wildcard)", foreground="gray").pack(side="left", padx=4)
 
-        # Row 5 — metadata status
         r5 = ttk.Frame(ctl)
         r5.pack(fill="x", pady=(2, 0))
         ttk.Label(r5, text="Layout metadata:").pack(side="left")
         ttk.Label(r5, textvariable=self.metadata_status_var,
                   foreground="gray").pack(side="left", padx=4)
 
-    # ── Inner notebook (mirrors GDS app tabs) ────────────────────────────
 
     def _build_notebook(self):
         self.nb = ttk.Notebook(self)
@@ -241,7 +226,6 @@ class GdsParserPanel(ttk.Frame):
         self.nb.add(f, text=title)
         return fig, ax, cv
 
-    # ── File operations ──────────────────────────────────────────────────
 
     def open_gds_file(self):
         path = filedialog.askopenfilename(
@@ -325,7 +309,6 @@ class GdsParserPanel(ttk.Frame):
         self._set_status(msg)
         self.controller.log(f"[GDS] {msg}")
 
-    # ── Wafer map + plots ────────────────────────────────────────────────
 
     def update_wafer_map_and_plots(self):
         if not self.data:
@@ -347,7 +330,6 @@ class GdsParserPanel(ttk.Frame):
             self._plot_wafer_map()
         self._set_status(f"Wafer map: {len(self.wafer_map_data)} die locations.")
 
-    # ── Populate all data views ───────────────────────────────────────────
 
     def _populate_all_views(self):
         if not self.data:
@@ -425,7 +407,6 @@ class GdsParserPanel(ttk.Frame):
                 f"Showing first {self.max_table_rows} of {len(records)} rows"
             ] + [""] * (len(cols) - 1))
 
-    # ── Matplotlib plots ─────────────────────────────────────────────────
 
     def _plot_device_layout(self):
         self.device_ax.clear()
@@ -526,11 +507,8 @@ class GdsParserPanel(ttk.Frame):
         self.wafer_fig.tight_layout()
         self.wafer_canvas.draw_idle()
 
-    # ── Export ───────────────────────────────────────────────────────────
 
     def _ask_export_mode(self) -> Optional[str]:
-        """Modal chooser shown by Generate ATA Files. Returns "new", "merge",
-        or None (cancelled)."""
         result = {"mode": None}
         dlg = tk.Toplevel(self)
         dlg.title("Generate ATA Files")
@@ -568,8 +546,6 @@ class GdsParserPanel(ttk.Frame):
         return result["mode"]
 
     def _choose_output_dir(self, mode: str) -> Optional[str]:
-        """Resolve the target ATA folder for `mode` ("new" or "merge") via a
-        folder-browse dialog, or None if cancelled."""
         if mode == "merge":
             ui = getattr(self.controller, "ui", None)
             initial = (
@@ -673,7 +649,6 @@ class GdsParserPanel(ttk.Frame):
         set_if(self.pad_layer_var,     "pad_layer", "probe_pad_layer")
         set_if(self.pad_datatype_var,  "pad_datatype", "probe_pad_datatype")
 
-    # ── Helpers ──────────────────────────────────────────────────────────
 
     def _set_status(self, text: str):
         self.status_var.set(text)

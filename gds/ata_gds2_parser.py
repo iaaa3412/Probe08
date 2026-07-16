@@ -1,9 +1,3 @@
-"""
-Command-line wrapper for the ATA GDSII parser.
-
-The GUI app is ata_gds_gui.py. This CLI is kept so the same parser can be used
-from scripts or future ATA automation.
-"""
 
 from __future__ import annotations
 

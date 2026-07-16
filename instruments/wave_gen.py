@@ -32,9 +32,6 @@ class Keysight33512B(GPIBInstrument):
         self.set_dc_voltage_ch(1, volts)
 
     def set_voltage_limit_ch(self, ch: int = 1, limit_v: float = None):
-        """Symmetric output voltage clamp: ±limit_v (hardware-limited output
-        range, independent of the programmed waveform). limit_v=None/0
-        disables the limit."""
         src = f"SOURce{ch}"
         if not limit_v:
             self.write(f"{src}:VOLTage:LIMit:STATe OFF")

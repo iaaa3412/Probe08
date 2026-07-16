@@ -1,45 +1,3 @@
-"""Prober Debug Panel — Accretech UF200/190 verification tool.
-
-All commands sourced from UF200/190 GP-IB Commands Manual (FT02000-R003-E0).
-
-Safe commands in this panel (read-only, no chuck motion):
-  B   Get prober ID            Q   Die coordinates (probing-only)
-  E   Short error code         R   Absolute position, 0.1 µm (probing-only)
-  e   Full error message       V   Lot number
-  ms  Prober status code       X   Wafer number
-  H   Multi-site info          b   Wafer ID
-  q   Start die coordinates    c   Pass/Fail counts
-  O   On-wafer info (probing)  w   Wafer status (cassette)
-  Y   Gross die count          x   Cassette status
-                               y   Yield data
-
-Z STATE IS NOT QUERYABLE on the prober — there is no "is the chuck up?"
-request. The only Z information is the completion STB of each motion
-command (67 = finished chuck UP, 65/66/68/70/90 = finished chuck DOWN),
-so the driver tracks it (drv.z_is_up) and this panel displays the tracked
-value. After an alarm, stop (K), or unconfirmed raw motion command the
-state shows "unknown" until the next confirmed Z/D/motion reply.
-
-Motion / action (confirmation required):
-  A   XY travel BY a distance in µm (chuck height restored after)
-  S   XY travel by DIE INDEXES, relative (SY±nnnnX±nnnn; whole dies, not µm)
-  J   Next die, or ABSOLUTE die map position (JYyyyXxxx, −99…511)
-  G   Position start die (resets counters)
-  Z   Z UP  ⚠ CONTACT — chuck rises to probing height + overdrive:
-              the wafer TOUCHES the probe card needles
-  D   Z DOWN — chuck drops, wafer SEPARATES from the needles (safe direction)
-  I   Set index / pitch (only while waiting for lot process start)
-  K   Stop
-
-IMPORTANT — the CHUCK moves in Z, not the probe card. "Up" = contact.
-Commands A, C, D, F, G, J, M, P, S, W, Z, jp, js, z are only valid while
-probing is active (start die positioned → last die tested); at other times
-they cause a "GP-IB Command Execution Condition Error".
-
-STB codes are USER-CONFIGURABLE on the prober via STB Code Settings menu.
-The driver's _wait_for_stb values are the manual's factory defaults, which
-may differ if this installation's config was customized.
-"""
 from __future__ import annotations
 
 import threading
@@ -49,22 +7,14 @@ from tkinter import messagebox, ttk
 
 from instruments.accretech_uf200r import STB_DESCRIPTIONS
 
-# Commands only valid while probing is active — warn if sent while idle.
-# (A/C/F/G/J/M/P/S/W/jp/js/z are *2 in the command list; the D and Z
-# flowcharts (§4.4, §4.36) also reject when probing is not going on.)
-# Case-sensitive: 'z' (set contact height) ≠ 'Z' (Z UP).
 _PROBING_ONLY = {"A", "C", "D", "F", "G", "J", "M", "P", "S", "W", "Z",
                  "jp", "js", "z"}
-# Commands that cause physical motion (or marking) — require confirmation
 _MOTION_CMDS  = {"A", "C", "D", "G", "J", "K", "L", "L1", "L8", "L9",
                  "M", "N", "N1", "N2", "N9", "S", "U", "U0", "U9",
                  "W", "WB", "Z", "Z+", "Z-", "jc", "j2", "jm", "jp", "js"}
-# Commands answered with data (command echo + string) — sent as query;
-# everything else only responds via STB / serial poll.
 _QUERY_CMDS   = {"B", "E", "H", "O", "Q", "R", "V", "X", "Y",
                  "b", "c", "d", "e", "f", "i", "o", "q", "r", "w", "x", "y",
                  "ms", "kc", "kh", "ku", "nd", "ni", "np", "fp", "du"}
-# Two-character mnemonics (checked before falling back to the first char)
 _TWO_CHAR = {"ms", "kc", "ku", "kd", "kh", "jc", "j2", "ji", "jm", "jp",
              "js", "jv", "jw", "n6", "nc", "nd", "ni", "np", "du", "dd",
              "em", "es", "fp", "al", "le", "st", "vZ", "vE", "U0", "U9",
@@ -72,7 +22,6 @@ _TWO_CHAR = {"ms", "kc", "ku", "kd", "kh", "jc", "j2", "ji", "jm", "jp",
 
 
 def _mnemonic(raw: str) -> str:
-    """Extract the (case-sensitive) command mnemonic from a raw string."""
     if raw[:2] in _TWO_CHAR:
         return raw[:2]
     return raw[:1]
@@ -92,7 +41,6 @@ class ProberDebugPanel(ttk.Frame):
         self._build_main()
         self._update_z_display()
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _drv(self, silent: bool = False):
         drv = self.controller.drivers.get("prober")
@@ -122,7 +70,6 @@ class ProberDebugPanel(ttk.Frame):
             self._log(f"[PROBER] ERROR ({cmd_label}): {e}")
             self.after(0, lambda: self._resp_var.set(f"Error: {e}"))
 
-    # ── Top bar ──────────────────────────────────────────────────────────────
 
     def _build_topbar(self):
         bar = ttk.Frame(self, padding=(6, 4))
@@ -140,7 +87,6 @@ class ProberDebugPanel(ttk.Frame):
         ttk.Button(bar, text="Read STB",
                    command=self._cmd_read_stb).pack(side="right", padx=2)
 
-    # ── Main area ─────────────────────────────────────────────────────────────
 
     def _build_main(self):
         pane = ttk.PanedWindow(self, orient="horizontal")
@@ -149,7 +95,6 @@ class ProberDebugPanel(ttk.Frame):
         self._build_left(pane)
         self._build_right(pane)
 
-    # ── Left pane ─────────────────────────────────────────────────────────────
 
     def _build_left(self, pane):
         outer = ttk.Frame(pane)
@@ -182,7 +127,6 @@ class ProberDebugPanel(ttk.Frame):
                 ttk.Label(f, text=tip, foreground="gray",
                           font=("Arial", 8)).pack(side="left", padx=6)
 
-        # ── System Identity ───────────────────────────────────────────────
         idf = ttk.LabelFrame(left, text="System Identity & Status", padding=6)
         idf.pack(fill="x", padx=4, pady=(4, 6))
 
@@ -190,7 +134,6 @@ class ProberDebugPanel(ttk.Frame):
         _btn(idf, "ms — Prober Status Code", self._cmd_get_status,  "Current operating mode")
         _btn(idf, "H  — Multi-site Info",    self._cmd_get_multisite,"Multi-site location number")
 
-        # ── Position ──────────────────────────────────────────────────────
         pf = ttk.LabelFrame(left, text="Chuck Position  (read-only)", padding=6)
         pf.pack(fill="x", padx=4, pady=(0, 6))
 
@@ -198,7 +141,6 @@ class ProberDebugPanel(ttk.Frame):
         _btn(pf, "R  — Absolute Position",     self._cmd_xy_absolute, "In probing area, 0.1 µm units (probing-only)")
         _btn(pf, "q  — Start Die Coordinates", self._cmd_start_die,   "First die XY of current wafer")
 
-        # ── XY Motion ────────────────────────────────────────────────────
         xf = ttk.LabelFrame(left, text="XY Motion", padding=6)
         xf.pack(fill="x", padx=4, pady=(0, 6))
 
@@ -280,7 +222,6 @@ class ProberDebugPanel(ttk.Frame):
 
         ttk.Button(xf, text="Set Index / Pitch  (I)", command=self._cmd_set_index).pack(fill="x", pady=(6, 0))
 
-        # ── Errors ────────────────────────────────────────────────────────
         ef = ttk.LabelFrame(left, text="Errors  (use when STB=76)", padding=6)
         ef.pack(fill="x", padx=4, pady=(0, 6))
 
@@ -289,7 +230,6 @@ class ProberDebugPanel(ttk.Frame):
         _btn(ef, "🔕 Buzzer Clear (E + es)", self._cmd_buzzer_clear,
              "Read error code, then clear alarm / silence buzzer (STB 119)")
 
-        # ── Motion Commands ───────────────────────────────────────────────
         sf = ttk.LabelFrame(left, text="Motion Commands", padding=6)
         sf.pack(fill="x", padx=4, pady=(0, 4))
 
@@ -317,7 +257,6 @@ class ProberDebugPanel(ttk.Frame):
         ttk.Button(r3, text="⏏  Unload Wafer  (U)",
                    command=self._cmd_unload).pack(side="left", expand=True, fill="x")
 
-    # ── Right pane ────────────────────────────────────────────────────────────
 
     def _build_right(self, pane):
         right = ttk.Frame(pane, padding=4)
@@ -325,9 +264,6 @@ class ProberDebugPanel(ttk.Frame):
         right.rowconfigure(4, weight=1)
         right.columnconfigure(0, weight=1)
 
-        # ── Z & Die Status ────────────────────────────────────────────────
-        # Z state is NOT queryable on the prober — this shows the state the
-        # driver tracked from Z/D/motion completion STBs.
         zf = ttk.LabelFrame(right, text="Z Status (tracked from replies) & Die", padding=6)
         zf.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         zf.columnconfigure(1, weight=1)
@@ -353,7 +289,6 @@ class ProberDebugPanel(ttk.Frame):
         ttk.Label(zf, textvariable=self._xy_var,
                   font=("Consolas", 8), foreground="#374151").pack(anchor="w")
 
-        # ── Lot / Wafer info ──────────────────────────────────────────────
         lf = ttk.LabelFrame(right, text="Lot & Wafer Info", padding=6)
         lf.grid(row=1, column=0, sticky="ew", pady=(0, 6))
 
@@ -378,7 +313,6 @@ class ProberDebugPanel(ttk.Frame):
                       row=r, column=c*2+1, padx=(2, 8), sticky="w")
             grid.columnconfigure(c*2, weight=1)
 
-        # ── Last Response ─────────────────────────────────────────────────
         rf = ttk.LabelFrame(right, text="Last Response", padding=6)
         rf.grid(row=2, column=0, sticky="ew", pady=(0, 6))
 
@@ -387,7 +321,6 @@ class ProberDebugPanel(ttk.Frame):
                   font=("Consolas", 9), foreground="#0077cc",
                   wraplength=380, justify="left").pack(anchor="w")
 
-        # ── Raw GPIB Terminal ─────────────────────────────────────────────
         tf = ttk.LabelFrame(right, text="Raw GPIB Terminal", padding=6)
         tf.grid(row=3, column=0, sticky="ew", pady=(0, 6))
 
@@ -405,7 +338,6 @@ class ProberDebugPanel(ttk.Frame):
         ttk.Label(term, text="⚠ motion cmds ask confirm",
                   foreground="orange", font=("Arial", 8)).pack(side="left", padx=8)
 
-        # ── STB Reference ─────────────────────────────────────────────────
         stb_outer = ttk.LabelFrame(right,
                                    text="STB Code Reference  (factory defaults — may differ if customized)",
                                    padding=4)
@@ -448,11 +380,8 @@ class ProberDebugPanel(ttk.Frame):
         stb_canvas.bind_all("<MouseWheel>",
                             lambda e: stb_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
-    # ── Read-only command handlers ────────────────────────────────────────────
 
     def _cmd_read_stb(self):
-        # Refresh the tracked-Z display too — motion handlers and the
-        # auto-poll all funnel through here after commands complete.
         self._update_z_display()
         def _run():
             drv = self._drv()
@@ -498,14 +427,8 @@ class ProberDebugPanel(ttk.Frame):
     _cmd_cassette     = property(lambda self: self._make_reader("get_cassette_status", "x"))
     _cmd_on_wafer     = property(lambda self: self._make_reader("get_on_wafer_info",   "O"))
 
-    # ── Z & Die status ────────────────────────────────────────────────────────
 
     def _update_z_display(self):
-        """Show the driver's tracked Z state. Must run on the UI thread.
-
-        There is no 'is the chuck up?' request on the prober — the driver
-        tracks Z from the completion STB of each Z/D/motion command.
-        """
         drv = self._drv(silent=True)
         z = getattr(drv, "z_is_up", None) if drv else None
         if drv is None:
@@ -541,7 +464,6 @@ class ProberDebugPanel(ttk.Frame):
                 self.after(0, lambda: self._xy_var.set("XY: —"))
         self._run_bg(_run)
 
-    # ── XY motion handlers ────────────────────────────────────────────────────
 
     def _cmd_move_xy(self):
         try:
@@ -678,7 +600,6 @@ class ProberDebugPanel(ttk.Frame):
                 self._log(f"[PROBER] Set index error: {e}")
         self._run_bg(_run)
 
-    # ── Motion handlers ───────────────────────────────────────────────────────
 
     def _cmd_z_up(self):
         if not messagebox.askyesno(
@@ -813,15 +734,12 @@ class ProberDebugPanel(ttk.Frame):
                 self._log(f"[PROBER] Stop error: {e}")
         self._run_bg(_run)
 
-    # ── Raw terminal ──────────────────────────────────────────────────────────
 
     def _send_raw(self):
         raw = self._cmd_var.get().strip()
         if not raw:
             return
 
-        # Mnemonics are case-sensitive on this prober ('Z' Z-UP ≠ 'z' set
-        # contact height, 'E' error code ≠ 'e' error message) — never upper().
         mn = _mnemonic(raw)
 
         if mn in _MOTION_CMDS:
@@ -859,9 +777,6 @@ class ProberDebugPanel(ttk.Frame):
                 self._log(f"[PROBER] >> {cmd!r}")
                 expect_str = self._expect_stb.get().strip()
 
-                # Only data-request commands answer as Talker; querying an
-                # action command would time out AND still execute it — so
-                # route by mnemonic instead of trying query first.
                 if mnemonic in _QUERY_CMDS:
                     resp = drv.inst.query(cmd)
                     self._log(f"[PROBER] << {resp!r}")
@@ -876,8 +791,6 @@ class ProberDebugPanel(ttk.Frame):
                         stb = drv.inst.read_stb()
                         if stb == tgt:
                             self._log(f"[PROBER] STB={stb} received ✓")
-                            # Completion STBs carry the only Z information the
-                            # prober gives — keep the tracked state current.
                             if stb == 67:
                                 drv.z_is_up = True
                             elif stb in (65, 66, 68, 70, 90):
@@ -899,8 +812,6 @@ class ProberDebugPanel(ttk.Frame):
                 else:
                     self._log("[PROBER] Write sent (no STB wait)")
                     if mnemonic in _MOTION_CMDS:
-                        # Motion sent without confirming completion — the chuck
-                        # height can no longer be trusted until the next reply.
                         drv.z_is_up = None
                         self.after(0, self._update_z_display)
                     self.after(0, lambda: self._resp_var.set("Write sent — no response expected"))
@@ -909,7 +820,6 @@ class ProberDebugPanel(ttk.Frame):
                 self.after(0, lambda: self._resp_var.set(f"Error: {e}"))
         self._run_bg(_run)
 
-    # ── Auto-poll ─────────────────────────────────────────────────────────────
 
     def _toggle_poll(self):
         if self._poll_var.get():

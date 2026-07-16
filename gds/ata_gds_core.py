@@ -1,11 +1,3 @@
-"""
-ATA GDSII Core Parser
----------------------
-Core parsing and export utilities for the ATA Phase 1 GDSII GUI.
-
-This module intentionally keeps the GDSII parsing logic separate from the GUI so
-it can later be reused by ATA's command-line tools or the main test application.
-"""
 
 from __future__ import annotations
 
@@ -18,12 +10,12 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 Number = float
-BBox = Tuple[float, float, float, float]  # min_x, min_y, max_x, max_y
+BBox = Tuple[float, float, float, float]
 
 
 def _require_gdstk():
     try:
-        import gdstk  # type: ignore
+        import gdstk
         return gdstk
     except ImportError as exc:
         raise ImportError(
@@ -51,12 +43,6 @@ def _point_tuple(value: Any) -> Tuple[float, float]:
 
 
 def _sequence_or_empty(value: Any) -> Any:
-    """Return an iterable-like object without testing NumPy arrays for truthiness.
-
-    gdstk exposes geometry points as NumPy arrays. Expressions such as
-    `points or []` raise `ValueError: The truth value of an array with more than
-    one element is ambiguous`. This helper avoids that class of error.
-    """
     if value is None:
         return []
     return value
@@ -83,7 +69,6 @@ def _bbox_from_points(points: Any) -> Optional[BBox]:
 
 
 def _bbox_from_object(obj: Any) -> Optional[BBox]:
-    """Return a normalized bbox from a gdstk object, if possible."""
     try:
         bbox = obj.bounding_box()
     except Exception:
@@ -160,7 +145,6 @@ def _normalize_name(value: Any) -> str:
 
 
 def parse_name_list(value: Optional[Any]) -> List[str]:
-    """Parse comma/semicolon/newline separated names from GUI or CLI settings."""
     if value is None:
         return []
     if isinstance(value, (list, tuple, set)):
@@ -187,7 +171,6 @@ def _reference_target_cell(ref: Any) -> Any:
 
 
 Transform = Tuple[float, float, float, float, float, float]
-# x' = a*x + b*y + tx ; y' = c*x + d*y + ty
 
 
 def _identity_transform() -> Transform:
@@ -195,12 +178,6 @@ def _identity_transform() -> Transform:
 
 
 def _reference_transform(ref: Any) -> Transform:
-    """Return an affine transform for a gdstk reference.
-
-    This handles normal translation, rotation, magnification, and x-reflection.
-    It is intentionally conservative; it is sufficient for locating alignment-cell
-    reference origins and bounding boxes in most MEMS/wafer layouts.
-    """
     ox, oy = _point_tuple(getattr(ref, "origin", None))
     rot = _as_float(getattr(ref, "rotation", 0.0), 0.0)
     mag_raw = getattr(ref, "magnification", 1.0)
@@ -210,7 +187,6 @@ def _reference_transform(ref: Any) -> Transform:
     cos_r = math.cos(rot)
     sin_r = math.sin(rot)
 
-    # gdstk x_reflection reflects across the x-axis before rotation.
     y_sign = -1.0 if reflect else 1.0
     a = mag * cos_r
     b = -mag * sin_r * y_sign
@@ -253,13 +229,6 @@ def _transform_bbox(bbox: Optional[BBox], transform: Transform) -> Optional[BBox
 
 
 def _name_matches(candidate: str, wanted_names: Sequence[str]) -> Tuple[bool, str]:
-    """Case-insensitive name matcher.
-
-    Supports exact matches, substring matches, and a simple trailing-star prefix
-    convention such as ATA_ALIGN_*. This keeps the GUI easy for non-software
-    users while still allowing automatic detection of properly formatted ATA_*
-    layout names.
-    """
     candidate_norm = _normalize_name(candidate)
     for wanted in wanted_names:
         wanted_norm = _normalize_name(wanted)
@@ -276,7 +245,6 @@ def _name_matches(candidate: str, wanted_names: Sequence[str]) -> Tuple[bool, st
 
 
 def default_alignment_mark_names() -> str:
-    """Default names/patterns used by the GUI and CLI for alignment detection."""
     return "ATA_ALIGN_*, KS_LYR4, KS_Neg_LYR2"
 
 
@@ -285,7 +253,6 @@ def _is_ata_name(value: Any) -> bool:
 
 
 def _classify_ata_name(value: Any) -> str:
-    """Classify an ATA convention label/cell/reference name."""
     name = str(value or "").strip().upper()
     if name.startswith("ATA_ALIGN_"):
         return "alignment_mark"
@@ -384,13 +351,6 @@ def extract_ata_convention_records(
     selected_cell_name: str,
     max_depth: int = 30,
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Extract records based on the Atomica ATA GDS2 layout convention.
-
-    This is the parser-side implementation of the layout-engineer manual. It
-    looks for ATA_* text labels and ATA_* referenced cell names in the selected
-    cell hierarchy and produces structured records that ATA can use later for
-    alignment, pad maps, devices, test structures, sites, and channel mapping.
-    """
     all_records: List[Dict[str, Any]] = []
     if selected_cell is None:
         return {
@@ -470,7 +430,6 @@ def extract_ata_convention_records(
 
 
 def discover_layout_metadata(gds_path: str) -> Tuple[Dict[str, Any], str]:
-    """Try to load the sidecar JSON metadata file recommended in the manual."""
     if not gds_path:
         return {}, ""
     base, _ext = os.path.splitext(gds_path)
@@ -492,13 +451,11 @@ def discover_layout_metadata(gds_path: str) -> Tuple[Dict[str, Any], str]:
 
 
 def _metadata_value(metadata: Dict[str, Any], *keys: str, default: Any = None) -> Any:
-    """Retrieve values from flat or lightly nested metadata dictionaries."""
     if not metadata:
         return default
     for key in keys:
         if key in metadata:
             return metadata[key]
-    # common sections used by the manual
     for section in ("wafer", "die", "layers", "probe", "ata", "layout"):
         sub = metadata.get(section)
         if isinstance(sub, dict):
@@ -527,7 +484,6 @@ def validate_ata_convention(
     layout_metadata: Optional[Dict[str, Any]] = None,
     metadata_path: str = "",
 ) -> List[Dict[str, Any]]:
-    """Generate a simple QA report for ATA-ready GDS2 files."""
     metadata = layout_metadata or {}
     records: List[Dict[str, Any]] = []
 
@@ -605,14 +561,6 @@ def extract_alignment_marks(
     alignment_mark_names: Optional[Any] = None,
     max_depth: int = 30,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Find alignment mark reference positions by referenced GDS cell name.
-
-    For the user's current layouts, expected names include KS_LYR4 and
-    KS_Neg_LYR2. If those names appear as referenced cell names anywhere under
-    the selected top/device cell, the exported x/y position is the transformed
-    center of that alignment-cell bounding box. If the referenced cell has no
-    bounding box, the transformed reference origin is used.
-    """
     wanted_names = parse_name_list(alignment_mark_names) or parse_name_list(default_alignment_mark_names())
     if selected_cell is None or not wanted_names:
         return [], []
@@ -665,7 +613,6 @@ def extract_alignment_marks(
             if target_cell is not None:
                 visit(target_cell, total_transform, occurrence_path, next_stack, depth + 1)
 
-        # Also support text labels that directly carry the alignment mark name.
         for j, label in enumerate(iter_cell_labels(cell), start=1):
             label_text = str(getattr(label, "text", "")).strip()
             match, matched_name = _name_matches(label_text, wanted_names)
@@ -739,7 +686,6 @@ def get_top_cell_names(lib: Any) -> List[str]:
 
 
 def copy_flattened_cell(cell: Any) -> Any:
-    """Create a flattened copy of a cell without mutating the original library cell."""
     copy_name = f"__ATA_FLAT__{getattr(cell, 'name', 'CELL')}"
     try:
         copied = cell.copy(copy_name, deep_copy=True)
@@ -844,7 +790,6 @@ def collect_records(
     layout_metadata: Optional[Dict[str, Any]] = None,
     metadata_path: str = "",
 ) -> Dict[str, Any]:
-    """Parse library data into records that can be displayed or exported."""
     cells_by_name = _cell_dict(lib)
     top_cell_names = get_top_cell_names(lib)
 
@@ -938,9 +883,6 @@ def collect_records(
         selected_cell_name=selected_cell_name,
     )
 
-    # Merge ATA_ALIGN_* records into the alignment-mark export so layouts that
-    # follow the manual work without the user entering exact names. Avoid exact
-    # duplicate coordinates/names from text labels/references.
     existing_align_keys = {
         (str(r.get("mark_name", "")).upper(), round(_as_float(r.get("x_um")), 6), round(_as_float(r.get("y_um")), 6))
         for r in alignment_marks
@@ -1135,7 +1077,6 @@ def _match_label_to_bbox(labels: Sequence[Dict[str, Any]], bbox: BBox) -> str:
     if not labels:
         return ""
 
-    # First choice: label origin lies inside the pad bounding box.
     inside = []
     for label in labels:
         x = _as_float(label.get("x_um"))
@@ -1145,7 +1086,6 @@ def _match_label_to_bbox(labels: Sequence[Dict[str, Any]], bbox: BBox) -> str:
     if inside:
         return str(inside[0].get("text", "")).strip()
 
-    # Second choice: closest label within a modest search distance.
     cx, cy = _bbox_center(bbox)
     width, height = _bbox_size(bbox)
     max_dist = max(50.0, 2.0 * max(abs(width), abs(height)))
@@ -1172,12 +1112,6 @@ def generate_wafer_map(
     die_pitch_y_um: Optional[float] = None,
     use_references_if_available: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Generate a first-pass ATA wafer map.
-
-    If the selected GDS cell contains direct references and use_references_if_available
-    is true, those reference origins are used as device locations. Otherwise a simple
-    circular wafer grid is generated from die pitch and wafer diameter.
-    """
     if use_references_if_available and len(selected_cell_references) > 1:
         rows = []
         for i, ref in enumerate(selected_cell_references, start=1):
@@ -1217,7 +1151,6 @@ def generate_wafer_map(
         for col in range(-max_col, max_col + 1):
             x = col * die_pitch_x_um
             y = row * die_pitch_y_um
-            # Keep die centers inside the usable wafer radius.
             if math.hypot(x, y) <= usable_radius_um:
                 rows.append(
                     {
@@ -1247,7 +1180,7 @@ def default_die_pitch_from_summary(data: Dict[str, Any]) -> Tuple[float, float]:
     if bbox is None:
         return (1000.0, 1000.0)
     try:
-        return _bbox_size(tuple(bbox))  # type: ignore[arg-type]
+        return _bbox_size(tuple(bbox))
     except Exception:
         return (1000.0, 1000.0)
 
@@ -1272,7 +1205,6 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     try:
-        # Convert numpy scalars/arrays and other GDS objects into serializable forms.
         if hasattr(value, "tolist"):
             return value.tolist()
     except Exception:
@@ -1292,7 +1224,6 @@ def export_ata_files(
     wafer_map: Optional[Sequence[Dict[str, Any]]] = None,
     source_file: str = "",
 ) -> Dict[str, str]:
-    """Export parsed GDS data and ATA-ready files."""
     os.makedirs(output_dir, exist_ok=True)
 
     summary = dict(data.get("summary", {}))
@@ -1351,11 +1282,6 @@ def export_ata_files(
 
 
 def build_first_pass_test_plan(data: Dict[str, Any], wafer_map: Sequence[Dict[str, Any]], source_file: str = "") -> Dict[str, Any]:
-    """Create a minimal ATA-compatible test plan stub.
-
-    This is not the final production test recipe. It gives ATA a consistent starting
-    data structure that can later be filled with instrument/channel assignments.
-    """
     summary = data.get("summary", {})
     return {
         "ata_version": "phase_1_gds_import",

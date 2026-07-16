@@ -30,7 +30,7 @@ class GPIBInstrument:
             self.rm = pyvisa.ResourceManager()
             self.inst = self.rm.open_resource(self.address)
             self.inst.timeout = self.timeout
-            self.inst.encoding = "latin-1"   # handles non-ASCII bytes in IDN/TSP responses
+            self.inst.encoding = "latin-1"
             print(f"[{config_key.upper()}] Connected successfully at {self.address}")
         except Exception as e:
             print(f"[{config_key.upper()}] FAILED to connect: {e}")

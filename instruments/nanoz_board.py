@@ -1,17 +1,3 @@
-"""NanoZ EK-IV evaluation board driver — serial (pyserial), not GPIB/VISA.
-
-Protocol logic (port scanning, board identification via ver/whoami, and the
-#spl!/#env! binary packet formats) is ported from the reference CLI tool
-gds/nanoz_ekiv_run_collect.py, which was written against real hardware and
-already documents/handles the on-wire format correctly — this module keeps
-that parsing byte-for-byte identical and just restructures it for a GUI:
-persistent per-board reader threads that continuously push parsed packets
-onto a shared queue.Queue() (see NanoZBoard), instead of one CLI process
-collecting a single fixed-duration run for one board.
-
-Multiple boards (up to 6 in the intended setup) each own an independent
-COM port at 921600 baud.
-"""
 from __future__ import annotations
 
 import csv
@@ -32,11 +18,6 @@ READ_TIMEOUT_S = 0.05
 
 VER_RE = re.compile(r"SW:(V[^\s]+).*?S/N:\s*([0-9A-Fa-f]+-[0-9A-Fa-f]+)", re.S)
 WHOAMI_RE = re.compile(r"Iam\s+([0-9A-Fa-f]+)", re.I)
-#  <cs> is printed in hex by real EK-IV firmware (e.g. "1BA8") even though
-#  every other field in the header is decimal -- confirmed against a live
-#  board log (COM3: "#env3! 132 1BA8 41794 0"), which the reference
-#  script's all-decimal (\d+) regex could not match at all. Every other
-#  header field stays \d+ (decimal), matching real captures.
 ENV_HEADER_RE = re.compile(rb"#env(\d)!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s*$", re.I)
 SPL_HEADER_RE = re.compile(rb"#spl!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$", re.I)
 
@@ -135,7 +116,6 @@ def read_text_for(ser: serial.Serial, seconds: float) -> str:
 
 
 def identify_on_port(port: str) -> Optional[BoardIdentity]:
-    """Probe `port` with ver/whoami; None if nothing NanoZ-shaped answers."""
     try:
         with open_serial(port) as ser:
             send_ascii(ser, "ver")
@@ -172,11 +152,6 @@ def identify_on_port(port: str) -> Optional[BoardIdentity]:
 
 def discover_boards(ports: Optional[list[str]] = None,
                     log: Optional[Callable[[str], None]] = None) -> list[BoardIdentity]:
-    """Probe candidate ports (default: every COM port currently on the
-    system) and return every one that answers like a NanoZ EK-IV board.
-    `log`, if given, is called with a short progress string after each
-    port is probed — meant for live GUI feedback during a scan that may
-    take a few seconds (each candidate port gets ~1.25s to respond)."""
     candidates = ports if ports is not None else [p.device for p in list_serial_ports()]
     found: list[BoardIdentity] = []
     for port in candidates:
@@ -226,9 +201,6 @@ def read_exact_from_buffer(ser: serial.Serial, buffer: bytearray, n: int, timeou
 
 
 def parse_spl_data(data: bytes) -> dict:
-    # sample_t is 48 bytes in the protocol document.
-    # uint32 ppms, uint8 chipID, uint8 sensorMask, uint16 reserved,
-    # int16 DAC_Voltage[4], float ADC_Current[4], heater_t heater[2] = 4 floats.
     if len(data) < 48:
         raise NanoZError(f"SPL data block too short: {len(data)} bytes")
     vals = struct.unpack_from("<IBBH4h4f4f", data, 0)
@@ -257,7 +229,6 @@ def parse_spl_data(data: bytes) -> dict:
 
 
 def parse_env_data(data: bytes) -> dict:
-    # env_typ is 132 bytes for EK-IV based on the documented C struct.
     if len(data) < 132:
         raise NanoZError(f"ENV data block too short: {len(data)} bytes")
     off = 0
@@ -309,18 +280,6 @@ def append_csv_row(path, row: dict) -> None:
 
 
 class NanoZBoard:
-    """One connected board: owns its serial port and a persistent
-    background reader thread that continuously parses #spl!/#env! packets
-    and pushes them onto a shared queue.Queue() — Tkinter widgets can only
-    be touched from the main thread, so the GUI drains this queue on a
-    self.after() poll instead (see gui/nanoz_panel.py's _nanoz_check_queue).
-
-    `die_provider`, if given, is called (with no arguments) at the moment
-    each packet is parsed and should return the (row, col) of whichever
-    die the prober currently has under test — every packet dict gets
-    tagged with it (die_row/die_col), same intent as the reference
-    script's "append the current Die X and Die Y coordinates" step.
-    """
 
     def __init__(self, identity: BoardIdentity, out_queue,
                 die_provider: Optional[Callable[[], tuple]] = None,
@@ -348,22 +307,6 @@ class NanoZBoard:
             self.ser = open_serial(self.port)
 
     def start(self):
-        """Open the port (if needed), make sure the board isn't already
-        mid-cycle from an earlier session, then start the persistent
-        reader thread.
-
-        An active cycle keeps streaming unsolicited #spl!/#env! binary
-        blocks on its own schedule. If the reader thread starts reading
-        before it's synchronized to a clean header boundary, a stray
-        \\r/\\n byte that happens to occur inside that binary data gets
-        misread by read_line_bytes as a text line terminator — the bytes
-        around it then get decoded as "text" and show up as illegible
-        garbage in the log. Sending pause first stops any in-progress
-        cycle so the board goes quiet before we start listening; the
-        buffer reset afterward drops whatever partial/unsynced bytes
-        arrived in that window (harmless — at most a "Cycle completed"
-        or "no cycle running" status line) so the reader thread's first
-        read starts from a clean boundary."""
         self.connect()
         try:
             send_ascii(self.ser, "pause")
@@ -376,29 +319,18 @@ class NanoZBoard:
         self._thread.start()
 
     def run_cycle(self, cycle: int):
-        """'run <cycle>' — trigger the heaters for this die's touchdown."""
         if self.ser:
             send_ascii(self.ser, f"run {cycle}")
 
     def pause(self):
-        """'pause' — halt the heaters (end of a touchdown, or teardown)."""
         if self.ser:
             send_ascii(self.ser, "pause")
 
     def send_raw(self, cmd: str):
-        """Send an arbitrary ASCII command from the protocol reference
-        (ver, whoami, #env?, calib!, calib ?, cleep, or a manual run/pause
-        for isolated testing outside a full lot — see the NanoZ Protocol
-        doc under references/). Any reply arrives asynchronously through
-        the normal reader thread/queue as a "text" packet, same as every
-        other status line (see _reader_loop) — there is no separate
-        synchronous read here, since the reader thread already owns the
-        port and a second concurrent read would race it."""
         if self.ser:
             send_ascii(self.ser, cmd)
 
     def stop(self):
-        """Stop the reader thread and close the port."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
@@ -410,7 +342,6 @@ class NanoZBoard:
                 pass
         self.ser = None
 
-    # ── Background reader thread ────────────────────────────────────────
 
     def _reader_loop(self):
         next_env = time.time() + self.env_interval_s if self.env_interval_s > 0 else float("inf")

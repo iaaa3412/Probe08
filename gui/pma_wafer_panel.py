@@ -1,48 +1,3 @@
-"""PMA Wafer Panel — imports a legacy "IMT Prober Recipe Generation" .xls
-workbook (the Excel/VBA tool that used to hand-generate .PMA/.PMV/.PMS
-recipe files, e.g. "LaMP electrical 21 PCM whole wafer_1_31_14.xls") and
-extracts its MajorMoves wafer/shot map for viewing, without needing Excel
-installed.
-
-Sheet layout, reverse-engineered from basProbeRecipe.bas — the VBA macro
-embedded in the workbook itself (Alt+F11 -> Modules -> basProbeRecipe ->
-CreateAllFiles / WriteMovesFile):
-
-    MainMenu   Recipe name, die size, and align-site offset live in
-               Excel-defined names (RecipeName, DieSizeX, DieSizeY,
-               XMoveFirstFromAlignSite, YMoveFirstFromAlignSite). Below
-               that, free-form Name/Value fields (Pre Align Message,
-               Voltage, Delay1..Delay3, Iterations, MeterDelay, Averages,
-               NPLC, MeterCurrentLimit, MeterRange, ...) start at row 35,
-               column B/C, and run until the first blank Name cell — this
-               is the exact same set of fields dumped into the .PMA file,
-               which recipe_panel.py's parse_pma_params()/pma_params_to_
-               steps() already imports as recipe steps.
-
-    MajorMoves The wafer/shot grid. Row 1 (from column B) holds X step
-               values in microns from the align die; column A (from row 2)
-               holds Y step values (both stop at the first blank cell —
-               that's the grid's bounding box, regardless of any leftover
-               cell formatting further out). Each interior cell is one
-               probe "shot" (one stage move + touchdown):
-                 - a non-default cell fill color means that shot is
-                   excluded from the map entirely (outside the wafer, or
-                   otherwise skipped) — mirrors the VBA's own
-                   `ActiveCell.Interior.ColorIndex <> xlColorIndexNone`
-                   check.
-                 - otherwise the cell's text is up to four "/"-separated
-                   die IDs sharing that one touchdown, e.g.
-                   "13-12/NA/13-13/13-03" — this probe card contacts 4
-                   physically adjacent dies per shot, and "NA" in any slot
-                   means no real die sits there and it's skipped. A blank
-                   cell (no text at all) falls back to the VBA's own
-                   auto-numbered 7-digit device ID.
-
-    MinorMoves Land/pad-stepping positions within a single die (a separate
-               concept from the four co-touched dies above, per the
-               workbook's own "Xavier Specific Notes"). Not used for the
-               wafer map here.
-"""
 from __future__ import annotations
 
 import bisect
@@ -75,9 +30,8 @@ except ImportError:
     _MPL = False
 
 
-# ── Pure parsing (no Tk / no matplotlib needed — testable standalone) ──────
 
-_MAIN_MENU_PARAMS_FIRST_ROW1 = 35   # 1-indexed Excel row (VBA: "For TRow = 35 To 300")
+_MAIN_MENU_PARAMS_FIRST_ROW1 = 35
 _MAIN_MENU_PARAMS_LAST_ROW1 = 300
 
 
@@ -111,9 +65,6 @@ def _positive_float(s: str) -> Optional[float]:
 
 
 def _grid_pitch(headers: List[float]) -> Optional[float]:
-    """Fallback die pitch (see parse_legacy_workbook) — the step between
-    consecutive MajorMoves grid headers, which is the same as Die Size X/Y
-    by construction (each shot steps exactly one die pitch)."""
     for i in range(1, len(headers)):
         d = abs(headers[i] - headers[i - 1])
         if d > 0:
@@ -122,18 +73,6 @@ def _grid_pitch(headers: List[float]) -> Optional[float]:
 
 
 def _resolve_named_cell(book, name: str):
-    """(row0, col0) on the MainMenu sheet for a workbook-defined name, or
-    None if the name doesn't exist.
-
-    Reads the name's own row/col reference directly rather than trusting
-    its resolved sheet index. Some copies of this workbook (e.g. Save-As'd
-    from a shared template) carry a stale external-link sheet reference for
-    these names — Excel itself still shows the right value, but xlrd's
-    sheet resolution comes back pointing at "<<external>>" — while the
-    row/col position on MainMenu stays correct either way. The VBA macro
-    always reads these names via Sheets("MainMenu").Range(name) regardless
-    of the name's own scope, so anchoring to MainMenu directly matches its
-    own behavior."""
     objs = book.name_map.get(name.lower())
     if not objs:
         return None
@@ -157,18 +96,15 @@ def _named_text(book, name: str, default: str = "") -> str:
 
 
 def read_main_menu_info(book) -> Dict[str, Any]:
-    """Recipe name / die size / align offsets (via the workbook's own
-    defined names) plus the free-form Name/Value fields starting at row 35
-    — exactly the set CreateAllFiles() dumps into the .PMA file."""
     sheet = book.sheet_by_name("MainMenu")
 
     params: Dict[str, str] = {}
     for row1 in range(_MAIN_MENU_PARAMS_FIRST_ROW1, _MAIN_MENU_PARAMS_LAST_ROW1 + 1):
         row0 = row1 - 1
-        name = _cell_text(sheet, row0, 1)   # column B
+        name = _cell_text(sheet, row0, 1)
         if not name:
             break
-        value = _cell_text(sheet, row0, 2)  # column C
+        value = _cell_text(sheet, row0, 2)
         params[name.replace(" ", "")] = value
 
     return {
@@ -190,12 +126,6 @@ def _is_near_white(rgb, threshold: int = 245) -> bool:
 
 
 def _is_cell_excluded(book, sheet, row0: int, col0: int) -> bool:
-    """A shot is excluded when its cell has a genuinely visible fill color
-    — not simply any non-default fill_pattern. Some workbooks carry a
-    handful of cells with an explicit WHITE (or near-white) fill, left over
-    from a fill-down/copy-paste, that's visually indistinguishable from no
-    fill at all in Excel and isn't a real "off the wafer" marker like the
-    workbook's actual exclusion color (red, in both sample workbooks)."""
     xfx = sheet.cell_xf_index(row0, col0)
     bg = book.xf_list[xfx].background
     if bg.fill_pattern == 0:
@@ -207,12 +137,6 @@ def _is_cell_excluded(book, sheet, row0: int, col0: int) -> bool:
 
 
 def read_moves_grid(book, sheet_name: str = "MajorMoves") -> Dict[str, Any]:
-    """Replicates WriteMovesFile()'s own boundary-scan + per-cell logic:
-    column A (from row 2) gives Y headers until the first blank; row 1
-    (from column B) gives X headers until the first blank. Every interior
-    cell in that bounding box is one shot: colored -> excluded, otherwise
-    its "/"-joined text (or an auto-numbered ID if blank) is the shot's
-    die ID(s)."""
     sheet = book.sheet_by_name(sheet_name)
 
     last_y_row0 = 1
@@ -254,13 +178,10 @@ def read_moves_grid(book, sheet_name: str = "MajorMoves") -> Dict[str, Any]:
 
 
 def real_die_ids(shot: Dict[str, Any]) -> List[str]:
-    """A shot's die slots, excluding the "NA" (skip) placeholders."""
     return [d for d in shot["dies"] if d.strip().upper() != "NA"]
 
 
 def parse_legacy_workbook(path: str) -> Dict[str, Any]:
-    """Parse a legacy IMT Prober Recipe Generation .xls workbook end to
-    end: MainMenu recipe info + the MajorMoves wafer/shot map."""
     if not _XLRD:
         raise RuntimeError(f"xlrd is not installed ({_XLRD_ERR}) — run: pip install xlrd")
     book = xlrd.open_workbook(path, formatting_info=True)
@@ -272,11 +193,6 @@ def parse_legacy_workbook(path: str) -> Dict[str, Any]:
     real_count = sum(len(real_die_ids(s)) for s in included)
     na_count = sum(len(s["dies"]) - len(real_die_ids(s)) for s in included)
 
-    # Fall back to the MajorMoves grid's own header spacing when Die Size
-    # X/Y couldn't be resolved from MainMenu (e.g. a broken/external name
-    # link) — without this the map still "loads" but draws each shot as a
-    # near-invisible 1x1 micron rectangle on a plot spanning hundreds of
-    # thousands of microns.
     die_size_x = info["die_size_x"] if _positive_float(info["die_size_x"]) else ""
     die_size_y = info["die_size_y"] if _positive_float(info["die_size_y"]) else ""
     if not die_size_x:
@@ -303,18 +219,12 @@ def parse_legacy_workbook(path: str) -> Dict[str, Any]:
     }
 
 
-# ── ATA folder persistence (💾 Save to ATA Folder / auto-load) ─────────────
 ATA_PMA_FILENAME = "ata_wafer_map_pma.csv"
 _ATA_PMA_META_FIELDS = ("recipe_name", "die_size_x", "die_size_y",
                         "x_move_first", "y_move_first")
 
 
 def save_workbook_to_ata(data: Dict[str, Any], folder: str) -> str:
-    """Write every included shot (die1..die4 slots, NA preserved) plus the
-    workbook's recipe-level metadata (repeated on every row — this file is
-    small, a few hundred/thousand rows at most, so the redundancy isn't
-    worth a second file) to ATA_PMA_FILENAME in `folder`. Returns the path
-    written."""
     path = os.path.join(folder, ATA_PMA_FILENAME)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -330,11 +240,6 @@ def save_workbook_to_ata(data: Dict[str, Any], folder: str) -> str:
 
 
 def load_workbook_from_ata(folder: str) -> Optional[Dict[str, Any]]:
-    """Inverse of save_workbook_to_ata — reconstructs the same shape
-    parse_legacy_workbook returns (minus the original .xls path) so the
-    panel's draw/legend/tree code doesn't need to know whether the data
-    came from a freshly-opened workbook or a previously-saved ATA file.
-    Returns None if ATA_PMA_FILENAME doesn't exist in `folder`."""
     path = os.path.join(folder, ATA_PMA_FILENAME)
     if not os.path.exists(path):
         return None
@@ -374,24 +279,8 @@ def load_workbook_from_ata(folder: str) -> Optional[Dict[str, Any]]:
     }
 
 
-# ── Compare / merge with the Accretech-walked wafer map (Run tab) ──────────
 
 def pma_shots_to_grid(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Re-base this workbook's included shots onto the SAME (row, col)
-    die-grid space the Accretech prober itself uses for G/J moves: indices
-    relative to the manually-aligned center die, not the MajorMoves sheet's
-    own arbitrary top-left corner.
-
-    Each shot's stage offset is given relative to "FirstSite" (x_um/y_um);
-    X Move/Y Move From Align Site gives FirstSite's own offset from the
-    align die, so summing the two re-bases the shot onto the align die.
-    Dividing by the die pitch (Die Size X/Y) then lands it on an integer
-    die-grid index — assuming the same pitch and sign convention (X+
-    rightwards, Y+ downwards) as the prober's own row/col, which is the
-    Accretech convention both sample workbooks describe. If dies land on
-    the wrong physical die after merging, that assumption is the first
-    thing to check — see the row/col offset nudge on the Run tab's
-    Compare/Merge dialog."""
     try:
         die_x = float(data.get("die_size_x") or 0)
         die_y = float(data.get("die_size_y") or 0)
@@ -418,15 +307,6 @@ def pma_shots_to_grid(data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def merge_with_accretech(pma_grid: List[Dict[str, Any]], accretech_rc,
                          row_offset: int = 0, col_offset: int = 0) -> List[Dict[str, Any]]:
-    """PMA shots (re-based to the prober's row/col space by
-    pma_shots_to_grid) that land on an actual Accretech-walked die,
-    optionally nudged by row_offset/col_offset to correct a systematic
-    alignment mismatch. accretech_rc is a set/container of (row, col)
-    tuples. One entry per matching die; if two PMA shots somehow land on
-    the same (row, col) their die_ids are combined and raw_text is the
-    last one seen (raw_text is the exact MajorMoves cell text, e.g.
-    "94-60/94-50/94-61/94-51" — used verbatim for legacy exports that key
-    off the whole shot's device ID string, NA slots included)."""
     accretech_rc = set(accretech_rc)
     merged: Dict[tuple, Dict[str, Any]] = {}
     for p in pma_grid:
@@ -441,17 +321,6 @@ def merge_with_accretech(pma_grid: List[Dict[str, Any]], accretech_rc,
 
 
 def centroid_offset(pma_grid: List[Dict[str, Any]], accretech_rc) -> tuple:
-    """Recommend a starting (row_offset, col_offset) by overlaying the two
-    maps' CENTERS rather than trusting a single reference point (the align
-    die) to be exactly right: average every PMA die's (row, col), average
-    every Accretech-walked die's (row, col), and offset by the (rounded)
-    difference between the two centroids. Both maps are roughly the same
-    (round) wafer shape, so lining up their centers of mass is a robust
-    default even if the align-die math that produced pma_grid's positions
-    has a systematic error — it only needs to preserve the PMA shots'
-    shape/spacing relative to EACH OTHER, not their absolute position.
-    Still just a starting point: nudge further by hand if dies land on the
-    wrong physical die. Returns (0, 0) if either side is empty."""
     accretech_rc = list(accretech_rc)
     if not pma_grid or not accretech_rc:
         return 0, 0
@@ -462,13 +331,12 @@ def centroid_offset(pma_grid: List[Dict[str, Any]], accretech_rc) -> tuple:
     return round(acc_row_c - pma_row_c), round(acc_col_c - pma_col_c)
 
 
-# ── GUI panel ────────────────────────────────────────────────────────────
 
-_COLOR_EXCLUDED = "#374151"     # gray  - shot not on the map at all
-_COLOR_FULL     = "#16a34a"     # green - all 4 slots are real dies
-_COLOR_PARTIAL  = "#d97706"     # amber - some slots are real, some NA
-_COLOR_EMPTY    = "#dc2626"     # red   - included shot but every slot is NA
-_COLOR_SELECTED = "#38bdf8"     # cyan  - currently selected shot outline
+_COLOR_EXCLUDED = "#374151"
+_COLOR_FULL     = "#16a34a"
+_COLOR_PARTIAL  = "#d97706"
+_COLOR_EMPTY    = "#dc2626"
+_COLOR_SELECTED = "#38bdf8"
 
 
 class PmaWaferPanel(ttk.Frame):
@@ -494,7 +362,6 @@ class PmaWaferPanel(ttk.Frame):
         except Exception:
             pass
 
-    # ── Controls ─────────────────────────────────────────────────────────
 
     def _build_controls(self):
         ctl = ttk.Frame(self, padding=6)
@@ -591,7 +458,6 @@ class PmaWaferPanel(ttk.Frame):
         ttk.Button(right, text="Export Shots to CSV…", command=self._export_csv).grid(
             row=5, column=0, sticky="w", pady=(6, 0))
 
-    # ── File load ────────────────────────────────────────────────────────
 
     def _open_workbook(self):
         path = filedialog.askopenfilename(
@@ -607,7 +473,7 @@ class PmaWaferPanel(ttk.Frame):
     def _load_worker(self, path: str):
         try:
             data = parse_legacy_workbook(path)
-            self._loaded_ata_folder = None   # freshly opened, not yet saved to ATA
+            self._loaded_ata_folder = None
             self.after(0, lambda: self._after_load(data))
         except Exception as exc:
             self.after(0, lambda e=exc: self._load_failed(e))
@@ -618,10 +484,6 @@ class PmaWaferPanel(ttk.Frame):
         self._log(f"[PMA] Load failed: {exc}")
 
     def _save_to_ata(self):
-        """💾 Save to ATA Folder — write ATA_PMA_FILENAME into the loaded
-        ATA folder so this workbook's wafer/shot map survives a restart
-        without re-opening the original .xls (see load_from_ata, called
-        automatically whenever an ATA folder is (re)loaded)."""
         if not self.workbook_data:
             messagebox.showinfo("No Data", "Open a legacy recipe workbook first.")
             return
@@ -644,12 +506,6 @@ class PmaWaferPanel(ttk.Frame):
         self._log(f"[PMA] Saved {self.workbook_data['included_shot_count']} shot(s) → {path}")
 
     def load_from_ata(self, folder: str):
-        """Opportunistically restore a previously-saved wafer/shot map:
-        read ATA_PMA_FILENAME from folder (written by 💾 Save to ATA
-        Folder) and populate the same view a freshly-opened workbook
-        would. Silent no-op if the file doesn't exist yet — called
-        automatically whenever an ATA folder is (re)loaded, not on
-        explicit user action."""
         if not folder:
             return
         data = load_workbook_from_ata(folder)
@@ -681,10 +537,6 @@ class PmaWaferPanel(ttk.Frame):
         )
 
     def _update_legend(self, data: Dict[str, Any]):
-        """Some workbooks probe 4 co-touched dies per shot (LaMP), others
-        probe exactly 1 die per shot (Maddy TL) — the "full" legend swatch
-        must reflect whichever this file actually uses instead of always
-        claiming "4/4 dies"."""
         width = max((len(s["dies"]) for s in data["shots"] if s["included"]), default=0)
         n = width or 1
         self._legend_labels["full"].config(text=f"{n}/{n} dies (full)")
@@ -700,7 +552,6 @@ class PmaWaferPanel(ttk.Frame):
                 "/".join(s["dies"]),
             ))
 
-    # ── Map drawing ──────────────────────────────────────────────────────
 
     def _draw_empty(self):
         self.ax.clear()
@@ -734,7 +585,7 @@ class PmaWaferPanel(ttk.Frame):
         if x_headers and y_headers:
             self.ax.set_xlim(min(x_headers) - dx, max(x_headers) + 2 * dx)
             self.ax.set_ylim(min(y_headers) - dy, max(y_headers) + 2 * dy)
-        self.ax.invert_yaxis()   # Y increases downward on this stage, per the workbook's notes
+        self.ax.invert_yaxis()
         self.ax.set_title(f"{data['recipe_name']} — {data['included_shot_count']} shots, "
                           f"{data['real_die_count']} dies")
         self.ax.set_xlabel("X (µm)")
@@ -792,7 +643,6 @@ class PmaWaferPanel(ttk.Frame):
                 self.tree.selection_set(iid)
                 self.tree.see(iid)
 
-    # ── Export ───────────────────────────────────────────────────────────
 
     def _export_csv(self):
         if not self.workbook_data:
