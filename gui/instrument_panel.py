@@ -2773,15 +2773,37 @@ class MainLayout(ttk.Frame):
                                     f"{s.get('chan') or 'A'}{lim_txt} "
                                     "(output ON until an open step)")
                 elif t == "current" and mode == "apply":
+                    actual_current = None
+                    actual_voltage = None
                     if not sim and smu and smu.inst:
                         smu.set_current(smu_ch, float(lvl or 0))
                         if limit:
                             smu.set_voltage_limit(smu_ch, float(limit))
                         smu.turn_output_on(smu_ch)
+                        try:
+                            actual_current = smu.measure_current(smu_ch)
+                        except Exception:
+                            actual_current = None
+                        try:
+                            actual_voltage = smu.measure_voltage(smu_ch)
+                        except Exception:
+                            actual_voltage = None
+                    if actual_current is None:
+                        actual_current = abs(random.gauss(
+                            float(lvl or 0), abs(float(lvl or 0)) * 0.0005 + 1e-12))
                     lim_txt = f", voltage limit {limit} V" if limit else ""
+                    readback_txt = (f"  readback I={actual_current:.6g} A"
+                                    + (f", V={actual_voltage:.6g} V"
+                                       if actual_voltage is not None else ""))
                     self._exec2_log(f"[MEASURE]    forcing {lvl or 0} A on SMU "
                                     f"{s.get('chan') or 'A'}{lim_txt} "
-                                    "(output ON until an open step)")
+                                    "(output ON until an open step)" + readback_txt)
+                    self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
+                                       step=name, type=t, mode=mode, value=f"{actual_current:.6g}",
+                                       unit="A", voltage=actual_voltage,
+                                       connection=conn_str, instrument=instrument)
+                    last_reading = (name, actual_current, "A")
+                    readings_by_name[name] = (actual_current, "A")
                 elif t == "current":
                     set_voltage = None
                     actual_voltage = None

@@ -23,9 +23,11 @@ STEP,HPLaMP_TRACE_PROBE,,,,5,Release,open,,,,Leakage Measurement,,,,,,,,,,,
 STEP,HPLaMP_TRACE_PROBE,,,,6,Settle after output OFF (Delay3),delay,,,,,,,200,,,,,,,,
 RECIPE,Maddy TL,,,,,,,,,,,,,,,,,,,,,
 STEP,Maddy TL,,,,1,Settle after contact,delay,,,,,,,1000,,,,,,,,
-STEP,Maddy TL,,,,2,Kelvin Resistance,resistance,measure,SMU,B,,23:left,2:right,,,,,"4C11,2D02",,,1,0
-STEP,Maddy TL,,,,3,Settle before DMM sense,delay,,,,,,,500,,,,,,,,
-STEP,Maddy TL,,,,4,Kelvin Voltage (DMM),voltage,measure,DMM,,,1:rightm,24:leftm,,,,,"2F01,4E12",,,1,0
-STEP,Maddy TL,,,,5,Resistance Check,passfail,,,,Kelvin Resistance,,,,,,,,5,30,,
-STEP,Maddy TL,,,,6,Release,open,,,,all,,,,,,,,,,,
-STEP,Maddy TL,,,,7,Settle after release,delay,,,,,,,1000,,,,,,,,
+STEP,Maddy TL,,,,2,Force Current,current,apply,SMU,B,,23:left,2:right,0.01,2,,,"4C11,2D02",,,,
+STEP,Maddy TL,,,,3,Settle after output ON,delay,,,,,,,200,,,,,,,,
+STEP,Maddy TL,,,,4,Kelvin Resistance,resistance,measure,SMU,B,,23:left,2:right,,,,,"4C11,2D02",,,1,0
+STEP,Maddy TL,,,,5,Settle before DMM sense,delay,,,,,,,500,,,,,,,,
+STEP,Maddy TL,,,,6,Kelvin Voltage (DMM),voltage,measure,DMM,,,1:rightm,24:leftm,,,,,"2F01,4E12",,,1,0
+STEP,Maddy TL,,,,7,Resistance Check,passfail,,,,Kelvin Resistance,,,,,,,,5,30,,
+STEP,Maddy TL,,,,8,Release,open,,,,all,,,,,,,,,,,
+STEP,Maddy TL,,,,9,Settle after release,delay,,,,,,,1000,,,,,,,,

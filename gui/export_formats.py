@@ -166,6 +166,16 @@ def _col_letter(col: int) -> str:
     return letters
 
 
+def _combined_connection(rows: List[Dict[str, Any]]) -> str:
+    seen: List[str] = []
+    for r in rows:
+        for ch in (r.get("connection") or "").split("_"):
+            if ch and ch not in seen:
+                seen.append(ch)
+    seen.sort(key=lambda ch: ch[1] if len(ch) > 1 else ch)
+    return "_".join(seen)
+
+
 def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     order: List[str] = []
     rows_by_die: Dict[str, List[Dict[str, Any]]] = {}
@@ -188,7 +198,7 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
             (r for r in rows if r.get("type") == "voltage" and r.get("mode") == "measure"
              and r.get("instrument") == "DMM"), None)
         resistance_row = next((r for r in rows if r.get("type") == "resistance"), None)
-        connection = next((r.get("connection") for r in rows if r.get("connection")), "")
+        connection = _combined_connection(rows)
 
         current_val = current_row.get("value") if current_row else ""
         if current_row and current_row.get("voltage") not in (None, ""):
