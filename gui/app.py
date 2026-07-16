@@ -95,13 +95,15 @@ class AtomicaDashboard(tk.Tk):
         hdr = tk.Frame(self, bg="#374558", height=48)
         hdr.grid(row=0, column=0, sticky="ew")
         hdr.grid_propagate(False)
-        logo_path = os.path.join(os.path.dirname(__file__), "atomica_logo.png")
+        logo_path = os.path.join(os.path.dirname(__file__), "logo2.jpg")
         if os.path.exists(logo_path):
             try:
-                img = tk.PhotoImage(file=logo_path)
-                factor = max(1, img.height() // 36)
-                if factor > 1:
-                    img = img.subsample(factor, factor)
+                from PIL import Image, ImageTk
+                pil_img = Image.open(logo_path)
+                target_h = 36
+                scale = target_h / pil_img.height
+                pil_img = pil_img.resize((max(1, int(pil_img.width * scale)), target_h))
+                img = ImageTk.PhotoImage(pil_img)
                 lbl_img = tk.Label(hdr, image=img, bg="#0E0E0F")
                 lbl_img.image = img
                 lbl_img.pack(side="left", padx=(10, 6), pady=4)
