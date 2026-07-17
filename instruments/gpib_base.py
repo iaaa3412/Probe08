@@ -14,7 +14,7 @@ def get_resource_path(relative_path):
 
 class GPIBInstrument:
     def __init__(self, config_key):
-        yaml_path = get_resource_path("config/instruments.yaml")
+        yaml_path = get_resource_path("instruments/instruments.yaml")
         
         with open(yaml_path, "r") as file:
             config = yaml.safe_load(file)

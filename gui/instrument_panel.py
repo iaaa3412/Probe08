@@ -9,6 +9,9 @@ from wafer_map_view import (WaferMapPanel, PadLayoutPanel, ProbeCardWiringFrame,
 from execution_panel import ExecutionDashboard
 from gds_parser_panel import GdsParserPanel
 from switch_debug_panel import SwitchDebugPanel
+from switch_settings_panel import SwitchSettingsPanel
+from switchbox_test_panel import SwitchboxTestPanel
+from instruments_eg_panel import InstrumentsEgPanel
 from probe_routing_panel import scrollable_routing
 from prober_debug_panel import ProberDebugPanel
 from accr_wafer_panel import AccrWaferPanel
@@ -219,9 +222,14 @@ class AlignmentPanel(ttk.LabelFrame):
 
 
 class MainLayout(ttk.Frame):
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, instrument_names=None, init_hardware_fn=None,
+                 system: str = "accretech"):
         super().__init__(parent)
         self.controller = controller
+        self._system = system
+        self._instrument_names = instrument_names or [
+            "UF200R Prober", "SMU (2636B)", "DMM (34461A)", "SW_MATRIX", "Wave Gen (33512B)"]
+        self._init_hardware_fn = init_hardware_fn or controller.init_hardware
         self.export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser('~'), 'Downloads'))
         self.working_dir_var = tk.StringVar(value="C:/automationproject")
         self.lot_id = tk.StringVar()
@@ -265,13 +273,13 @@ class MainLayout(ttk.Frame):
 
         inst_frame = ttk.LabelFrame(sidebar, text="Instruments")
         inst_frame.pack(fill="x", pady=4)
-        for inst in ["UF200R Prober", "SMU (2636B)", "DMM (34461A)", "SW_MATRIX", "Wave Gen (33512B)"]:
+        for inst in self._instrument_names:
             lbl = ttk.Label(inst_frame, text=f"⏳ {inst}", foreground="orange")
             lbl.pack(anchor="w", padx=4, pady=2)
             self.status_labels[inst] = lbl
         ttk.Button(
             inst_frame, text="↻ Refresh Connections",
-            command=self.controller.init_hardware
+            command=self._init_hardware_fn
         ).pack(pady=(8, 4), padx=4, fill="x")
 
         self.lbl_progress = ttk.Label(sidebar, text="No wafer loaded")
@@ -334,7 +342,8 @@ class MainLayout(ttk.Frame):
         self._tab_results(main_nb)
         self._tab_gds_parser(main_nb)
         self._tab_pad_layout(main_nb)
-        self._tab_accr_wafer(main_nb)
+        if self._system == "accretech":
+            self._tab_accr_wafer(main_nb)
         self._tab_pma_wafer(main_nb)
 
         debug_frame = ttk.Frame(top_nb)
@@ -343,19 +352,23 @@ class MainLayout(ttk.Frame):
         debug_nb.pack(fill="both", expand=True)
         self._enable_tab_drag(debug_nb)
 
-        self._tab_instruments(debug_nb)
-        self._tab_execution(debug_nb)
-        self._tab_meas_debug(debug_nb)
-        self._tab_switch_debug(debug_nb)
-        self._tab_probe_routing(debug_nb)
+        if self._system == "accretech":
+            self._tab_instruments(debug_nb)
+            self._tab_probe_routing(debug_nb)
+        else:
+            self._tab_instruments_eg(debug_nb)
+        self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
         self._tab_cassette(debug_nb)
-        self._tab_alignment(debug_nb)
 
-        nanoz_frame = ttk.Frame(top_nb)
-        top_nb.add(nanoz_frame, text="  NanoZ  ")
-        self.nanoz_panel = NanoZPanel(nanoz_frame, controller=self.controller, main_layout=self)
-        self.nanoz_panel.pack(fill="both", expand=True)
+        self._build_exec_panel()
+        self._build_alignment_panel()
+
+        if self._system == "accretech":
+            nanoz_frame = ttk.Frame(top_nb)
+            top_nb.add(nanoz_frame, text="  NanoZ  ")
+            self.nanoz_panel = NanoZPanel(nanoz_frame, controller=self.controller, main_layout=self)
+            self.nanoz_panel.pack(fill="both", expand=True)
 
     def _tab_instruments(self, nb):
         tab = ttk.Frame(nb)
@@ -1173,6 +1186,9 @@ class MainLayout(ttk.Frame):
         ttk.Label(resp_row, textvariable=resp_var, foreground="#0055aa",
                   font=("Consolas", 9)).pack(side="left", padx=4)
 
+    def _wafer_map_source_choices(self) -> list:
+        return [k for k in WAFER_MAP_SOURCES if k == "GDS" or k.lower() == self._system]
+
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="ATA Folder")
@@ -1190,7 +1206,7 @@ class MainLayout(ttk.Frame):
         ttk.Label(ctrl, text="Map source:").pack(side="right", padx=(4, 2))
         self._map_source_var = tk.StringVar(value="GDS")
         map_source_cb = ttk.Combobox(ctrl, textvariable=self._map_source_var,
-                                     values=list(WAFER_MAP_SOURCES), state="readonly",
+                                     values=self._wafer_map_source_choices(), state="readonly",
                                      width=10)
         map_source_cb.pack(side="right")
         map_source_cb.bind("<<ComboboxSelected>>", lambda _e: self._reload_wafer_map_source())
@@ -1238,7 +1254,9 @@ class MainLayout(ttk.Frame):
             self._ata_tree.delete(item)
 
         self._ata_tree.insert("", "end", values=("", "── Key ATA Files ──", ""), tags=("other",))
-        for fname, desc in ATA_KEY_FILES.items():
+        for fname, (desc, owner) in ATA_KEY_FILES.items():
+            if owner not in ("shared", self._system):
+                continue
             if fname in all_files:
                 self._ata_tree.insert("", "end", values=("✔", fname, desc), tags=("found",))
             else:
@@ -1275,10 +1293,12 @@ class MainLayout(ttk.Frame):
         self._on_pad_source_change()
         self.load_alignment_marks(folder_path)
 
-        self.accr_wafer.load_from_ata(folder_path)
+        accr_wafer = getattr(self, "accr_wafer", None)
+        if accr_wafer is not None:
+            accr_wafer.load_from_ata(folder_path)
         self.pma_wafer.load_from_ata(folder_path)
         self._exec2_map_folder = folder_path
-        self._exec2_map_source_var.set("Accretech")
+        self._exec2_map_source_var.set("Accretech" if self._system == "accretech" else "GDS")
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._refresh_export_formats()
 
@@ -1298,9 +1318,8 @@ class MainLayout(ttk.Frame):
         n = self.wafer_map.load_from_ata(self._ata_folder, filename=filename)
         self.controller.log(f"[WAFER MAP] Loaded {n} dies from {filename}")
 
-    def _tab_alignment(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Alignment")
+    def _build_alignment_panel(self):
+        tab = ttk.Frame(self)
         tab.rowconfigure(1, weight=1)
         tab.rowconfigure(2, weight=0)
         tab.columnconfigure(0, weight=1)
@@ -1579,6 +1598,7 @@ class MainLayout(ttk.Frame):
             log_fn=self.controller.log,
             on_card_change=self._on_probe_card_change,
             on_pins_change=lambda: self.pad_panel.refresh_pins(),
+            system=self._system,
         )
         left_col.add(self.pin_wiring, weight=1)
 
@@ -1685,7 +1705,7 @@ class MainLayout(ttk.Frame):
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
         self.recipe_panel = RecipePanel(
-            tab, controller=self.controller,
+            tab, controller=self.controller, system=self._system,
             get_pins=lambda: (self.pin_wiring.get_pin_choices()
                               if hasattr(self, "pin_wiring") else []),
             get_wiring=lambda: (self.pin_wiring.get_wiring()
@@ -1697,17 +1717,26 @@ class MainLayout(ttk.Frame):
                 if hasattr(self, "pin_wiring") else False))
         self.recipe_panel.grid(row=0, column=0, sticky="nsew")
 
-    def _tab_switch_debug(self, nb):
+    def _tab_switch_settings(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="Switch Debug")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
+        if self._system == "accretech":
+            nb.add(tab, text="Switch Settings")
+            self.switch_settings = SwitchSettingsPanel(tab, controller=self.controller)
+            self.switch_settings.grid(row=0, column=0, sticky="nsew")
+        else:
+            nb.add(tab, text="Switch Debug")
+            self.switch_debug = SwitchboxTestPanel(tab, controller=self.controller)
+            self.switch_debug.grid(row=0, column=0, sticky="nsew")
 
-        self.switch_debug = SwitchDebugPanel(tab, controller=self.controller)
-        self.switch_debug.grid(row=0, column=0, sticky="nsew")
-
-        self.recipe_panel.set_connections_viewer(
-            self.switch_debug.set_recipe_connections)
+    def _tab_instruments_eg(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Instruments")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        self.instruments_eg = InstrumentsEgPanel(tab, controller=self.controller)
+        self.instruments_eg.grid(row=0, column=0, sticky="nsew")
 
     def _tab_probe_routing(self, nb):
         tab = ttk.Frame(nb)
@@ -1751,9 +1780,8 @@ class MainLayout(ttk.Frame):
                                        get_folder=lambda: self._ata_folder)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
-    def _tab_execution(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="▶  Execution")
+    def _build_exec_panel(self):
+        tab = ttk.Frame(self)
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
         self.exec_panel = ExecutionDashboard(
@@ -1898,7 +1926,7 @@ class MainLayout(ttk.Frame):
         self._exec2_map_folder = None
         self._exec2_map_source_var = tk.StringVar(value="GDS")
         exec2_source_cb = ttk.Combobox(map_bar, textvariable=self._exec2_map_source_var,
-                                       values=list(WAFER_MAP_SOURCES), state="readonly",
+                                       values=self._wafer_map_source_choices(), state="readonly",
                                        width=10)
         exec2_source_cb.pack(side="left", padx=(8, 0))
         exec2_source_cb.bind("<<ComboboxSelected>>",
@@ -2075,7 +2103,13 @@ class MainLayout(ttk.Frame):
 
 
     def _exec2_switch_panels(self):
-        panels = [self.probe_routing, self.switch_debug]
+        panels = []
+        probe_routing = getattr(self, "probe_routing", None)
+        if probe_routing is not None:
+            panels.append(probe_routing)
+        switch_debug = getattr(self, "switch_debug", None)
+        if switch_debug is not None and hasattr(switch_debug, "mark_closed"):
+            panels.append(switch_debug)
         bottom = getattr(self.controller, "bottom_routing", None)
         if bottom is not None:
             panels.append(bottom)
@@ -2224,7 +2258,10 @@ class MainLayout(ttk.Frame):
 
 
     def _exec2_pma_accretech_rc(self):
-        return {(y, x) for (x, y, _raw) in self.accr_wafer._dies}
+        accr_wafer = getattr(self, "accr_wafer", None)
+        if accr_wafer is None:
+            return set()
+        return {(y, x) for (x, y, _raw) in accr_wafer._dies}
 
     def _exec2_compute_pma_merge(self, row_offset: int = 0, col_offset: int = 0):
         data = self.pma_wafer.workbook_data
@@ -3034,409 +3071,6 @@ class MainLayout(ttk.Frame):
         self._exec2_pct_var.set(f"Yield:  {pct:.1f}%  ({p}/{total})")
 
 
-    def _tab_meas_debug(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Meas Debug")
-        tab.rowconfigure(1, weight=0)
-        tab.rowconfigure(2, weight=1)
-        tab.columnconfigure(0, weight=1)
-
-        self._meas_comp_tripped    = False
-        self._meas_ilimit_exceeded = False
-
-        self._meas_nplc_var         = tk.StringVar(value="1")
-        self._meas_averages_var     = tk.StringVar(value="20")
-        self._meas_meter_range_var  = tk.StringVar(value="0.0001")
-        self._meas_meter_ilimit_var = tk.StringVar(value="1e-6")
-        self._meas_meter_delay_var  = tk.StringVar(value="0.2")
-        self._meas_delay1_var       = tk.StringVar(value="100")
-        self._meas_delay2_var       = tk.StringVar(value="200")
-        self._meas_delay3_var       = tk.StringVar(value="200")
-        self._meas_iterations_var   = tk.StringVar(value="1")
-
-        self._meas_z_status_var  = tk.StringVar(value="—")
-        self._meas_die_info_var  = tk.StringVar(value="—")
-        self._meas_xy_var        = tk.StringVar(value="—")
-        self._meas_recipe_var    = tk.StringVar(value="no recipe")
-
-        cfg = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
-        cfg.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-
-        tk.Label(cfg, text="Die #:", bg="#f1f5f9").pack(side="left", padx=(8, 2), pady=6)
-        self._meas_die_var = tk.StringVar(value="1")
-        ttk.Entry(cfg, textvariable=self._meas_die_var, width=5).pack(side="left", padx=(0, 8))
-
-        ttk.Separator(cfg, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
-
-        tk.Label(cfg, text="SMU Ch:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
-        self._meas_ch_var = tk.StringVar(value="smua")
-        ttk.Combobox(cfg, textvariable=self._meas_ch_var,
-                     values=["smua", "smub"], width=6, state="readonly").pack(
-                     side="left", padx=(0, 8))
-
-        tk.Label(cfg, text="Source:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
-        self._meas_src_var = tk.StringVar(value="Voltage")
-        ttk.Combobox(cfg, textvariable=self._meas_src_var,
-                     values=["Voltage", "Current"], width=8, state="readonly").pack(
-                     side="left", padx=(0, 6))
-        self._meas_level_var = tk.StringVar(value="1.0")
-        ttk.Entry(cfg, textvariable=self._meas_level_var, width=7).pack(side="left", padx=(0, 2))
-        self._meas_level_unit = tk.Label(cfg, text="V", bg="#f1f5f9", width=2)
-        self._meas_level_unit.pack(side="left", padx=(0, 8))
-
-        tk.Label(cfg, text="Compliance:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
-        self._meas_comp_limit_var = tk.StringVar(value="100e-6")
-        ttk.Entry(cfg, textvariable=self._meas_comp_limit_var, width=9).pack(side="left", padx=(0, 2))
-        self._meas_comp_unit = tk.Label(cfg, text="A", bg="#f1f5f9", width=2)
-        self._meas_comp_unit.pack(side="left", padx=(0, 8))
-
-        def _on_src(*_):
-            if self._meas_src_var.get() == "Voltage":
-                self._meas_level_unit.config(text="V")
-                self._meas_comp_unit.config(text="A")
-            else:
-                self._meas_level_unit.config(text="A")
-                self._meas_comp_unit.config(text="V")
-        self._meas_src_var.trace_add("write", _on_src)
-
-        ttk.Separator(cfg, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
-
-        tk.Label(cfg, text="Switch Ch:", bg="#f1f5f9").pack(side="left", padx=(0, 2))
-        self._meas_sw_ch_var = tk.StringVar(value="1A1")
-        ttk.Entry(cfg, textvariable=self._meas_sw_ch_var, width=6).pack(side="left", padx=(0, 8))
-
-        ttk.Separator(cfg, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
-
-        ttk.Button(cfg, text="Import Recipe",
-                   command=self._meas_import_recipe).pack(side="left", padx=3, pady=5)
-        ttk.Button(cfg, text="▶  Measure",
-                   command=self._meas_measure).pack(side="left", padx=3, pady=5)
-        ttk.Button(cfg, text="↺  Reset",
-                   command=self._meas_reset).pack(side="left", padx=2, pady=5)
-
-        self._meas_state_lbl = tk.Label(cfg, text="IDLE", bg="#f1f5f9", fg="#6b7280",
-                                        font=("Segoe UI", 11, "bold"))
-        self._meas_state_lbl.pack(side="right", padx=12)
-
-        cfg2 = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
-        cfg2.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
-        _MEAS_PARAMS = [
-            ("NPLC:",          self._meas_nplc_var,         4),
-            ("Averages:",      self._meas_averages_var,      4),
-            ("Meter Range:",   self._meas_meter_range_var,   9),
-            ("I Limit:",       self._meas_meter_ilimit_var,  9),
-            ("Meter Delay s:", self._meas_meter_delay_var,   5),
-            ("Delay1 ms:",     self._meas_delay1_var,        5),
-            ("Delay2 ms:",     self._meas_delay2_var,        5),
-            ("Delay3 ms:",     self._meas_delay3_var,        5),
-            ("Iterations:",    self._meas_iterations_var,    4),
-        ]
-        for lbl_text, svar, entry_w in _MEAS_PARAMS:
-            tk.Label(cfg2, text=lbl_text, bg="#f1f5f9",
-                     font=("Segoe UI", 8)).pack(side="left", padx=(6, 2), pady=4)
-            ttk.Entry(cfg2, textvariable=svar, width=entry_w).pack(
-                side="left", padx=(0, 4))
-
-        body = ttk.PanedWindow(tab, orient="horizontal")
-        body.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
-
-        status_lf = ttk.LabelFrame(body, text="Prober Status", padding=(10, 8))
-        body.add(status_lf, weight=0)
-
-        ind_row = tk.Frame(status_lf)
-        ind_row.pack(fill="x", pady=(4, 8))
-        self._meas_z_indicator = tk.Label(
-            ind_row, text="  Z  ", bg="#9ca3af", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="solid", bd=1)
-        self._meas_z_indicator.pack(side="left", padx=(0, 6))
-        tk.Label(ind_row, textvariable=self._meas_z_status_var,
-                 font=("Segoe UI", 9), fg="#374151").pack(side="left")
-
-        for row_label, svar in [
-            ("Die:",    self._meas_die_info_var),
-            ("XY:",     self._meas_xy_var),
-            ("Recipe:", self._meas_recipe_var),
-        ]:
-            r = tk.Frame(status_lf)
-            r.pack(fill="x", pady=2)
-            tk.Label(r, text=row_label, font=("Segoe UI", 8, "bold"),
-                     fg="#6b7280", width=7, anchor="e").pack(side="left")
-            tk.Label(r, textvariable=svar, font=("Consolas", 8),
-                     fg="#374151", anchor="w", wraplength=160).pack(side="left", padx=(4, 0))
-
-        ttk.Separator(status_lf, orient="horizontal").pack(fill="x", pady=8)
-        ttk.Button(status_lf, text="↻  Check Z / Die",
-                   command=self._meas_check_z).pack(fill="x")
-
-        res_lf = ttk.LabelFrame(body, text="Results", padding=12)
-        body.add(res_lf, weight=1)
-        res_lf.columnconfigure(1, weight=1)
-
-        self._meas_result_vars = {}
-        for r, (label, key, color) in enumerate([
-            ("Die #",      "die",    "#374151"),
-            ("SMU  I",     "smu_i",  "#1d4ed8"),
-            ("SMU  V",     "smu_v",  "#1d4ed8"),
-            ("SMU  R",     "smu_r",  "#1d4ed8"),
-            ("DMM  V",     "dmm_v",  "#047857"),
-            ("Compliance", "comp",   "#6b7280"),
-            ("Result",     "result", "#374151"),
-        ]):
-            tk.Label(res_lf, text=label + ":",
-                     font=("Segoe UI", 10), fg="#6b7280").grid(
-                     row=r, column=0, sticky="w", pady=5, padx=(0, 12))
-            var = tk.StringVar(value="—")
-            lbl = tk.Label(res_lf, textvariable=var,
-                           font=("Consolas", 13, "bold"), fg=color, anchor="w")
-            lbl.grid(row=r, column=1, sticky="w", pady=5)
-            self._meas_result_vars[key] = (var, lbl, color)
-
-        log_lf = ttk.LabelFrame(body, text="Execution Log")
-        body.add(log_lf, weight=2)
-        log_lf.rowconfigure(0, weight=1)
-        log_lf.columnconfigure(0, weight=1)
-
-        self._meas_log_box = tk.Text(
-            log_lf, bg="#0f172a", fg="#dbeafe",
-            font=("Consolas", 9), wrap="word",
-            insertbackground="white", state="disabled")
-        self._meas_log_box.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=6)
-        sb = ttk.Scrollbar(log_lf, command=self._meas_log_box.yview)
-        sb.grid(row=0, column=1, sticky="ns", pady=6)
-        self._meas_log_box.configure(yscrollcommand=sb.set)
-        ttk.Button(log_lf, text="Clear",
-                   command=self._meas_clear_log).grid(
-                   row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 4))
-
-
-    def _meas_log(self, msg: str):
-        ts = time.strftime("%H:%M:%S")
-        self._meas_log_box.configure(state="normal")
-        self._meas_log_box.insert("end", f"{ts}  {msg}\n")
-        self._meas_log_box.see("end")
-        self._meas_log_box.configure(state="disabled")
-        self.controller.log(msg)
-
-    def _meas_clear_log(self):
-        self._meas_log_box.configure(state="normal")
-        self._meas_log_box.delete("1.0", "end")
-        self._meas_log_box.configure(state="disabled")
-
-    def _meas_set_result(self, key: str, value: str, color: str = None):
-        var, lbl, default_color = self._meas_result_vars[key]
-        var.set(value)
-        lbl.config(fg=color if color else default_color)
-
-    def _meas_reset(self):
-        self._meas_comp_tripped    = False
-        self._meas_ilimit_exceeded = False
-        for (var, lbl, color) in self._meas_result_vars.values():
-            var.set("—")
-            lbl.config(fg=color)
-        self._meas_state_lbl.config(text="IDLE", fg="#6b7280")
-
-    def _meas_check_z(self):
-        prober = self.controller.drivers.get("prober")
-        if not prober or not prober.inst:
-            self._meas_z_status_var.set("prober not connected")
-            self._meas_z_indicator.config(bg="#9ca3af")
-            return
-        try:
-            stb, desc = prober.read_stb_decoded()
-            z_down = stb in {66, 68, 70}
-            self._meas_z_status_var.set(f"{'DOWN' if z_down else 'UP'}  (STB {stb})")
-            self._meas_z_indicator.config(bg="#f97316" if z_down else "#22c55e")
-            die_info = prober.get_on_wafer_info()
-            self._meas_die_info_var.set(die_info.strip() if die_info else "—")
-            xy = prober.get_xy_position()
-            self._meas_xy_var.set(xy.strip() if xy else "—")
-            self._meas_log(f"[PROBER] STB={stb} — {desc}")
-        except Exception as e:
-            self._meas_z_status_var.set(f"error: {e}")
-            self._meas_z_indicator.config(bg="#dc2626")
-
-    def _meas_import_recipe(self):
-        from tkinter import filedialog
-        path = filedialog.askopenfilename(
-            title="Import Recipe",
-            filetypes=[("Recipe/INI files", "*.ini *.txt *.cfg"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            params = {}
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line or line.startswith(("#", ";")):
-                        continue
-                    if "=" in line:
-                        k, _, v = line.partition("=")
-                        params[k.strip()] = v.strip()
-
-            mapping = {
-                "Voltage":           self._meas_level_var,
-                "MeterCurrentLimit": self._meas_meter_ilimit_var,
-                "MeterRange":        self._meas_meter_range_var,
-                "NPLC":              self._meas_nplc_var,
-                "Averages":          self._meas_averages_var,
-                "MeterDelay":        self._meas_meter_delay_var,
-                "Delay1":            self._meas_delay1_var,
-                "Delay2":            self._meas_delay2_var,
-                "Delay3":            self._meas_delay3_var,
-                "Iterations":        self._meas_iterations_var,
-            }
-            loaded = [k for k, var in mapping.items() if k in params and not var.set(params[k])]
-            self._meas_recipe_var.set(os.path.basename(path))
-            self._meas_log(f"[RECIPE] Loaded {path}")
-            self._meas_log(f"[RECIPE] Applied: {', '.join(loaded)}")
-        except Exception as e:
-            self._meas_log(f"[RECIPE] Import error: {e}")
-
-    def _meas_measure(self):
-        self._meas_reset()
-        self._meas_state_lbl.config(text="RUNNING", fg="#2563eb")
-        threading.Thread(target=self._meas_measure_thread, daemon=True).start()
-
-    def _meas_measure_thread(self):
-        sw     = self.controller.drivers.get("switch")
-        smu    = self.controller.drivers.get("smu")
-        dmm    = self.controller.drivers.get("dmm")
-        prober = self.controller.drivers.get("prober")
-        ch     = self._meas_ch_var.get()
-
-        try:
-            iterations = max(1, int(float(self._meas_iterations_var.get())))
-        except ValueError:
-            iterations = 1
-
-        try:
-            if prober and prober.inst:
-                try:
-                    stb, desc = prober.read_stb_decoded()
-                    z_down = stb in {66, 68, 70}
-                    self.after(0, lambda s=stb, d=z_down: (
-                        self._meas_z_status_var.set(f"{'DOWN' if d else 'UP'}  (STB {s})"),
-                        self._meas_z_indicator.config(bg="#f97316" if d else "#22c55e"),
-                    ))
-                    die_info = prober.get_on_wafer_info()
-                    if die_info:
-                        self.after(0, lambda v=die_info.strip(): self._meas_die_info_var.set(v))
-                    xy = prober.get_xy_position()
-                    if xy:
-                        self.after(0, lambda v=xy.strip(): self._meas_xy_var.set(v))
-                    self._meas_log(f"[PROBER] STB={stb} — {desc}")
-                except Exception as pe:
-                    self._meas_log(f"[PROBER] Status read: {pe}")
-
-            for it in range(iterations):
-                if iterations > 1:
-                    self._meas_log(f"[MEAS] ── Iteration {it + 1}/{iterations} ──")
-
-                if sw and sw.inst:
-                    sw.open_all()
-                    self._meas_log("[MEAS] Switches open")
-
-                sw_ch = self._meas_sw_ch_var.get().strip()
-                if sw_ch and sw and sw.inst:
-                    sw.close_channel(sw_ch)
-                    self._meas_log(f"[MEAS] Closed {sw_ch}")
-                try:
-                    time.sleep(float(self._meas_delay1_var.get()) / 1000.0)
-                except ValueError:
-                    time.sleep(0.1)
-
-                if not (smu and smu.inst):
-                    raise RuntimeError("SMU not connected")
-                src   = self._meas_src_var.get()
-                level = float(self._meas_level_var.get())
-                comp  = float(self._meas_comp_limit_var.get())
-                nplc  = float(self._meas_nplc_var.get())
-                if src == "Voltage":
-                    smu.set_voltage(ch, level)
-                    smu.set_current_limit(ch, comp)
-                else:
-                    smu.set_current(ch, level)
-                    smu.set_voltage_limit(ch, comp)
-                try:
-                    smu.set_nplc(ch, nplc)
-                except Exception:
-                    pass
-                smu.turn_output_on(ch)
-                self._meas_log(f"[MEAS] SMU {ch} ON — {src}={level}, comp={comp}, NPLC={nplc}")
-                try:
-                    time.sleep(float(self._meas_delay2_var.get()) / 1000.0)
-                except ValueError:
-                    time.sleep(0.2)
-
-                if dmm and dmm.inst:
-                    try:
-                        m_range = float(self._meas_meter_range_var.get())
-                        dmm.set_nplc(nplc)
-                        if m_range > 0:
-                            dmm.set_current_range(m_range)
-                    except Exception:
-                        pass
-
-                try:
-                    time.sleep(float(self._meas_meter_delay_var.get()))
-                except ValueError:
-                    time.sleep(0.2)
-
-                avgs    = max(1, int(float(self._meas_averages_var.get())))
-                i_limit = float(self._meas_meter_ilimit_var.get())
-                i_val   = sum(smu.measure_current(ch) for _ in range(avgs)) / avgs
-                v_val   = smu.measure_voltage(ch)
-                r_val   = smu.measure_resistance(ch)
-                dmm_v   = dmm.measure_voltage_dc() if (dmm and dmm.inst) else float("nan")
-                tripped = smu.in_compliance(ch)
-
-                self._meas_comp_tripped    = tripped
-                self._meas_ilimit_exceeded = abs(i_val) > i_limit
-
-                die  = self._meas_die_var.get().strip()
-                i_na = i_val * 1e9
-                r_mo = r_val / 1e6
-                over = "  ⚠ OVER LIMIT" if self._meas_ilimit_exceeded else ""
-                self._meas_log(
-                    f"[MEAS] I={i_na:.6f} nA | V={v_val:.6f} V | "
-                    f"R={r_mo:.4f} MΩ | DMM={dmm_v:.6f} V{over}")
-
-                self.after(0, lambda v=die:                 self._meas_set_result("die",   v))
-                self.after(0, lambda v=f"{i_na:.6f} nA":   self._meas_set_result("smu_i", v))
-                self.after(0, lambda v=f"{v_val:.6f} V":   self._meas_set_result("smu_v", v))
-                self.after(0, lambda v=f"{r_mo:.4f} MΩ":   self._meas_set_result("smu_r", v))
-                dmm_s = f"{dmm_v:.6f} V" if (dmm and dmm.inst) else "not connected"
-                self.after(0, lambda v=dmm_s:              self._meas_set_result("dmm_v", v))
-                cs = "TRIPPED ⚠" if tripped else "OK ✓"
-                cc = "#dc2626"   if tripped else "#16a34a"
-                self.after(0, lambda s=cs, c=cc: self._meas_set_result("comp", s, c))
-
-                smu.turn_output_off(ch)
-                try:
-                    time.sleep(float(self._meas_delay3_var.get()) / 1000.0)
-                except ValueError:
-                    time.sleep(0.2)
-                if sw and sw.inst:
-                    sw.open_all()
-
-            passed = not self._meas_comp_tripped and not self._meas_ilimit_exceeded
-            if passed:
-                self.after(0, lambda: self._meas_set_result("result", "PASS  ✓", "#16a34a"))
-                self._meas_log("[MEAS] >>> PASS")
-            else:
-                reasons = []
-                if self._meas_comp_tripped:    reasons.append("compliance")
-                if self._meas_ilimit_exceeded: reasons.append("I > limit")
-                self.after(0, lambda: self._meas_set_result("result", "FAIL  ✗", "#dc2626"))
-                self._meas_log(f"[MEAS] >>> FAIL — {', '.join(reasons)}")
-
-            self.after(0, lambda: self._meas_state_lbl.config(text="DONE", fg="#16a34a"))
-
-        except Exception as e:
-            self._meas_log(f"[MEAS] ERROR: {e}")
-            self.after(0, lambda: self._meas_state_lbl.config(text="FAILED", fg="#dc2626"))
-
     def _tab_results(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Results")
@@ -3495,8 +3129,11 @@ class MainLayout(ttk.Frame):
             sql_row, text="💾 Export", command=self.controller.cmd_export_sql
         ).pack(side="left", padx=(4, 10))
         ttk.Button(
-            sql_row, text="➕ New SQL Format…", command=self._open_new_format_dialog
+            sql_row, text="➕ New Format…", command=lambda: self._open_new_format_dialog()
         ).pack(side="left")
+        ttk.Button(
+            sql_row, text="✏ Edit Selected…", command=self._open_edit_format_dialog
+        ).pack(side="left", padx=(6, 0))
         self._export_formats: list = []
 
         results_lf = ttk.LabelFrame(tab, text="Measurement Results")
@@ -3544,7 +3181,7 @@ class MainLayout(ttk.Frame):
             self._export_format_cb.config(values=[])
             self.export_format_var.set("")
             return
-        self._export_formats = xfmt.load_formats(self._ata_folder)
+        self._export_formats = xfmt.load_formats(self._ata_folder, system=self._system)
         names = [f["name"] for f in self._export_formats]
         self._export_format_cb.config(values=names)
         if select_name in names:
@@ -3556,7 +3193,16 @@ class MainLayout(ttk.Frame):
         name = self.export_format_var.get()
         return next((f for f in self._export_formats if f["name"] == name), None)
 
-    def _open_new_format_dialog(self):
+    def _open_edit_format_dialog(self):
+        from tkinter import messagebox
+        fmt = self.get_selected_export_format()
+        if not fmt:
+            messagebox.showerror("No Format Selected",
+                                 "Pick a format from the Export Format dropdown first.")
+            return
+        self._open_new_format_dialog(existing_fmt=fmt)
+
+    def _open_new_format_dialog(self, existing_fmt=None):
         from tkinter import messagebox
         if not self._ata_folder:
             messagebox.showerror(
@@ -3566,73 +3212,225 @@ class MainLayout(ttk.Frame):
             return
 
         dlg = tk.Toplevel(self)
-        dlg.title("New Export Format")
+        dlg.title("Edit Export Format" if existing_fmt else "New Export Format")
         dlg.transient(self.winfo_toplevel())
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill="both", expand=True)
 
         ttk.Label(frm, text="Format Name:").grid(row=0, column=0, sticky="e", pady=2)
-        name_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=name_var, width=42).grid(
+        name_var = tk.StringVar(value=(existing_fmt or {}).get("name", ""))
+        ttk.Entry(frm, textvariable=name_var, width=46).grid(
             row=0, column=1, columnspan=3, sticky="w", pady=2)
 
         ttk.Label(frm, text="Table Name:").grid(row=1, column=0, sticky="e", pady=2)
-        table_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=table_var, width=42).grid(
+        table_var = tk.StringVar(value=(existing_fmt or {}).get("table", ""))
+        ttk.Entry(frm, textvariable=table_var, width=46).grid(
             row=1, column=1, columnspan=3, sticky="w", pady=2)
 
-        only_pma_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            frm, text="Only include Test PMA readings (has a die ID)",
-            variable=only_pma_var
-        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 8))
+        ttk.Label(frm, text="Format Type:").grid(row=2, column=0, sticky="e", pady=2)
+        type_var = tk.StringVar(value=(existing_fmt or {}).get("type", "sql"))
+        type_row = ttk.Frame(frm)
+        type_row.grid(row=2, column=1, columnspan=3, sticky="w", pady=2)
+        ttk.Radiobutton(type_row, text="SQL INSERT (one row per reading)",
+                       variable=type_var, value="sql",
+                       command=lambda: _on_type_change()).pack(side="left")
+        ttk.Radiobutton(type_row, text="CSV (one row per die, merged)",
+                       variable=type_var, value="csv",
+                       command=lambda: _on_type_change()).pack(side="left", padx=(12, 0))
 
-        ttk.Label(frm, text="Columns (in INSERT order):").grid(
-            row=3, column=0, columnspan=4, sticky="w")
+        only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
+        only_pma_chk = ttk.Checkbutton(
+            frm, text="Only include Test PMA readings (has a die ID)",
+            variable=only_pma_var)
+        only_pma_chk.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 8))
+
+        detect_hint = tk.StringVar()
+        ttk.Label(frm, text="Available fields (double-click, or select + Add):").grid(
+            row=4, column=0, columnspan=4, sticky="w")
+        ttk.Label(frm, textvariable=detect_hint, foreground="#6b7280",
+                 font=("Segoe UI", 8), wraplength=460, justify="left").grid(
+            row=5, column=0, columnspan=4, sticky="w")
+        avail_row = ttk.Frame(frm)
+        avail_row.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=(2, 6))
+        avail_list = tk.Listbox(avail_row, height=6, width=58, exportselection=False)
+        avail_list.pack(side="left", fill="both", expand=True)
+        ttk.Button(avail_row, text="Add Selected →",
+                  command=lambda: _add_from_available()).pack(side="left", padx=(6, 0), anchor="n")
+        avail_sources: list = []
+
+        ttk.Label(frm, text="Columns (in output order):").grid(
+            row=7, column=0, columnspan=4, sticky="w")
         cols_tree = ttk.Treeview(
-            frm, columns=("field", "source", "quote"), show="headings", height=6)
-        for cid, text, width in [("field", "Field Name", 150),
-                                 ("source", "Source", 170), ("quote", "Quote (text)", 90)]:
+            frm, columns=("field", "source", "quote", "transform"),
+            show="headings", height=7)
+        for cid, text, width in [("field", "Field Name", 130), ("source", "Source", 130),
+                                 ("quote", "Quote", 55), ("transform", "Transform", 110)]:
             cols_tree.heading(cid, text=text)
-            cols_tree.column(cid, width=width, anchor="w" if cid != "quote" else "center")
-        cols_tree.grid(row=4, column=0, columnspan=4, sticky="nsew", pady=(2, 6))
+            cols_tree.column(cid, width=width, anchor="w" if cid == "field" else "center")
+        cols_tree.grid(row=8, column=0, columnspan=4, sticky="nsew", pady=(2, 6))
+
+        order_row = ttk.Frame(frm)
+        order_row.grid(row=9, column=0, columnspan=4, sticky="w")
+        ttk.Button(order_row, text="▲ Move Up", command=lambda: move_col(-1)).pack(side="left")
+        ttk.Button(order_row, text="▼ Move Down", command=lambda: move_col(1)).pack(
+            side="left", padx=(6, 0))
+        ttk.Button(order_row, text="Remove Selected", command=lambda: remove_col()).pack(
+            side="left", padx=(6, 0))
+        ttk.Button(order_row, text="Edit Selected", command=lambda: _edit_selected()).pack(
+            side="left", padx=(6, 0))
 
         add_row = ttk.Frame(frm)
-        add_row.grid(row=5, column=0, columnspan=4, sticky="ew")
+        add_row.grid(row=10, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        ttk.Label(add_row, text="Field:").pack(side="left")
         field_var = tk.StringVar()
-        ttk.Entry(add_row, textvariable=field_var, width=16).pack(side="left")
-        source_var = tk.StringVar(value=next(iter(xfmt.SOURCE_FIELDS)))
-        source_cb = ttk.Combobox(add_row, textvariable=source_var,
-                                 values=list(xfmt.SOURCE_FIELDS),
-                                 state="readonly", width=14)
-        source_cb.pack(side="left", padx=4)
+        ttk.Entry(add_row, textvariable=field_var, width=14).pack(side="left", padx=(2, 8))
+        ttk.Label(add_row, text="Source:").pack(side="left")
+        source_var = tk.StringVar()
+        source_cb = ttk.Combobox(add_row, textvariable=source_var, state="readonly", width=14)
+        source_cb.pack(side="left", padx=(2, 8))
         quote_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(add_row, text="Quote", variable=quote_var).pack(side="left", padx=4)
+        quote_chk = ttk.Checkbutton(add_row, text="Quote", variable=quote_var)
+        quote_chk.pack(side="left")
+
+        add_row2 = ttk.Frame(frm)
+        add_row2.grid(row=11, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        ttk.Label(add_row2, text="Multiply by:").pack(side="left")
+        multiply_var = tk.StringVar()
+        ttk.Entry(add_row2, textvariable=multiply_var, width=8).pack(side="left", padx=(2, 12))
+        ttk.Label(add_row2, text="Or always use constant:").pack(side="left")
+        constant_var = tk.StringVar()
+        ttk.Entry(add_row2, textvariable=constant_var, width=14).pack(side="left", padx=(2, 8))
+        ttk.Button(add_row2, text="+ Add Column", command=lambda: add_col()).pack(
+            side="left", padx=(8, 0))
+
+        _NICE = {"dmm": "DMM", "id": "ID", "num": "Num"}
+
+        def _default_field_name(source):
+            return "_".join(_NICE.get(p, p.capitalize()) for p in source.split("_"))
+
+        def _fields_for_type():
+            return xfmt.SOURCE_FIELDS_BY_TYPE.get(type_var.get(), {})
+
+        def _populate_available():
+            avail_list.delete(0, "end")
+            avail_sources.clear()
+            fields = _fields_for_type()
+            source_cb.config(values=list(fields))
+            if source_var.get() not in fields:
+                source_var.set(next(iter(fields), ""))
+            results = self.controller.results_data
+            if type_var.get() == "csv":
+                populated = {"lot_id", "wafer_id", "test_serial"}
+                for g in xfmt.group_results_by_die(results):
+                    for k, v in g.items():
+                        if v not in (None, ""):
+                            populated.add(k)
+                for source, desc in fields.items():
+                    mark = "✓" if source in populated else " "
+                    avail_list.insert("end", f"[{mark}] {source}  —  {desc}")
+                    avail_sources.append(source)
+                detect_hint.set("✓ = this field has data in the current Results tab right now.")
+            else:
+                kinds = xfmt.detect_reading_kinds(results)
+                for source, desc in fields.items():
+                    avail_list.insert("end", f"{source}  —  {desc}")
+                    avail_sources.append(source)
+                if kinds:
+                    detect_hint.set(
+                        "Reading kinds detected in current Results: " +
+                        ", ".join(k["label"] for k in kinds) +
+                        ".  Each SQL row is ONE reading — to merge several reading "
+                        "kinds into one row per die, use a CSV format instead.")
+                else:
+                    detect_hint.set(
+                        "No results captured yet — run a recipe first, or pick "
+                        "sources manually below.")
+
+        def _on_type_change():
+            if type_var.get() == "csv":
+                only_pma_chk.grid_remove()
+                quote_chk.pack_forget()
+            else:
+                only_pma_chk.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 8))
+                quote_chk.pack(side="left")
+            _populate_available()
+
+        def _add_from_available(_evt=None):
+            sel = avail_list.curselection()
+            if not sel:
+                return
+            source = avail_sources[sel[0]]
+            field_var.set(_default_field_name(source))
+            source_var.set(source)
+            add_col()
+        avail_list.bind("<Double-Button-1>", _add_from_available)
+
+        def _parse_transform(txt):
+            txt = (txt or "").strip()
+            if txt.startswith("="):
+                return {"constant": txt[1:].strip()}
+            if txt[:1] in ("×", "x", "X"):
+                try:
+                    return {"multiply": float(txt[1:].strip())}
+                except ValueError:
+                    return {}
+            return {}
 
         def add_col():
             field = field_var.get().strip()
-            if not field:
+            source = source_var.get().strip()
+            constant = constant_var.get().strip()
+            mult = multiply_var.get().strip()
+            if not field or (not source and not constant):
                 return
+            transform_txt = f"={constant}" if constant else (f"×{mult}" if mult else "")
             cols_tree.insert("", "end", values=(
-                field, source_var.get(), "yes" if quote_var.get() else "no"))
+                field, source, "yes" if quote_var.get() else "no", transform_txt))
             field_var.set("")
+            multiply_var.set("")
+            constant_var.set("")
 
         def remove_col():
             sel = cols_tree.selection()
             if sel:
                 cols_tree.delete(sel[0])
 
-        ttk.Button(add_row, text="+ Add Column", command=add_col).pack(side="left", padx=(8, 2))
-        ttk.Button(add_row, text="Remove Selected", command=remove_col).pack(side="left")
+        def move_col(delta):
+            sel = cols_tree.selection()
+            if not sel:
+                return
+            iid = sel[0]
+            idx = cols_tree.index(iid)
+            cols_tree.move(iid, "", idx + delta)
 
-        source_hint = tk.StringVar(value=xfmt.SOURCE_FIELDS[source_var.get()])
-        ttk.Label(frm, textvariable=source_hint, foreground="#6b7280",
-                 font=("Segoe UI", 8), wraplength=420, justify="left").grid(
-            row=6, column=0, columnspan=4, sticky="w", pady=(2, 8))
-        source_cb.bind("<<ComboboxSelected>>",
-                       lambda _e: source_hint.set(xfmt.SOURCE_FIELDS[source_var.get()]))
+        def _edit_selected(_evt=None):
+            sel = cols_tree.selection()
+            if not sel:
+                return
+            iid = sel[0]
+            f, src, q, tr = cols_tree.item(iid, "values")
+            field_var.set(f)
+            if src in _fields_for_type():
+                source_var.set(src)
+            quote_var.set(q == "yes")
+            parsed = _parse_transform(tr)
+            multiply_var.set(str(parsed["multiply"]) if "multiply" in parsed else "")
+            constant_var.set(parsed.get("constant", ""))
+            cols_tree.delete(iid)
+        cols_tree.bind("<Double-Button-1>", _edit_selected)
+
+        if existing_fmt:
+            for c in existing_fmt.get("columns", []):
+                tr = ""
+                if c.get("constant") not in (None, ""):
+                    tr = f"={c['constant']}"
+                elif c.get("multiply") not in (None, "", 1, 1.0):
+                    tr = f"×{c['multiply']}"
+                cols_tree.insert("", "end", values=(
+                    c.get("field", ""), c.get("source", ""),
+                    "yes" if c.get("quote") else "no", tr))
 
         def save():
             name = name_var.get().strip()
@@ -3642,24 +3440,27 @@ class MainLayout(ttk.Frame):
                 return
             columns = []
             for iid in cols_tree.get_children():
-                f, src, q = cols_tree.item(iid, "values")
-                columns.append({"field": f, "source": src, "quote": q == "yes"})
+                f, src, q, tr = cols_tree.item(iid, "values")
+                col = {"field": f, "source": src, "quote": q == "yes"}
+                col.update(_parse_transform(tr))
+                columns.append(col)
             if not columns:
                 messagebox.showerror("Incomplete", "Add at least one column.")
                 return
-            fmt = {"name": name, "table": table,
+            fmt = {"name": name, "table": table, "type": type_var.get(),
                   "requires_die_id": only_pma_var.get(), "columns": columns}
-            xfmt.add_format(self._ata_folder, fmt)
+            xfmt.add_format(self._ata_folder, fmt, system=self._system)
             self._refresh_export_formats(select_name=name)
-            self.controller.log(f"[RESULTS] Saved export format '{name}' ({table}) "
-                                "to ATA folder.")
+            self.controller.log(f"[RESULTS] Saved export format '{name}' ({table}, "
+                                f"{type_var.get()}) to ATA folder.")
             dlg.destroy()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        btns.grid(row=12, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Save Format", command=save).pack(side="left")
         ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right")
 
+        _on_type_change()
         dlg.update_idletasks()
         dlg.grab_set()
 

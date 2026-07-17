@@ -12,7 +12,22 @@ from instruments.dmm import Keysight34461A
 from instruments.smu import Keithley2636B
 from instruments.switch import Keithley707B
 from instruments.wave_gen import Keysight33512B
+from instruments.electroglas_2001x import Electroglas2001X
+from instruments.keithley2400 import Keithley2400
+from instruments.hp3458a import HP3458A
+from instruments.hp6634b import Agilent6634B
+from instruments.hp_switchbox import HPSwitchbox
 import export_formats as xfmt
+
+ACCRETECH_INSTRUMENT_NAMES = ["UF200R Prober", "SMU (2636B)", "DMM (34461A)",
+                              "SW_MATRIX", "Wave Gen (33512B)"]
+ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A",
+                                "Agilent 6634B", "HP Switchbox 1", "HP Switchbox 2",
+                                "HP Switchbox 3"]
+
+ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
+ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "power_supply",
+                                "relay1", "relay2", "relay3")
 
 
 class AtomicaDashboard(tk.Tk):
@@ -24,12 +39,13 @@ class AtomicaDashboard(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.simulation_running = False
         self.test_queue = []
-        self.results_data = []
-        self.total_dies = 0
-        self.dies_tested = 0
-        self.dies_passed = 0
-        self.dies_failed = 0
-        self.drivers = {}
+        self.active_system = "accretech"
+        self._by_system = {
+            "accretech":   {"drivers": {}, "results": [], "ui": None,
+                            "total": 0, "tested": 0, "passed": 0, "failed": 0},
+            "electroglas": {"drivers": {}, "results": [], "ui": None,
+                            "total": 0, "tested": 0, "passed": 0, "failed": 0},
+        }
         self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
@@ -37,15 +53,84 @@ class AtomicaDashboard(tk.Tk):
         self.create_toolbar()
         self._main_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
         self._main_pane.grid(row=2, column=0, sticky="nsew")
-        self.instrument_panel = MainLayout(parent=self._main_pane, controller=self)
+
+        self.instrument_panel = MainLayout(
+            parent=self._main_pane, controller=self,
+            instrument_names=ACCRETECH_INSTRUMENT_NAMES,
+            init_hardware_fn=self.init_hardware, system="accretech")
+        self._by_system["accretech"]["ui"] = self.instrument_panel
         self._main_pane.add(self.instrument_panel, weight=1)
-        self.ui = self.instrument_panel
+
+        self.instrument_panel_eg = MainLayout(
+            parent=self._main_pane, controller=self,
+            instrument_names=ELECTROGLAS_INSTRUMENT_NAMES,
+            init_hardware_fn=self.init_hardware_eg, system="electroglas")
+        self._by_system["electroglas"]["ui"] = self.instrument_panel_eg
+
         self._build_bottom_routing()
         self.after(500, self.init_hardware)
+        self.after(700, self.init_hardware_eg)
         self.update_statistics_visuals()
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
         self.after(1500, self._poll_prober_ready)
+
+    @property
+    def drivers(self):
+        return self._by_system[self.active_system]["drivers"]
+
+    @property
+    def results_data(self):
+        return self._by_system[self.active_system]["results"]
+
+    @property
+    def ui(self):
+        return self._by_system[self.active_system]["ui"]
+
+    @property
+    def total_dies(self):
+        return self._by_system[self.active_system]["total"]
+
+    @total_dies.setter
+    def total_dies(self, value):
+        self._by_system[self.active_system]["total"] = value
+
+    @property
+    def dies_tested(self):
+        return self._by_system[self.active_system]["tested"]
+
+    @dies_tested.setter
+    def dies_tested(self, value):
+        self._by_system[self.active_system]["tested"] = value
+
+    @property
+    def dies_passed(self):
+        return self._by_system[self.active_system]["passed"]
+
+    @dies_passed.setter
+    def dies_passed(self, value):
+        self._by_system[self.active_system]["passed"] = value
+
+    @property
+    def dies_failed(self):
+        return self._by_system[self.active_system]["failed"]
+
+    @dies_failed.setter
+    def dies_failed(self, value):
+        self._by_system[self.active_system]["failed"] = value
+
+    def cmd_set_active_system(self, system):
+        if system == self.active_system or system not in self._by_system:
+            return
+        old_ui = self.ui
+        self.active_system = system
+        self.title("Electroglas Tester" if system == "electroglas" else "Accretech Tester")
+        self._main_pane.forget(old_ui)
+        self._main_pane.insert(0, self.ui, weight=1)
+        self._style_system_toggle()
+        self.update_statistics_visuals()
+        self.check_system_ready()
+        self.log(f"[SYSTEM] Switched active system to {system.capitalize()}.")
 
     def _system_ready_loop(self):
         self.check_system_ready()
@@ -116,6 +201,30 @@ class AtomicaDashboard(tk.Tk):
                  bg="#374558", fg="#f0a020",
                  font=("Arial", 13)).pack(side="left", padx=4)
 
+        toggle_frame = tk.Frame(hdr, bg="#374558")
+        toggle_frame.pack(side="right", padx=12, pady=10)
+        self._system_buttons = {}
+        self._system_buttons["accretech"] = tk.Button(
+            toggle_frame, text="Accretech", bd=1, relief="flat",
+            font=("Arial", 9, "bold"), padx=10, pady=3,
+            command=lambda: self.cmd_set_active_system("accretech"))
+        self._system_buttons["accretech"].pack(side="left")
+        self._system_buttons["electroglas"] = tk.Button(
+            toggle_frame, text="Electroglas", bd=1, relief="flat",
+            font=("Arial", 9, "bold"), padx=10, pady=3,
+            command=lambda: self.cmd_set_active_system("electroglas"))
+        self._system_buttons["electroglas"].pack(side="left")
+        self._style_system_toggle()
+
+    def _style_system_toggle(self):
+        for system, btn in self._system_buttons.items():
+            active = system == self.active_system
+            btn.config(
+                bg="#f0a020" if active else "#4b5768",
+                fg="#1f2937" if active else "#d1d5db",
+                activebackground="#f0a020" if active else "#5a6779",
+                relief="sunken" if active else "flat")
+
     def _build_bottom_routing(self):
         lf = ttk.LabelFrame(self._main_pane, text="Switch Routing")
         self._bottom_routing_frame = lf
@@ -180,14 +289,25 @@ class AtomicaDashboard(tk.Tk):
         txt.see(tk.END)
         txt.configure(state="disabled")
 
-    def init_hardware(self):
-        self.log("[SYSTEM] Pinging hardware connections...")
-
-        for lbl in self.ui.status_labels.values():
+    def _connect_instruments(self, ui, drivers, connections):
+        for lbl in ui.status_labels.values():
             lbl.config(foreground="orange")
-
         self.update_idletasks()
+        for name, key, driver in connections:
+            try:
+                response = driver.get_id() if hasattr(driver, "get_id") else driver.query("*IDN?")
+                if response:
+                    drivers[key] = driver
+                    ui.status_labels[name].config(text=f"✅ {name}", foreground="green")
+                    self.log(f"[SYSTEM] Connected: {name}")
+                else:
+                    raise Exception("No response")
+            except Exception as e:
+                ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
+                self.log(f"[ERROR] {name}: {e}")
 
+    def init_hardware(self):
+        self.log("[SYSTEM] Pinging Accretech hardware connections...")
         connections = [
             ("UF200R Prober",    "prober",   AccretechUF200R()),
             ("SMU (2636B)",      "smu",      Keithley2636B()),
@@ -195,36 +315,37 @@ class AtomicaDashboard(tk.Tk):
             ("SW_MATRIX",        "switch",   Keithley707B()),
             ("Wave Gen (33512B)","wave_gen", Keysight33512B()),
         ]
+        self._connect_instruments(self._by_system["accretech"]["ui"],
+                                  self._by_system["accretech"]["drivers"], connections)
+        self.check_system_ready()
 
-        for name, key, driver in connections:
-            try:
-                if name == "UF200R Prober":
-                    response = driver.get_prober_id()
-                else:
-                    response = driver.query("*IDN?")
-                if response:
-                    self.drivers[key] = driver
-                    self.ui.status_labels[name].config(text=f"✅ {name}", foreground="green")
-                    self.log(f"[SYSTEM] Connected: {name}")
-                else:
-                    raise Exception("No response")
-            except Exception as e:
-                self.ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
-                self.log(f"[ERROR] {name}: {e}")
-
+    def init_hardware_eg(self):
+        self.log("[SYSTEM] Pinging Electroglas hardware connections...")
+        connections = [
+            ("Electroglas 2001X", "prober",       Electroglas2001X()),
+            ("Keithley 2400",     "smu",          Keithley2400()),
+            ("HP 3458A",          "dmm",          HP3458A()),
+            ("Agilent 6634B",     "power_supply", Agilent6634B()),
+            ("HP Switchbox 1",    "relay1",       HPSwitchbox("relay1_eg")),
+            ("HP Switchbox 2",    "relay2",       HPSwitchbox("relay2_eg")),
+            ("HP Switchbox 3",    "relay3",       HPSwitchbox("relay3_eg")),
+        ]
+        self._connect_instruments(self._by_system["electroglas"]["ui"],
+                                  self._by_system["electroglas"]["drivers"], connections)
         self.check_system_ready()
 
     def check_system_ready(self):
         missing = []
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
         if not (exec2_wm and exec2_wm._last_dies):
-            missing.append("Accretech wafer map")
+            missing.append("wafer map")
         pin_wiring = getattr(self.ui, "pin_wiring", None)
         if not (pin_wiring and pin_wiring.get_active_card() and pin_wiring.get_wiring()):
             missing.append("probe card pinout")
         if not getattr(self.ui, "_exec2_steps", None):
             missing.append("measurement recipe")
-        required_instruments = ("prober", "smu", "dmm", "switch", "wave_gen")
+        required_instruments = (ACCRETECH_REQUIRED_DRIVERS if self.active_system == "accretech"
+                                else ELECTROGLAS_REQUIRED_DRIVERS)
         if not all(k in self.drivers for k in required_instruments):
             missing.append("instruments")
 
@@ -490,7 +611,10 @@ class AtomicaDashboard(tk.Tk):
     def cmd_abort(self):
         self.ui.exec_panel.abort()
         drv = self.drivers.get("prober")
-        if drv and drv.inst:
+        if drv and drv.inst and self.active_system != "accretech":
+            self.log(f"[ABORT] {self.active_system.capitalize()} prober stop command "
+                    "not yet implemented — verify chuck/output state manually.")
+        if drv and drv.inst and self.active_system == "accretech":
             import threading
             def _send_k():
                 try:

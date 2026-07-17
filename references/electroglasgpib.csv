@@ -1,0 +1,8 @@
+fldName	fldAddress	fldDescription	fldComments	fldIsLampElectrical
+2001X	GPIB0::29::INSTR	Electroglass	null	TRUE
+PS	GPIB0::25::INSTR	Agilent 6634B DC Power Supply	Responds to 'ID?' with 'HP6634B<ascii 13><ascii 10>'	FALSE
+RELAY1	GPIB0::9::15::INSTR	null	"Responds to '*IDN?' with 'HEWLETT-PACKARD,SWITCHBOX,0,A.06.00<ASCII 10>'"	TRUE
+ExternalDMM	GPIB0::23::INSTR	HP3458A Multimeter Drive Current Measurement	Responds to 'ID?' with 'HP3458A<ascii 13><ascii 10>'	FALSE
+RELAY3	GPIB0::9::14::INSTR	Relay 3 not involved in Lamp Electrical	"Responds to '*IDN?' with 'HEWLETT-PACKARD,SWITCHBOX,0,A.06.00<ASCII 10>'"	FALSE
+Keithley2400	GPIB0::24::INSTR	null	null	TRUE
+RELAY2	GPIB0::9::12::INSTR	null	"Responds to '*IDN?' with 'HEWLETT-PACKARD,SWITCHBOX,0,A.06.00<ASCII 10>'"	FALSE

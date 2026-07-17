@@ -86,7 +86,8 @@
         },
         {
           "field": "Voltage_DMM",
-          "source": "voltage_dmm"
+          "source": "voltage_dmm",
+          "multiply": -1
         },
         {
           "field": "Compliance",

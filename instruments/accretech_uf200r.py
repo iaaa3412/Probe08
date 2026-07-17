@@ -66,6 +66,9 @@ class AccretechUF200R(GPIBInstrument):
             self.inst.read_termination  = '\r\n'
 
 
+    def get_id(self) -> str:
+        return self.get_prober_id()
+
     def get_prober_id(self) -> str:
         return self.query("B") or ""
 

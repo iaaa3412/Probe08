@@ -6,6 +6,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from pma_wafer_panel import (read_main_menu_info as _pma_read_main_menu_info,
                              read_moves_grid as _pma_read_moves_grid)
 from engineering_units import parse_engineering, format_engineering_compact
+import switch_topology
 try:
     import xlrd as _pma_xlrd
 except ImportError:
@@ -134,26 +135,6 @@ def _avg_display(step: dict) -> str:
     if n <= 1:
         return ""
     return f"{n}×{step.get('avg_delay') or 0}ms"
-
-
-_ROW_LABELS = {"A": "SMU A HI", "B": "SMU A LO/GND", "C": "SMU B HI",
-               "D": "SMU B LO/GND", "E": "DMM LO", "F": "DMM HI",
-               "G": "WGEN CH1", "H": "WGEN CH2"}
-
-
-def _rows_for(step_type: str, chan: str, instrument: str):
-    if step_type == "wave":
-        return (("H",) if chan == "CH2" else ("G",)), ("B",)
-    if instrument == "DMM":
-        return ("F",), ("E",)
-    if instrument == "SMU":
-        return (("C",), ("D",)) if chan == "B" else (("A",), ("B",))
-    return (), ()
-
-
-def _pin_channel(pin_no: int, row: str) -> str:
-    slot, col = ("2", pin_no) if pin_no <= 12 else ("4", pin_no - 12)
-    return f"{slot}{row}{col:02d}"
 
 
 def _serialize_step(step: dict) -> str:
@@ -427,7 +408,7 @@ def rows_to_recipes(rows: list) -> dict:
 
 class RecipePanel(ttk.Frame):
     def __init__(self, parent, controller, get_pins=None, get_wiring=None,
-                 get_active_card=None, save_recipes=None):
+                 get_active_card=None, save_recipes=None, system: str = "accretech"):
         super().__init__(parent)
         self.controller = controller
         self._get_pins = get_pins or (lambda: [])
@@ -435,6 +416,15 @@ class RecipePanel(ttk.Frame):
         self._get_active_card = get_active_card or (lambda: "")
         self._save_recipes = save_recipes or (lambda _card, _recipes: False)
         self._conn_viewer = None
+        self._system = system
+        if system == "electroglas":
+            self._instrument_choices = ("DMM", "SMU")
+            self._smu_channel_choices = ("A",)
+            self._step_type_choices = tuple(t for t in _STEP_TYPES if t != "wave")
+        else:
+            self._instrument_choices = _INSTRUMENTS
+            self._smu_channel_choices = _SMU_CHANNELS
+            self._step_type_choices = _STEP_TYPES
         self._conn_report = "— no steps —"
 
         self._recipes: dict = {"(unsaved)": {"steps": []}}
@@ -572,7 +562,7 @@ class RecipePanel(ttk.Frame):
         ttk.Entry(ed1, textvariable=self._ed_vars["name"], width=12).pack(side="left")
         _lbl(ed1, "Type:")
         type_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["type"],
-                               values=_STEP_TYPES, state="readonly", width=10)
+                               values=self._step_type_choices, state="readonly", width=10)
         type_cb.pack(side="left")
         type_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
         _lbl(ed1, "Mode:")
@@ -582,12 +572,12 @@ class RecipePanel(ttk.Frame):
         self._mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
         _lbl(ed1, "Instr:")
         self._instr_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["instrument"],
-                                      values=_INSTRUMENTS, state="readonly", width=6)
+                                      values=self._instrument_choices, state="readonly", width=6)
         self._instr_cb.pack(side="left")
         self._instr_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
         _lbl(ed1, "Chan:")
         self._chan_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["chan"],
-                                     values=_SMU_CHANNELS, state="readonly", width=5)
+                                     values=self._smu_channel_choices, state="readonly", width=5)
         self._chan_cb.pack(side="left")
         _lbl(ed1, "Target:")
         self._target_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["target"],
@@ -789,7 +779,7 @@ class RecipePanel(ttk.Frame):
             self._mode_cb.config(state="readonly")
         mode = self._ed_vars["mode"].get()
 
-        options = _instrument_options(t, mode)
+        options = tuple(o for o in _instrument_options(t, mode) if o in self._instrument_choices)
         if t == "wave":
             self._ed_vars["instrument"].set("WGEN")
         else:
@@ -809,8 +799,8 @@ class RecipePanel(ttk.Frame):
             if not self._ed_vars["freq"].get():
                 self._ed_vars["freq"].set("1000")
         elif instrument == "SMU":
-            self._chan_cb.config(state="readonly", values=_SMU_CHANNELS)
-            if self._ed_vars["chan"].get() not in _SMU_CHANNELS:
+            self._chan_cb.config(state="readonly", values=self._smu_channel_choices)
+            if self._ed_vars["chan"].get() not in self._smu_channel_choices:
                 self._ed_vars["chan"].set("A")
         else:
             self._ed_vars["chan"].set("")
@@ -903,21 +893,24 @@ class RecipePanel(ttk.Frame):
                 detail.append(f"reset SMU {ref.get('chan') or 'A'} output")
             return channels, detail, []
 
-        rows_hi, rows_lo = _rows_for(t, step.get("chan") or "",
-                                     step.get("instrument") or "")
+        rows_hi, rows_lo = switch_topology.rows_for(t, step.get("chan") or "",
+                                                    step.get("instrument") or "")
+        roles = switch_topology.row_roles()
+        max_pin = switch_topology.total_pins()
         channels, detail, unresolved = [], [], []
         for field, rows in (("hi", rows_hi), ("lo", rows_lo)):
             for token in (p for p in step.get(field, "").split(",") if p.strip()):
                 pin = self._resolve_pin(token)
-                if pin is None or not (1 <= pin <= 24):
+                if pin is None or not (1 <= pin <= max_pin):
                     unresolved.append(token.strip())
                     continue
-                slot, col = ("2", pin) if pin <= 12 else ("4", pin - 12)
+                slot, col = switch_topology.slot_and_col_for_pin(pin)
                 for row in rows:
-                    ch = _pin_channel(pin, row)
+                    ch = switch_topology.pin_channel(pin, row)
                     channels.append(ch)
                     detail.append(
-                        f"{ch} = {_ROW_LABELS[row]} × pin {pin} (slot {slot} col {col:02d})")
+                        f"{ch} = {switch_topology.role_label(roles.get(row))} × pin {pin} "
+                        f"(slot {slot} col {col:02d})")
         return channels, detail, unresolved
 
     def _update_connections(self):

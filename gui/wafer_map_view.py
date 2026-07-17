@@ -35,22 +35,23 @@ def _pz_bind(canvas, on_reset):
 
 
 ATA_KEY_FILES = {
-    "ata_wafer_map.csv":           "Die map & coordinates (GDS-derived)",
-    "ata_wafer_map_accretech.csv": "Die map & coordinates (real prober extraction)",
-    "ata_wafer_map_pma.csv":       "Die/shot map (PMA workbook extraction)",
-    "ata_wafer_map_merged.csv":    "Accretech + PMA merged map (multi-die-per-shot)",
-    "ata_metadata.csv":         "Wafer / lot metadata",
-    "ata_sites.csv":            "Probe sites",
-    "ata_pad_layout.csv":       "Pad geometry",
-    "reference_pad_layout.csv": "Hand-drawn pad layout sketch (Pad to Probe -> Custom; not used by recipes/wiring)",
-    "ata_alignment_marks.csv":  "Alignment marks",
-    "alignment_marks.csv":      "Alignment marks (alt)",
-    "ata_devices.csv":          "Device definitions",
-    "ata_die_markers.csv":      "Die-level markers",
-    "ata_test_structures.csv":  "Test structures",
-    "ata_test_plan":            "Test plan",
-    "ata_validation_report.csv":"Validation report",
-    "ata_export_formats.json":  "Results tab SQL/CSV export format definitions",
+    "ata_wafer_map.csv":           ("Die map & coordinates (GDS-derived)", "shared"),
+    "ata_wafer_map_accretech.csv": ("Die map & coordinates (real prober extraction)", "accretech"),
+    "ata_wafer_map_pma.csv":       ("Die/shot map (PMA workbook extraction)", "shared"),
+    "ata_wafer_map_merged.csv":    ("Accretech + PMA merged map (multi-die-per-shot)", "accretech"),
+    "ata_metadata.csv":         ("Wafer / lot metadata", "shared"),
+    "ata_sites.csv":            ("Probe sites", "shared"),
+    "ata_pad_layout.csv":       ("Pad geometry", "shared"),
+    "reference_pad_layout.csv": ("Hand-drawn pad layout sketch (Pad to Probe -> Custom; not used by recipes/wiring)", "shared"),
+    "ata_alignment_marks.csv":  ("Alignment marks", "shared"),
+    "alignment_marks.csv":      ("Alignment marks (alt)", "shared"),
+    "ata_devices.csv":          ("Device definitions", "shared"),
+    "ata_die_markers.csv":      ("Die-level markers", "shared"),
+    "ata_test_structures.csv":  ("Test structures", "shared"),
+    "ata_test_plan":            ("Test plan", "shared"),
+    "ata_validation_report.csv":("Validation report", "shared"),
+    "ata_export_formats.json":  ("Results tab SQL/CSV export format definitions", "accretech"),
+    "ata_export_formats_electroglas.json": ("Results tab SQL/CSV export format definitions", "electroglas"),
 }
 
 WAFER_MAP_SOURCES = {
@@ -345,8 +346,9 @@ def _safe_card_filename(name: str) -> str:
 class ProbeCardWiringFrame(ttk.LabelFrame):
 
     def __init__(self, parent, get_folder=None, log_fn=None, on_card_change=None,
-                 on_pins_change=None):
-        super().__init__(parent, text="Probe Card Wiring (Accretech)")
+                 on_pins_change=None, system: str = "accretech"):
+        self._system = system
+        super().__init__(parent, text=self._title())
         self._get_folder = get_folder or (lambda: None)
         self._log = log_fn or (lambda _msg: None)
         self._on_card_change = on_card_change or (lambda _name: None)
@@ -401,6 +403,9 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             side="right", padx=(0, 2))
 
 
+    def _title(self) -> str:
+        return f"Probe Card Wiring ({self._system.capitalize()})"
+
     def _build_card_bar(self):
         bar = ttk.Frame(self)
         bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 0))
@@ -426,8 +431,8 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         names = list(self._cards.keys())
         self._picker.config(values=names)
         self._picker_var.set(self._current)
-        self.config(text=f"Probe Card Wiring (Accretech) — '{self._current}'"
-                    if self._current else "Probe Card Wiring (Accretech) — no card")
+        self.config(text=f"{self._title()} — '{self._current}'"
+                    if self._current else f"{self._title()} — no card")
 
     def _switch_card(self):
         name = self._picker_var.get()
@@ -515,9 +520,18 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         if new_path:
             try:
                 os.makedirs(cards_dir, exist_ok=True)
-                self._write_card_file(new_path, self._cards[new_name],
-                                      self._card_recipes[new_name])
+                recipes_for_main = (self._card_recipes[new_name]
+                                    if self._system == "accretech"
+                                    else self._read_main_file_recipes(old_path))
+                self._write_card_file(new_path, self._cards[new_name], recipes_for_main)
                 self._card_src[new_name] = new_path
+                if self._system != "accretech":
+                    self._write_side_recipes(new_path, self._card_recipes[new_name])
+                    if old_path:
+                        old_side = self._recipe_side_path(old_path)
+                        if os.path.isfile(old_side) and os.path.normcase(old_side) != \
+                                os.path.normcase(self._recipe_side_path(new_path)):
+                            os.remove(old_side)
                 if old_path and os.path.exists(old_path) and \
                         os.path.normcase(old_path) != os.path.normcase(new_path):
                     os.remove(old_path)
@@ -555,6 +569,16 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                 self._log(f"[WIRING] Deleted {path}")
             except OSError as exc:
                 self._log(f"[WIRING] File delete error: {exc}")
+            base = path[:-4] if path.lower().endswith(".csv") else path
+            card_dir = os.path.dirname(path)
+            if os.path.isdir(card_dir):
+                prefix = os.path.basename(base) + ".recipes."
+                for fname in os.listdir(card_dir):
+                    if fname.lower().startswith(prefix.lower()) and fname.lower().endswith(".csv"):
+                        try:
+                            os.remove(os.path.join(card_dir, fname))
+                        except OSError:
+                            pass
         self._current = next(iter(self._cards), "")
         self._rows = self._cards.get(self._current, [])
         self._refresh()
@@ -687,6 +711,26 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             wr.writeheader()
             wr.writerows(rows)
 
+    def _recipe_side_path(self, main_path: str) -> str:
+        base = main_path[:-4] if main_path.lower().endswith(".csv") else main_path
+        return f"{base}.recipes.{self._system}.csv"
+
+    def _read_main_file_recipes(self, path: str) -> dict:
+        if not path or not os.path.isfile(path):
+            return {}
+        _, recipes = self._read_card_file(path)
+        return recipes or {}
+
+    def _read_side_recipes(self, main_path: str) -> dict:
+        side = self._recipe_side_path(main_path)
+        if not os.path.isfile(side):
+            return {}
+        _, recipes = self._read_card_file(side)
+        return recipes or {}
+
+    def _write_side_recipes(self, main_path: str, recipes: dict):
+        self._write_card_file(self._recipe_side_path(main_path), [], recipes)
+
     def load_from_ata(self, folder: str) -> int:
         cards_dir = os.path.join(folder, "probe_cards")
         self._ata_probe_cards_dir = cards_dir
@@ -695,16 +739,19 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             for fname in sorted(os.listdir(cards_dir)):
                 if not fname.lower().endswith(".csv"):
                     continue
+                if ".recipes." in fname.lower():
+                    continue
                 path = os.path.join(cards_dir, fname)
                 if not os.path.isfile(path):
                     continue
-                pins, recipes = self._read_card_file(path)
+                pins, main_recipes = self._read_card_file(path)
                 if pins is None:
                     continue
                 name = os.path.splitext(fname)[0]
                 found[name] = pins
                 found_src[name] = path
-                found_recipes[name] = recipes
+                found_recipes[name] = (main_recipes if self._system == "accretech"
+                                       else self._read_side_recipes(path))
 
         stale = [name for name in self._ata_card_names if name not in found]
         for name in stale:
@@ -750,7 +797,10 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                 target_dir, f"{_safe_card_filename(name)}.csv")
             self._card_src[name] = path
             try:
-                self._write_card_file(path, rows, self._card_recipes.get(name, {}))
+                recipes_for_main = (self._card_recipes.get(name, {})
+                                    if self._system == "accretech"
+                                    else self._read_main_file_recipes(path))
+                self._write_card_file(path, rows, recipes_for_main)
                 saved.append(path)
             except OSError as exc:
                 self._log(f"[WIRING] Save error for '{name}': {exc}")
@@ -780,7 +830,12 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             path = os.path.join(cards_dir, f"{_safe_card_filename(card)}.csv")
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            self._write_card_file(path, self._cards.get(card, []), self._card_recipes[card])
+            if self._system == "accretech":
+                self._write_card_file(path, self._cards.get(card, []), self._card_recipes[card])
+            else:
+                if not os.path.isfile(path):
+                    self._write_card_file(path, self._cards.get(card, []), {})
+                self._write_side_recipes(path, self._card_recipes[card])
         except OSError as exc:
             self._log(f"[WIRING] Save error for probe card '{card}' recipes: {exc}")
             return False

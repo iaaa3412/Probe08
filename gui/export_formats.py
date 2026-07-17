@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 ATA_EXPORT_FORMATS_FILENAME = "ata_export_formats.json"
 
-SOURCE_FIELDS = {
+SQL_SOURCE_FIELDS = {
     "die_id":      "Shot device-ID string (e.g. 94-60/94-50/94-61/94-51) — Test PMA only",
     "switch":      "Which of the shot's co-touched dies (1-4) — Test PMA only",
     "set_voltage": "Commanded/set bias voltage",
@@ -19,10 +19,30 @@ SOURCE_FIELDS = {
     "step":        "Recipe step name",
     "type":        "Step type (current, voltage, resistance)",
     "mode":        "Step mode (apply/measure)",
+    "instrument":  "Instrument that took the reading (SMU/DMM)",
+    "connection":  "Switch-matrix channel(s) closed for this reading",
     "timestamp":   "Reading timestamp",
     "test_serial": "Computed test serial — see compute_test_serial",
     "iteration":   "Always 1 (one row per die's final averaged reading)",
 }
+
+CSV_SOURCE_FIELDS = {
+    "lot_id":         "Lot ID entered on the Results tab",
+    "wafer_id":       "Wafer ID entered on the Results tab",
+    "chip_id":        "Row+Column die label (e.g. 02I)",
+    "row_num":        "Die row number",
+    "column_letter":  "Die column letter",
+    "connection":     "All switch-matrix channels used for this die, merged",
+    "current":        "Forced/measured current for this die",
+    "voltage":        "SMU voltage readback for this die",
+    "resistance":     "Resistance reading for this die",
+    "voltage_dmm":    "Independent DMM voltage reading for this die",
+    "compliance":     "Compliance-limit flag (currently always FALSE)",
+    "time_stamp":     "Timestamp of the die's first reading",
+    "test_serial":    "Computed test serial — see compute_test_serial",
+}
+
+SOURCE_FIELDS_BY_TYPE = {"sql": SQL_SOURCE_FIELDS, "csv": CSV_SOURCE_FIELDS}
 
 LAMP_FORMAT: Dict[str, Any] = {
     "name": "LaMP Electrical (tblLampElectricalMeasurements)",
@@ -55,7 +75,7 @@ MADX_FORMAT: Dict[str, Any] = {
         {"field": "Voltage",     "source": "voltage"},
         {"field": "Current",     "source": "current"},
         {"field": "Resistance",  "source": "resistance"},
-        {"field": "Voltage_DMM", "source": "voltage_dmm"},
+        {"field": "Voltage_DMM", "source": "voltage_dmm", "multiply": -1},
         {"field": "Compliance",  "source": "compliance"},
         {"field": "Time_Stamp",  "source": "time_stamp"},
     ],
@@ -82,8 +102,15 @@ def sql_string(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def load_formats(folder: str) -> List[Dict[str, Any]]:
-    path = os.path.join(folder, ATA_EXPORT_FORMATS_FILENAME)
+def _formats_filename(system: str) -> str:
+    if system == "accretech":
+        return ATA_EXPORT_FORMATS_FILENAME
+    base, ext = os.path.splitext(ATA_EXPORT_FORMATS_FILENAME)
+    return f"{base}_{system}{ext}"
+
+
+def load_formats(folder: str, system: str = "accretech") -> List[Dict[str, Any]]:
+    path = os.path.join(folder, _formats_filename(system))
     if os.path.exists(path):
         try:
             with open(path, encoding="utf-8") as f:
@@ -94,25 +121,25 @@ def load_formats(folder: str) -> List[Dict[str, Any]]:
         except (OSError, ValueError):
             pass
     seeded = [LAMP_FORMAT, MADX_FORMAT]
-    save_formats(folder, seeded)
+    save_formats(folder, seeded, system)
     return seeded
 
 
-def save_formats(folder: str, formats: List[Dict[str, Any]]):
-    path = os.path.join(folder, ATA_EXPORT_FORMATS_FILENAME)
+def save_formats(folder: str, formats: List[Dict[str, Any]], system: str = "accretech"):
+    path = os.path.join(folder, _formats_filename(system))
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"formats": formats}, f, indent=2)
 
 
-def add_format(folder: str, fmt: Dict[str, Any]) -> List[Dict[str, Any]]:
-    formats = [f for f in load_formats(folder) if f["name"] != fmt["name"]]
+def add_format(folder: str, fmt: Dict[str, Any], system: str = "accretech") -> List[Dict[str, Any]]:
+    formats = [f for f in load_formats(folder, system) if f["name"] != fmt["name"]]
     formats.append(fmt)
-    save_formats(folder, formats)
+    save_formats(folder, formats, system)
     return formats
 
 
-def find_format(folder: str, name: str) -> Optional[Dict[str, Any]]:
-    return next((f for f in load_formats(folder) if f["name"] == name), None)
+def find_format(folder: str, name: str, system: str = "accretech") -> Optional[Dict[str, Any]]:
+    return next((f for f in load_formats(folder, system) if f["name"] == name), None)
 
 
 def resolve_source(source: str, row: Dict[str, Any], context: Dict[str, Any]):
@@ -120,7 +147,37 @@ def resolve_source(source: str, row: Dict[str, Any], context: Dict[str, Any]):
         return context.get("test_serial", 0)
     if source == "iteration":
         return 1
+    if source in context:
+        return context[source]
     return row.get(source, "")
+
+
+def resolve_column_value(col: Dict[str, Any], row: Dict[str, Any], context: Dict[str, Any]):
+    if "constant" in col and col["constant"] not in (None, ""):
+        return col["constant"]
+    raw = resolve_source(col.get("source", ""), row, context)
+    mult = col.get("multiply")
+    if mult not in (None, "", 1, 1.0) and raw not in (None, ""):
+        try:
+            return f"{float(raw) * float(mult):.6g}"
+        except (TypeError, ValueError):
+            return raw
+    return raw
+
+
+def detect_reading_kinds(results_data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    seen = set()
+    out = []
+    for r in results_data:
+        t, mode, instrument = r.get("type") or "", r.get("mode") or "", r.get("instrument") or ""
+        key = (t, mode, instrument)
+        if key == ("", "", "") or key in seen:
+            continue
+        seen.add(key)
+        bits = [b for b in (t, mode, instrument) if b]
+        out.append({"label": " / ".join(bits) if bits else "(reading)",
+                    "type": t, "mode": mode, "instrument": instrument})
+    return out
 
 
 def rows_for_format(fmt: Dict[str, Any],
@@ -140,7 +197,7 @@ def build_insert_statements(fmt: Dict[str, Any], results_data: List[Dict[str, An
     for r in rows:
         vals = []
         for c in cols:
-            raw = resolve_source(c["source"], r, context)
+            raw = resolve_column_value(c, r, context)
             vals.append(sql_string(raw) if c.get("quote") else sql_num(raw))
         out.append(f"INSERT INTO {fmt['table']} ({field_list}) VALUES ({','.join(vals)})")
     return out
@@ -235,13 +292,13 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
 
 def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
                    lot_id: str, wafer_id: str) -> List[Dict[str, Any]]:
-    context = {"lot_id": lot_id, "wafer_id": wafer_id}
+    context = {"lot_id": lot_id, "wafer_id": wafer_id,
+              "test_serial": compute_test_serial(lot_id, wafer_id)}
     out = []
     for g in group_results_by_die(results_data):
         if not g["current"] and not g["resistance"]:
             continue
-        out.append({c["field"]: context.get(c["source"], g.get(c["source"], ""))
-                   for c in fmt["columns"]})
+        out.append({c["field"]: resolve_column_value(c, g, context) for c in fmt["columns"]})
     return out
 
 
