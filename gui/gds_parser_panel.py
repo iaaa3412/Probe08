@@ -519,7 +519,7 @@ class GdsParserPanel(ttk.Frame):
             dlg, text="Create a brand-new ATA folder, or merge these files\n"
                       "into an ATA folder that already exists?\n\n"
                       "Merging overwrites only the files this export creates\n"
-                      "(e.g. ata_wafer_map.csv, ata_pad_layout.csv, …) — it\n"
+                      "(e.g. ata_wafer_map_gds.csv, ata_pad_layout.csv, …) — it\n"
                       "never touches anything else already in that folder\n"
                       "(probe_cards/, etc.).",
             justify="left", padding=(16, 14, 16, 8),

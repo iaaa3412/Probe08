@@ -1266,7 +1266,7 @@ def export_ata_files(
         write_csv(files[key], data.get(key, []))
 
     if wafer_map is not None:
-        files["ata_wafer_map"] = os.path.join(output_dir, "ata_wafer_map.csv")
+        files["ata_wafer_map"] = os.path.join(output_dir, "ata_wafer_map_gds.csv")
         write_csv(
             files["ata_wafer_map"],
             wafer_map,
@@ -1303,7 +1303,7 @@ def build_first_pass_test_plan(data: Dict[str, Any], wafer_map: Sequence[Dict[st
         "alignment_marks_file": "ata_alignment_marks.csv",
         "ata_metadata_file": "ata_metadata.csv",
         "ata_validation_report_file": "ata_validation_report.csv",
-        "wafer_map_file": "ata_wafer_map.csv",
+        "wafer_map_file": "ata_wafer_map_gds.csv",
         "default_recipe": {
             "recipe_name": "UNASSIGNED_PHASE_1_PLACEHOLDER",
             "description": "Fill this in with the actual ATA measurement recipe after pad/instrument mapping is complete.",

@@ -22,7 +22,7 @@ _WGEN_CHANNELS = ("CH1", "CH2")
 _WAVE_SHAPES   = ("SIN", "SQU", "RAMP", "PULS", "DC")
 _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", "lo",
                   "level", "limit", "shape", "freq", "conn", "min", "max",
-                  "avg_count", "avg_delay")
+                  "avg_count", "avg_delay", "nplc")
 
 STEP_FIELDS = _STEP_FIELDS
 
@@ -132,9 +132,13 @@ def _avg_display(step: dict) -> str:
         n = int(step.get("avg_count") or 1)
     except ValueError:
         n = 1
-    if n <= 1:
-        return ""
-    return f"{n}×{step.get('avg_delay') or 0}ms"
+    nplc = (step.get("nplc") or "").strip()
+    parts = []
+    if n > 1:
+        parts.append(f"{n}×{step.get('avg_delay') or 0}ms")
+    if nplc:
+        parts.append(f"NPLC={nplc}")
+    return ", ".join(parts)
 
 
 def _serialize_step(step: dict) -> str:
@@ -148,27 +152,27 @@ def _normalize_step(step: dict) -> dict:
         step["hi"] = step["lo"] = step["conn"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
         return step
     if t == "open":
         step["mode"] = step["chan"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
         return step
     if t == "passfail":
         step["mode"] = step["chan"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
         step["level"] = step["limit"] = step["shape"] = step["freq"] = ""
-        step["avg_count"] = step["avg_delay"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
         return step
     if t == "picture":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
         return step
 
     step["target"] = ""
@@ -211,8 +215,10 @@ def _normalize_step(step: dict) -> dict:
             step["avg_count"] = "1"
         if not (step.get("avg_delay") or "").strip():
             step["avg_delay"] = "0"
+        if not (step.get("nplc") or "").strip():
+            step["nplc"] = "1"
     else:
-        step["avg_count"] = step["avg_delay"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
     return step
 
 
@@ -259,8 +265,8 @@ def write_recipe_file(path: str, recipe: dict):
 
 
 _PMA_MAPPED_KEYS   = {"Voltage", "MeterCurrentLimit", "Averages", "MeterDelay",
-                      "Delay1", "Delay2", "Delay3"}
-_PMA_UNMAPPED_KEYS = {"NPLC", "MeterRange", "Iterations"}
+                      "Delay1", "Delay2", "Delay3", "NPLC"}
+_PMA_UNMAPPED_KEYS = {"MeterRange", "Iterations"}
 _PMA_USEFUL_KEYS   = _PMA_MAPPED_KEYS | _PMA_UNMAPPED_KEYS
 
 
@@ -326,12 +332,13 @@ def pma_params_to_steps(params: dict) -> list:
             avg_delay_ms = str(int(ms)) if ms.is_integer() else str(ms)
         except ValueError:
             pass
+    nplc = _pma_num(params, "NPLC", "1")
 
     meas_name = "Leakage Measurement"
     steps.append(_normalize_step({
         **_pma_blank_step(), "type": "current", "mode": "measure",
         "instrument": "SMU", "chan": "A", "name": meas_name,
-        "avg_count": avg_count, "avg_delay": avg_delay_ms,
+        "avg_count": avg_count, "avg_delay": avg_delay_ms, "nplc": nplc,
     }))
 
     if limit:
@@ -408,13 +415,16 @@ def rows_to_recipes(rows: list) -> dict:
 
 class RecipePanel(ttk.Frame):
     def __init__(self, parent, controller, get_pins=None, get_wiring=None,
-                 get_active_card=None, save_recipes=None, system: str = "accretech"):
+                 get_active_card=None, save_recipes=None, system: str = "accretech",
+                 switch_card=None, get_card_names=None):
         super().__init__(parent)
         self.controller = controller
         self._get_pins = get_pins or (lambda: [])
         self._get_wiring = get_wiring or (lambda: [])
         self._get_active_card = get_active_card or (lambda: "")
         self._save_recipes = save_recipes or (lambda _card, _recipes: False)
+        self._switch_card_cb = switch_card or (lambda _name: None)
+        self._get_card_names = get_card_names or (lambda: [])
         self._conn_viewer = None
         self._system = system
         if system == "electroglas":
@@ -486,10 +496,14 @@ class RecipePanel(ttk.Frame):
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
 
-        self._card_lbl = tk.Label(bar, text="Probe Card: (none)",
-                                  bg="#e2e8f0", fg="#1e3a5f",
-                                  font=("Segoe UI", 9, "bold"), anchor="w")
-        self._card_lbl.pack(side="left", padx=(4, 8))
+        tk.Label(bar, text="Probe Card:", bg="#e2e8f0",
+                 font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 2), pady=4)
+        self._card_picker_var = tk.StringVar(value="")
+        self._card_picker = ttk.Combobox(bar, textvariable=self._card_picker_var,
+                                         state="readonly", width=16)
+        self._card_picker.pack(side="left", padx=(0, 8), pady=4)
+        self._card_picker.bind("<<ComboboxSelected>>",
+                               lambda _e: self._on_card_picker_selected())
 
         self._file_lbl = tk.Label(bar, text="No probe card selected",
                                   bg="#e2e8f0", fg="#6b7280",
@@ -639,6 +653,9 @@ class RecipePanel(ttk.Frame):
         _lbl(ed5, "Avg Delay (ms):")
         self._avg_delay_ent = ttk.Entry(ed5, textvariable=self._ed_vars["avg_delay"], width=7)
         self._avg_delay_ent.pack(side="left")
+        _lbl(ed5, "NPLC:")
+        self._nplc_ent = ttk.Entry(ed5, textvariable=self._ed_vars["nplc"], width=6)
+        self._nplc_ent.pack(side="left")
         self._avg_hint_lbl = ttk.Label(ed5, text=_avg_hint(),
                                        foreground="gray", font=("Arial", 8))
         self._avg_hint_lbl.pack(side="left", padx=(6, 6))
@@ -727,6 +744,7 @@ class RecipePanel(ttk.Frame):
         self._pf_max_ent.config(state="disabled")
         self._avg_count_ent.config(state="disabled")
         self._avg_delay_ent.config(state="disabled")
+        self._nplc_ent.config(state="disabled")
 
         if t == "delay":
             self._ed_vars["mode"].set("")
@@ -814,10 +832,13 @@ class RecipePanel(ttk.Frame):
         if _is_measurement_step({"type": t, "mode": mode}):
             self._avg_count_ent.config(state="normal")
             self._avg_delay_ent.config(state="normal")
+            self._nplc_ent.config(state="normal")
             if not self._ed_vars["avg_count"].get():
                 self._ed_vars["avg_count"].set("1")
             if not self._ed_vars["avg_delay"].get():
                 self._ed_vars["avg_delay"].set("0")
+            if not self._ed_vars["nplc"].get():
+                self._ed_vars["nplc"].set("1")
 
         self._update_level_hint()
 
@@ -1090,6 +1111,11 @@ class RecipePanel(ttk.Frame):
                         issues.append(f"ERROR {tag}: Avg Delay must be a number ≥ 0")
                 except ValueError:
                     issues.append(f"ERROR {tag}: Avg Delay is not a number")
+                try:
+                    if float(s.get("nplc") or 1) <= 0:
+                        issues.append(f"ERROR {tag}: NPLC must be a number > 0")
+                except ValueError:
+                    issues.append(f"ERROR {tag}: NPLC is not a number")
 
             conn = (s.get("conn") or "").replace(" ", "")
             if not conn:
@@ -1301,6 +1327,12 @@ class RecipePanel(ttk.Frame):
             except ValueError:
                 messagebox.showerror("Invalid Step", "Avg Delay must be a number ≥ 0.")
                 return False
+            try:
+                if float(step["nplc"]) <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid Step", "NPLC must be a number > 0.")
+                return False
         for label, key in (("Level", "level"), ("Limit", "limit"), ("Freq", "freq")):
             if step[key]:
                 try:
@@ -1508,8 +1540,7 @@ class RecipePanel(ttk.Frame):
                 f"'{card}' failed")
 
     def _import_legacy(self):
-        card = self._get_active_card()
-        if not card:
+        if not self._get_active_card():
             messagebox.showerror(
                 "No Probe Card",
                 "Select or create a probe card first — on the Pad to Probe "
@@ -1522,17 +1553,27 @@ class RecipePanel(ttk.Frame):
         )
         if not path:
             return
+        self.import_legacy_from_path(path)
+
+    def import_legacy_from_path(self, path: str) -> bool:
+        card = self._get_active_card()
+        if not card:
+            messagebox.showerror(
+                "No Probe Card",
+                "Select or create a probe card first — on the Pad to Probe "
+                "tab. An imported recipe is registered under the active card.")
+            return False
         try:
             useful = parse_pma_params(path)
         except Exception as exc:
             self.controller.log(f"[RECIPE] Legacy import error: {exc}")
-            return
+            return False
         if not useful:
             messagebox.showwarning(
                 "Nothing to Import",
                 "No recognized measurement parameters (Voltage, delays, "
                 "averaging, current limit) were found in that file.")
-            return
+            return False
         steps = pma_params_to_steps(useful)
 
         name = os.path.splitext(os.path.basename(path))[0]
@@ -1569,6 +1610,7 @@ class RecipePanel(ttk.Frame):
             "file's measurement defaults.\n\n"
             "HI/LO pins could not be inferred from the file — set them on the "
             "measurement step, then ✓ Validate before running.")
+        return True
 
     def _import_legacy_workbook(self):
         if _pma_xlrd is None:
@@ -1696,7 +1738,8 @@ class RecipePanel(ttk.Frame):
         self._load_form(self._current)
         self._refresh_picker()
 
-        self._card_lbl.config(text=f"Probe Card: {card}" if card else "Probe Card: (none)")
+        self._card_picker.config(values=sorted(self._get_card_names()))
+        self._card_picker_var.set(card)
         if card:
             self._file_lbl.config(
                 text=f"{len(recipes)} recipe(s) — probe card '{card}'", fg="#374151")
@@ -1710,6 +1753,11 @@ class RecipePanel(ttk.Frame):
 
     def get_active_card(self) -> str:
         return self._active_card
+
+    def _on_card_picker_selected(self):
+        name = self._card_picker_var.get()
+        if name and name != self._active_card:
+            self._switch_card_cb(name)
 
     def get_steps(self) -> list:
         return [dict(s) for s in self._steps]

@@ -1,0 +1,15 @@
+CountMovesMajor=3125
+DeviceIDMajor=\\lampProbe\ProbeRecipe\LaMP\Lamp 21PCM whole waferDeviceIDMajor.PMS
+MovesMajor=\\lampProbe\ProbeRecipe\LaMP\Lamp 21PCM whole waferMovesMajor
+CountMovesMinor=1
+DeviceIDMinor=\\lampProbe\ProbeRecipe\LaMP\Lamp 21PCM whole waferDeviceIDMinor.PMS
+MovesMinor=\\lampProbe\ProbeRecipe\LaMP\Lamp 21PCM whole waferMovesMinor
+DieSizeX=2785
+DieSizeY=1585
+XMoveFirstFromAlignSite=-69625
+YMoveFirstFromAlignSite=-68155
+PreAlignMessage=Align
+PostAlignMessage=Make sure the plate and the alligator clip are clamped down
+PictureFile=APicture.BMP
+IsPicture=True
+Delay1=2000

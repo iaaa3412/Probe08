@@ -22,7 +22,18 @@ class Keithley2400(GPIBInstrument):
 
     def set_voltage(self, channel, volts):
         self.write(":SOUR:FUNC VOLT")
+        self.write(":SOUR:VOLT:MODE FIX")
         self.write(f":SOUR:VOLT:LEV {volts}")
+
+    def set_source_delay(self, seconds: float):
+        self.write(f":SOUR:DEL {float(seconds)}")
+
+    def set_averages(self, channel, count: int):
+        self.write(f":SENS:AVER:COUN {int(count)}")
+        self.write(":SENS:AVER:STATE ON" if int(count) > 1 else ":SENS:AVER:STATE OFF")
+
+    def set_current_range(self, channel, amps):
+        self.write(f":SENS:CURR:RANGE {amps}")
 
     def turn_output_on(self, channel):
         self.write(":OUTP ON")

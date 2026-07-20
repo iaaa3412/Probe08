@@ -5,6 +5,7 @@ import math
 import os
 
 from recipe_panel import recipes_to_rows, rows_to_recipes, STEP_FIELDS
+import electroglas_pma
 
 CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq"] + list(STEP_FIELDS)
 
@@ -35,10 +36,11 @@ def _pz_bind(canvas, on_reset):
 
 
 ATA_KEY_FILES = {
-    "ata_wafer_map.csv":           ("Die map & coordinates (GDS-derived)", "shared"),
+    "ata_wafer_map_gds.csv":       ("Die map & coordinates (GDS-derived)", "shared"),
     "ata_wafer_map_accretech.csv": ("Die map & coordinates (real prober extraction)", "accretech"),
     "ata_wafer_map_pma.csv":       ("Die/shot map (PMA workbook extraction)", "shared"),
     "ata_wafer_map_merged.csv":    ("Accretech + PMA merged map (multi-die-per-shot)", "accretech"),
+    "ata_wafer_map_electroglas.csv": ("Die/touchdown map (PMA Process extraction)", "electroglas"),
     "ata_metadata.csv":         ("Wafer / lot metadata", "shared"),
     "ata_sites.csv":            ("Probe sites", "shared"),
     "ata_pad_layout.csv":       ("Pad geometry", "shared"),
@@ -55,8 +57,9 @@ ATA_KEY_FILES = {
 }
 
 WAFER_MAP_SOURCES = {
-    "GDS":       "ata_wafer_map.csv",
+    "GDS":       "ata_wafer_map_gds.csv",
     "Accretech": "ata_wafer_map_accretech.csv",
+    "Electroglas": "ata_wafer_map_electroglas.csv",
 }
 
 
@@ -169,7 +172,7 @@ class WaferMapPanel(ttk.LabelFrame):
                     )
                     self.dies[(row, col)] = rect
 
-    def load_from_ata(self, folder_path, filename="ata_wafer_map.csv"):
+    def load_from_ata(self, folder_path, filename="ata_wafer_map_gds.csv"):
         map_file = os.path.join(folder_path, filename)
         if not os.path.exists(map_file):
             self.canvas.delete("all")
@@ -357,6 +360,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         self._cards: dict = {}
         self._current: str = ""
         self._card_recipes: dict = {}
+        self._card_move_lists: dict = {}
         self._card_src: dict = {}
         self._ata_card_names: set = set()
         self._ata_probe_cards_dir: str = ""
@@ -435,7 +439,9 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                     if self._current else f"{self._title()} — no card")
 
     def _switch_card(self):
-        name = self._picker_var.get()
+        self.switch_to_card(self._picker_var.get())
+
+    def switch_to_card(self, name: str):
         if name == self._current or name not in self._cards:
             return
         self._current = name
@@ -512,6 +518,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
 
         self._cards[new_name] = self._cards.pop(old_name)
         self._card_recipes[new_name] = self._card_recipes.pop(old_name, {})
+        self._card_move_lists[new_name] = self._card_move_lists.pop(old_name, [])
         self._card_src.pop(old_name, None)
         if old_name in self._ata_card_names:
             self._ata_card_names.discard(old_name)
@@ -532,6 +539,15 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                         if os.path.isfile(old_side) and os.path.normcase(old_side) != \
                                 os.path.normcase(self._recipe_side_path(new_path)):
                             os.remove(old_side)
+                    if self._card_move_lists.get(new_name):
+                        electroglas_pma.save_move_list_csv(
+                            self._move_list_side_path(new_path),
+                            self._card_move_lists[new_name])
+                    if old_path:
+                        old_move_side = self._move_list_side_path(old_path)
+                        if os.path.isfile(old_move_side) and os.path.normcase(old_move_side) != \
+                                os.path.normcase(self._move_list_side_path(new_path)):
+                            os.remove(old_move_side)
                 if old_path and os.path.exists(old_path) and \
                         os.path.normcase(old_path) != os.path.normcase(new_path):
                     os.remove(old_path)
@@ -561,6 +577,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         path = self._card_src.get(name, "")
         del self._cards[name]
         self._card_recipes.pop(name, None)
+        self._card_move_lists.pop(name, None)
         self._card_src.pop(name, None)
         self._ata_card_names.discard(name)
         if path:
@@ -572,9 +589,11 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             base = path[:-4] if path.lower().endswith(".csv") else path
             card_dir = os.path.dirname(path)
             if os.path.isdir(card_dir):
-                prefix = os.path.basename(base) + ".recipes."
+                prefixes = (os.path.basename(base) + ".recipes.",
+                           os.path.basename(base) + ".movelist.")
                 for fname in os.listdir(card_dir):
-                    if fname.lower().startswith(prefix.lower()) and fname.lower().endswith(".csv"):
+                    if fname.lower().endswith(".csv") and any(
+                            fname.lower().startswith(p.lower()) for p in prefixes):
                         try:
                             os.remove(os.path.join(card_dir, fname))
                         except OSError:
@@ -731,15 +750,42 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
     def _write_side_recipes(self, main_path: str, recipes: dict):
         self._write_card_file(self._recipe_side_path(main_path), [], recipes)
 
+    def _move_list_side_path(self, main_path: str) -> str:
+        base = main_path[:-4] if main_path.lower().endswith(".csv") else main_path
+        return f"{base}.movelist.{self._system}.csv"
+
+    def get_move_list(self, card: str) -> list:
+        return list(self._card_move_lists.get(card, []))
+
+    def save_move_list(self, card: str, move_list: list) -> bool:
+        if card not in self._cards:
+            return False
+        self._card_move_lists[card] = list(move_list)
+        path = self._card_src.get(card)
+        if not path:
+            folder = self._get_folder()
+            if not folder:
+                return False
+            cards_dir = self._ata_probe_cards_dir or os.path.join(folder, "probe_cards")
+            path = os.path.join(cards_dir, f"{_safe_card_filename(card)}.csv")
+        side = self._move_list_side_path(path)
+        try:
+            os.makedirs(os.path.dirname(side), exist_ok=True)
+            electroglas_pma.save_move_list_csv(side, move_list)
+        except OSError as exc:
+            self._log(f"[WIRING] Save error for probe card '{card}' move list: {exc}")
+            return False
+        return True
+
     def load_from_ata(self, folder: str) -> int:
         cards_dir = os.path.join(folder, "probe_cards")
         self._ata_probe_cards_dir = cards_dir
-        found, found_src, found_recipes = {}, {}, {}
+        found, found_src, found_recipes, found_move_lists = {}, {}, {}, {}
         if os.path.isdir(cards_dir):
             for fname in sorted(os.listdir(cards_dir)):
                 if not fname.lower().endswith(".csv"):
                     continue
-                if ".recipes." in fname.lower():
+                if ".recipes." in fname.lower() or ".movelist." in fname.lower():
                     continue
                 path = os.path.join(cards_dir, fname)
                 if not os.path.isfile(path):
@@ -752,17 +798,22 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                 found_src[name] = path
                 found_recipes[name] = (main_recipes if self._system == "accretech"
                                        else self._read_side_recipes(path))
+                found_move_lists[name] = (
+                    electroglas_pma.load_move_list_csv(self._move_list_side_path(path))
+                    if self._system != "accretech" else [])
 
         stale = [name for name in self._ata_card_names if name not in found]
         for name in stale:
             self._cards.pop(name, None)
             self._card_src.pop(name, None)
             self._card_recipes.pop(name, None)
+            self._card_move_lists.pop(name, None)
         self._ata_card_names = set(found)
 
         self._cards.update(found)
         self._card_src.update(found_src)
         self._card_recipes.update(found_recipes)
+        self._card_move_lists.update(found_move_lists)
 
         if self._current not in self._cards:
             self._current = next(iter(self._cards), "")

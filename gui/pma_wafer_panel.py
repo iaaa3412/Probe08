@@ -95,6 +95,15 @@ def _named_text(book, name: str, default: str = "") -> str:
     return _cell_text(sheet, row0, col0) or default
 
 
+def _find_label_right(sheet, label: str) -> str:
+    label_l = label.strip().lower()
+    for row0 in range(sheet.nrows):
+        for col0 in range(sheet.row_len(row0) - 1):
+            if _cell_text(sheet, row0, col0).strip().lower() == label_l:
+                return _cell_text(sheet, row0, col0 + 1)
+    return ""
+
+
 def read_main_menu_info(book) -> Dict[str, Any]:
     sheet = book.sheet_by_name("MainMenu")
 
@@ -113,6 +122,7 @@ def read_main_menu_info(book) -> Dict[str, Any]:
         "die_size_y": _named_text(book, "DieSizeY"),
         "x_move_first": _named_text(book, "XMoveFirstFromAlignSite"),
         "y_move_first": _named_text(book, "YMoveFirstFromAlignSite"),
+        "align_die": _find_label_right(sheet, "align die"),
         "params": params,
     }
 
@@ -221,7 +231,7 @@ def parse_legacy_workbook(path: str) -> Dict[str, Any]:
 
 ATA_PMA_FILENAME = "ata_wafer_map_pma.csv"
 _ATA_PMA_META_FIELDS = ("recipe_name", "die_size_x", "die_size_y",
-                        "x_move_first", "y_move_first")
+                        "x_move_first", "y_move_first", "align_die")
 
 
 def save_workbook_to_ata(data: Dict[str, Any], folder: str) -> str:
@@ -320,6 +330,21 @@ def merge_with_accretech(pma_grid: List[Dict[str, Any]], accretech_rc,
     return sorted(merged.values(), key=lambda d: (d["row"], d["col"]))
 
 
+def align_die_ids(data: Dict[str, Any]) -> List[str]:
+    raw = (data.get("align_die") or "").strip()
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split("/") if t.strip()]
+
+
+def find_align_shots(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    ids = set(align_die_ids(data))
+    if not ids:
+        return []
+    return [s for s in data.get("shots", [])
+           if s.get("included") and ids & set(s.get("dies", []))]
+
+
 def centroid_offset(pma_grid: List[Dict[str, Any]], accretech_rc) -> tuple:
     accretech_rc = list(accretech_rc)
     if not pma_grid or not accretech_rc:
@@ -366,8 +391,6 @@ class PmaWaferPanel(ttk.Frame):
     def _build_controls(self):
         ctl = ttk.Frame(self, padding=6)
         ctl.grid(row=0, column=0, sticky="ew")
-        ttk.Button(ctl, text="Open Recipe Generator (.xls)…",
-                   command=self._open_workbook).pack(side="left")
         ttk.Button(ctl, text="💾 Save to ATA Folder",
                    command=self._save_to_ata).pack(side="left", padx=(6, 0))
         ttk.Label(ctl, textvariable=self.path_var, foreground="gray").pack(
@@ -459,13 +482,16 @@ class PmaWaferPanel(ttk.Frame):
             row=5, column=0, sticky="w", pady=(6, 0))
 
 
-    def _open_workbook(self):
+    def open_workbook_dialog(self):
         path = filedialog.askopenfilename(
             title="Open Recipe Generator (.xls)",
             filetypes=[("Excel 97-2003 Workbook", "*.xls"), ("All files", "*.*")],
         )
         if not path:
             return
+        self.load_workbook_path(path)
+
+    def load_workbook_path(self, path: str):
         self.path_var.set(f"Loading {os.path.basename(path)} …")
         self._log(f"[PMA] Opening legacy recipe workbook {path}")
         threading.Thread(target=self._load_worker, args=(path,), daemon=True).start()
@@ -515,13 +541,42 @@ class PmaWaferPanel(ttk.Frame):
         self._after_load(data)
         self._log(f"[PMA] Restored '{data['recipe_name']}' from {ATA_PMA_FILENAME}")
 
-    def _after_load(self, data: Dict[str, Any]):
-        self.workbook_data = data
-        self.path_var.set(data["path"])
+    def show_touchdowns(self, data: Dict[str, Any]):
+        self.path_var.set(f"{data['path']}  (from PMA Process)")
+        align_line = self._align_summary_line(data)
         self.summary_var.set(
             f"Recipe: {data['recipe_name'] or '(unnamed)'}\n"
             f"Die size: {data['die_size_x']} x {data['die_size_y']} um\n"
             f"Align offset: ({data['x_move_first']}, {data['y_move_first']}) um\n"
+            f"{align_line}"
+            f"Grid: {data['rows']} rows x {data['cols']} cols\n"
+            f"Shots on map: {data['included_shot_count']}\n"
+            f"Real dies: {data['real_die_count']}"
+        )
+        self._populate_tree(data)
+        self._update_legend(data)
+        if _MPL:
+            self._draw_map(data)
+        self._log(
+            f"[PMA] Wafer map merged from PMA Process: {data['included_shot_count']} "
+            f"shot(s), {data['real_die_count']} die(s) on the map."
+        )
+
+    def _align_summary_line(self, data: Dict[str, Any]) -> str:
+        ids = align_die_ids(data)
+        if not ids:
+            return ""
+        return f"Align die: {'/'.join(ids)}  (marked ★ on map)\n"
+
+    def _after_load(self, data: Dict[str, Any]):
+        self.workbook_data = data
+        self.path_var.set(data["path"])
+        align_line = self._align_summary_line(data)
+        self.summary_var.set(
+            f"Recipe: {data['recipe_name'] or '(unnamed)'}\n"
+            f"Die size: {data['die_size_x']} x {data['die_size_y']} um\n"
+            f"Align offset: ({data['x_move_first']}, {data['y_move_first']}) um\n"
+            f"{align_line}"
             f"Grid: {data['rows']} rows x {data['cols']} cols\n"
             f"Shots on map: {data['included_shot_count']} "
             f"(excluded: {data['excluded_shot_count']})\n"
@@ -581,6 +636,10 @@ class PmaWaferPanel(ttk.Frame):
                               edgecolor="#0f172a", linewidth=0.3)
             self.ax.add_patch(rect)
             self._patches_by_rc[(s["row"], s["col"])] = rect
+        for s in find_align_shots(data):
+            cx, cy = s["x_um"] + dx / 2, s["y_um"] + dy / 2
+            self.ax.plot(cx, cy, marker="*", markersize=14, color="#facc15",
+                        markeredgecolor="#78350f", markeredgewidth=1.0, zorder=5)
         x_headers, y_headers = data["x_headers"], data["y_headers"]
         if x_headers and y_headers:
             self.ax.set_xlim(min(x_headers) - dx, max(x_headers) + 2 * dx)
@@ -629,8 +688,11 @@ class PmaWaferPanel(ttk.Frame):
                 self._selected_patch = patch
                 self.canvas.draw_idle()
         if shot["included"]:
+            align_ids = set(align_die_ids(self.workbook_data or {}))
+            is_align = bool(align_ids & set(shot["dies"]))
+            tag = "  ★ ALIGN DIE" if is_align else ""
             lines = [f"Row {shot['row']}, Col {shot['col']}  —  "
-                    f"X={shot['x_um']:.0f} µm, Y={shot['y_um']:.0f} µm", ""]
+                    f"X={shot['x_um']:.0f} µm, Y={shot['y_um']:.0f} µm{tag}", ""]
             for i, d in enumerate(shot["dies"]):
                 mark = "NA (skipped)" if d.strip().upper() == "NA" else d
                 lines.append(f"  Die {i + 1}: {mark}")

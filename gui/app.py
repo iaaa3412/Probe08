@@ -49,6 +49,7 @@ class AtomicaDashboard(tk.Tk):
         self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
+        self.working_dir_var = tk.StringVar(value="C:/automationproject")
         self._build_brand_header()
         self.create_toolbar()
         self._main_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
@@ -123,11 +124,17 @@ class AtomicaDashboard(tk.Tk):
         if system == self.active_system or system not in self._by_system:
             return
         old_ui = self.ui
+        carry_over_folder = old_ui._ata_folder
         self.active_system = system
         self.title("Electroglas Tester" if system == "electroglas" else "Accretech Tester")
         self._main_pane.forget(old_ui)
-        self._main_pane.insert(0, self.ui, weight=1)
+        if self._main_pane.panes():
+            self._main_pane.insert(0, self.ui, weight=1)
+        else:
+            self._main_pane.add(self.ui, weight=1)
         self._style_system_toggle()
+        if carry_over_folder and self.ui._ata_folder != carry_over_folder:
+            self._do_load_ata_folder(carry_over_folder)
         self.update_statistics_visuals()
         self.check_system_ready()
         self.log(f"[SYSTEM] Switched active system to {system.capitalize()}.")
@@ -228,18 +235,17 @@ class AtomicaDashboard(tk.Tk):
     def _build_bottom_routing(self):
         lf = ttk.LabelFrame(self._main_pane, text="Switch Routing")
         self._bottom_routing_frame = lf
-        self._routing_visible = True
-        self._main_pane.add(lf, weight=0)
+        self._routing_visible = False
         holder, self.bottom_routing = scrollable_routing(lf, self)
         holder.pack(fill="both", expand=True)
 
     def cmd_toggle_routing(self):
         if self._routing_visible:
             self._main_pane.forget(self._bottom_routing_frame)
-            self._routing_toggle_btn.config(text="▸ Show Switch")
+            self._routing_toggle_btn.config(text="▸ Show Routing")
         else:
             self._main_pane.add(self._bottom_routing_frame, weight=0)
-            self._routing_toggle_btn.config(text="▾ Hide Switch")
+            self._routing_toggle_btn.config(text="▾ Hide Routing")
         self._routing_visible = not self._routing_visible
 
     def cmd_fit_windows(self):
@@ -400,7 +406,7 @@ class AtomicaDashboard(tk.Tk):
         self._ata_lbl.pack(side="left", padx=(2, 8), pady=2)
         ttk.Button(toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear).pack(side="left", padx=4, pady=2)
         self._routing_toggle_btn = ttk.Button(
-            toolbar, text="▾ Hide Routing", command=self.cmd_toggle_routing)
+            toolbar, text="▸ Show Routing", command=self.cmd_toggle_routing)
         self._routing_toggle_btn.pack(side="right", padx=6, pady=2)
         ttk.Button(toolbar, text="⛶ Fit Windows", command=self.cmd_fit_windows).pack(
             side="right", padx=2, pady=2)

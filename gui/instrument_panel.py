@@ -14,12 +14,14 @@ from switchbox_test_panel import SwitchboxTestPanel
 from instruments_eg_panel import InstrumentsEgPanel
 from probe_routing_panel import scrollable_routing
 from prober_debug_panel import ProberDebugPanel
+from eg_prober_debug_panel import EgProberDebugPanel
 from accr_wafer_panel import AccrWaferPanel
 from cassette_panel import CassettePanel
 from recipe_panel import RecipePanel
 from pma_wafer_panel import (PmaWaferPanel, pma_shots_to_grid, merge_with_accretech,
                              centroid_offset)
 from nanoz_panel import NanoZPanel
+from pma_process_panel import PmaProcessPanel
 import export_formats as xfmt
 from engineering_units import parse_engineering, format_engineering
 
@@ -231,7 +233,8 @@ class MainLayout(ttk.Frame):
             "UF200R Prober", "SMU (2636B)", "DMM (34461A)", "SW_MATRIX", "Wave Gen (33512B)"]
         self._init_hardware_fn = init_hardware_fn or controller.init_hardware
         self.export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser('~'), 'Downloads'))
-        self.working_dir_var = tk.StringVar(value="C:/automationproject")
+        self.working_dir_var = (getattr(controller, "working_dir_var", None)
+                                or tk.StringVar(value="C:/automationproject"))
         self.lot_id = tk.StringVar()
         self.wafer_id_var = tk.StringVar()
         self.status_labels = {}
@@ -341,10 +344,12 @@ class MainLayout(ttk.Frame):
         self._tab_execution2(main_nb)
         self._tab_results(main_nb)
         self._tab_gds_parser(main_nb)
-        self._tab_pad_layout(main_nb)
+        self._tab_probe_card(main_nb)
         if self._system == "accretech":
             self._tab_accr_wafer(main_nb)
         self._tab_pma_wafer(main_nb)
+        if self._system == "electroglas":
+            self._tab_pma_process(main_nb)
 
         debug_frame = ttk.Frame(top_nb)
         top_nb.add(debug_frame, text="  Debug  ")
@@ -1200,6 +1205,14 @@ class MainLayout(ttk.Frame):
 
         ttk.Button(ctrl, text="📁 Load ATA Folder…",
                   command=self.controller.cmd_import_map).pack(side="left", padx=(0, 10))
+
+        ttk.Label(ctrl, text="Working Directory:").pack(side="left", padx=(0, 4))
+        ttk.Entry(ctrl, textvariable=self.working_dir_var, width=26).pack(
+            side="left", padx=(0, 4))
+        ttk.Button(
+            ctrl, text="Browse...", command=self.controller.cmd_browse_working_dir
+        ).pack(side="left", padx=(0, 10))
+
         self._ata_path_lbl = ttk.Label(ctrl, text="No folder selected", foreground="gray")
         self._ata_path_lbl.pack(side="left", padx=10)
 
@@ -1306,6 +1319,13 @@ class MainLayout(ttk.Frame):
         if nanoz is not None:
             try:
                 nanoz.on_ata_folder_loaded(folder_path)
+            except Exception:
+                pass
+
+        pma_process = getattr(self, "pma_process", None)
+        if pma_process is not None:
+            try:
+                pma_process.scan_ata_folder()
             except Exception:
                 pass
 
@@ -1536,9 +1556,9 @@ class MainLayout(ttk.Frame):
         dlg.geometry(f"+{x}+{y}")
         dlg.wait_window()
 
-    def _tab_pad_layout(self, nb):
+    def _tab_probe_card(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="Pad to Probe")
+        nb.add(tab, text="Probe Card")
         tab.rowconfigure(1, weight=1)
         tab.columnconfigure(0, weight=1)
 
@@ -1714,7 +1734,11 @@ class MainLayout(ttk.Frame):
                                      if hasattr(self, "pin_wiring") else ""),
             save_recipes=lambda card, recipes: (
                 self.pin_wiring.save_recipes(card, recipes)
-                if hasattr(self, "pin_wiring") else False))
+                if hasattr(self, "pin_wiring") else False),
+            switch_card=lambda name: (self.pin_wiring.switch_to_card(name)
+                                      if hasattr(self, "pin_wiring") else None),
+            get_card_names=lambda: (self.pin_wiring.get_card_names()
+                                    if hasattr(self, "pin_wiring") else []))
         self.recipe_panel.grid(row=0, column=0, sticky="nsew")
 
     def _tab_switch_settings(self, nb):
@@ -1751,7 +1775,10 @@ class MainLayout(ttk.Frame):
         nb.add(tab, text="Prober Debug")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        self.prober_debug = ProberDebugPanel(tab, controller=self.controller)
+        if self._system == "accretech":
+            self.prober_debug = ProberDebugPanel(tab, controller=self.controller)
+        else:
+            self.prober_debug = EgProberDebugPanel(tab, controller=self.controller)
         self.prober_debug.grid(row=0, column=0, sticky="nsew")
 
     def _tab_cassette(self, nb):
@@ -1773,12 +1800,20 @@ class MainLayout(ttk.Frame):
 
     def _tab_pma_wafer(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="PMA")
+        nb.add(tab, text="PMA Wafer")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
         self.pma_wafer = PmaWaferPanel(tab, controller=self.controller,
                                        get_folder=lambda: self._ata_folder)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
+
+    def _tab_pma_process(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="PMA Process")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        self.pma_process = PmaProcessPanel(tab, controller=self.controller, main_layout=self)
+        self.pma_process.grid(row=0, column=0, sticky="nsew")
 
     def _build_exec_panel(self):
         tab = ttk.Frame(self)
@@ -3074,22 +3109,6 @@ class MainLayout(ttk.Frame):
     def _tab_results(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Results")
-
-        wd_frame = ttk.LabelFrame(tab, text="Working Directory")
-        wd_frame.pack(fill="x", padx=15, pady=(15, 0))
-        ttk.Label(
-            wd_frame,
-            text="Will list all subfolders here "
-                 "whose name ends with \"ata\" (case-insensitive)."
-        ).pack(anchor="w", padx=10, pady=(8, 4))
-        wd_row = ttk.Frame(wd_frame)
-        wd_row.pack(fill="x", padx=10, pady=(4, 12))
-        ttk.Label(wd_row, text="Working Directory:").pack(side="left")
-        ttk.Entry(wd_row, textvariable=self.working_dir_var, width=40).pack(
-            side="left", padx=6)
-        ttk.Button(
-            wd_row, text="Browse...", command=self.controller.cmd_browse_working_dir
-        ).pack(side="left", padx=4)
 
         export_frame = ttk.LabelFrame(tab, text="Data Export")
         export_frame.pack(fill="x", padx=15, pady=15)
