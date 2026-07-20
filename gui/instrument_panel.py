@@ -1588,11 +1588,21 @@ class MainLayout(ttk.Frame):
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
         split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        left_col = ttk.PanedWindow(split, orient=tk.VERTICAL, width=310)
-        split.add(left_col, weight=0)
+        self.pin_wiring = ProbeCardWiringFrame(
+            split,
+            get_folder=lambda: self._ata_folder,
+            log_fn=self.controller.log,
+            on_card_change=self._on_probe_card_change,
+            on_pins_change=lambda: self.pad_panel.refresh_pins(),
+            system=self._system,
+        )
+        split.add(self.pin_wiring, weight=1)
 
-        list_frame = ttk.LabelFrame(left_col, text="Pads")
-        left_col.add(list_frame, weight=1)
+        right_col = ttk.PanedWindow(split, orient=tk.VERTICAL, width=340)
+        split.add(right_col, weight=0)
+
+        list_frame = ttk.LabelFrame(right_col, text="Pads")
+        right_col.add(list_frame, weight=1)
 
         cols = ("pad", "net", "x", "y")
         self._pad_tree = ttk.Treeview(
@@ -1612,19 +1622,9 @@ class MainLayout(ttk.Frame):
         vsb.pack(side="right", fill="y")
         self._pad_tree.pack(fill="both", expand=True)
 
-        self.pin_wiring = ProbeCardWiringFrame(
-            left_col,
-            get_folder=lambda: self._ata_folder,
-            log_fn=self.controller.log,
-            on_card_change=self._on_probe_card_change,
-            on_pins_change=lambda: self.pad_panel.refresh_pins(),
-            system=self._system,
-        )
-        left_col.add(self.pin_wiring, weight=1)
-
-        self.pad_panel = PadLayoutPanel(split, on_custom_change=self._refresh_pad_tree_from_custom,
+        self.pad_panel = PadLayoutPanel(right_col, on_custom_change=self._refresh_pad_tree_from_custom,
                                         get_pins=self.pin_wiring.get_wiring)
-        split.add(self.pad_panel, weight=1)
+        right_col.add(self.pad_panel, weight=1)
 
         self._on_pad_source_change()
 
