@@ -51,6 +51,20 @@ def _moves_path(pma_path: str, fields: dict, key: str, axis: str) -> str:
     return f"{_resolve_local(pma_path, ref)}{axis}.PMV"
 
 
+def sibling_file_paths(pma_path: str, fields: dict) -> list:
+    paths = []
+    for key, axis in (("MovesMajor", "X"), ("MovesMajor", "Y"),
+                      ("MovesMinor", "X"), ("MovesMinor", "Y")):
+        p = _moves_path(pma_path, fields, key, axis)
+        if p:
+            paths.append(p)
+    for key in ("DeviceIDMajor", "DeviceIDMinor"):
+        p = _device_id_path(pma_path, fields, key)
+        if p:
+            paths.append(p)
+    return paths
+
+
 def _read_numbers(path: str) -> list:
     if not path or not os.path.isfile(path):
         return []
@@ -101,6 +115,7 @@ def load_touchdowns(pma_path: str, fields: dict) -> list:
                 "major_index": i + 1,
                 "minor_index": j + 1,
                 "device_id": device_id,
+                "device_id_major": device_id_major,
                 "x": major_x[i] + mx,
                 "y": major_y[i] + my,
                 "major_x": major_x[i],
@@ -133,8 +148,9 @@ def _group_by_major(touchdowns: list) -> tuple:
     for t in touchdowns:
         idx = t["major_index"]
         if idx not in groups:
-            groups[idx] = {"x": t["major_x"], "y": t["major_y"], "device_ids": [],
-                           "minor_x": [], "minor_y": []}
+            groups[idx] = {"x": t["major_x"], "y": t["major_y"],
+                           "device_id_major": t["device_id_major"],
+                           "device_ids": [], "minor_x": [], "minor_y": []}
             order.append(idx)
         groups[idx]["device_ids"].append(t["device_id"])
         groups[idx]["minor_x"].append(t["x"] - t["major_x"])
@@ -202,16 +218,27 @@ def load_move_list_csv(path: str) -> list:
     return move_list
 
 
+def _pitch_index(values: list) -> dict:
+    uniq = sorted(set(values))
+    if len(uniq) < 2:
+        return {v: 0 for v in uniq}
+    pitch = min(uniq[i + 1] - uniq[i] for i in range(len(uniq) - 1))
+    if pitch <= 0:
+        return {v: i for i, v in enumerate(uniq)}
+    base = uniq[0]
+    return {v: round((v - base) / pitch) for v in uniq}
+
+
 def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
     groups, order = _group_by_major(touchdowns)
     shots_by_major = {idx: {"x_um": groups[idx]["x"], "y_um": groups[idx]["y"],
-                            "dies": groups[idx]["device_ids"], "included": True}
+                            "dies": [groups[idx]["device_id_major"]], "included": True}
                       for idx in order}
 
     xs = sorted(set(shots_by_major[idx]["x_um"] for idx in order))
     ys = sorted(set(shots_by_major[idx]["y_um"] for idx in order))
-    x_to_col = {x: i for i, x in enumerate(xs)}
-    y_to_row = {y: i for i, y in enumerate(ys)}
+    x_to_col = _pitch_index(xs)
+    y_to_row = _pitch_index(ys)
 
     shots = []
     for idx in order:
@@ -219,6 +246,9 @@ def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
         s["row"] = y_to_row[s["y_um"]]
         s["col"] = x_to_col[s["x_um"]]
         shots.append(s)
+
+    rows = (max(y_to_row.values()) + 1) if y_to_row else 0
+    cols = (max(x_to_col.values()) + 1) if x_to_col else 0
 
     name = os.path.splitext(os.path.basename(pma_path))[0]
     real_dies = sum(len(s["dies"]) for s in shots)
@@ -229,8 +259,8 @@ def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
         "die_size_y": fields.get("DieSizeY", ""),
         "x_move_first": fields.get("XMoveFirstFromAlignSite", ""),
         "y_move_first": fields.get("YMoveFirstFromAlignSite", ""),
-        "rows": len(ys),
-        "cols": len(xs),
+        "rows": rows,
+        "cols": cols,
         "included_shot_count": len(shots),
         "excluded_shot_count": 0,
         "real_die_count": real_dies,

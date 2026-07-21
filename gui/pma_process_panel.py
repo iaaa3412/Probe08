@@ -1,10 +1,13 @@
+import json
 import os
+import shutil
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 
 import electroglas_pma as egpma
 
 PMA_SOURCE_SUBDIR = "pma_source"
+PMA_DEFAULTS_FILENAME = "pma_source_defaults.json"
 
 
 class PmaProcessPanel(ttk.Frame):
@@ -59,16 +62,25 @@ class PmaProcessPanel(ttk.Frame):
         ttk.Label(bar, text="PMA:").pack(side="left")
         self._pma_picker = ttk.Combobox(
             bar, textvariable=self._pma_picker_var, state="readonly", width=28)
-        self._pma_picker.pack(side="left", padx=(4, 12))
+        self._pma_picker.pack(side="left", padx=(4, 2))
         self._pma_picker.bind("<<ComboboxSelected>>", self._on_pma_picked)
+        ttk.Button(bar, text="⭐ Set Default", command=self._set_pma_default).pack(
+            side="left", padx=(0, 2))
+        ttk.Button(bar, text="🗑", width=3, command=self._delete_pma).pack(
+            side="left", padx=(0, 12))
 
         ttk.Label(bar, text="Recipe Generator:").pack(side="left")
         self._xls_picker = ttk.Combobox(
             bar, textvariable=self._xls_picker_var, state="readonly", width=28)
-        self._xls_picker.pack(side="left", padx=(4, 12))
+        self._xls_picker.pack(side="left", padx=(4, 2))
         self._xls_picker.bind("<<ComboboxSelected>>", self._on_xls_picked)
+        ttk.Button(bar, text="⭐ Set Default", command=self._set_xls_default).pack(
+            side="left", padx=(0, 2))
+        ttk.Button(bar, text="🗑", width=3, command=self._delete_xls).pack(side="left")
 
-        ttk.Button(bar, text="🔄  Rescan", command=self.scan_ata_folder).pack(side="left")
+        self._defaults_lbl = ttk.Label(bar, text="", foreground="#6b7280")
+        self._defaults_lbl.pack(side="left", padx=(12, 0))
+        self._update_defaults_label()
 
     def _build_run_setup(self):
         lf = ttk.LabelFrame(self, text="Run Setup", padding=8)
@@ -153,7 +165,7 @@ class PmaProcessPanel(ttk.Frame):
         folder = getattr(self._main_layout, "_ata_folder", "")
         return os.path.join(folder, PMA_SOURCE_SUBDIR) if folder else ""
 
-    def scan_ata_folder(self):
+    def _list_pma_source_files(self):
         src_dir = self._pma_source_dir()
         pma_files, xls_files = [], []
         if src_dir and os.path.isdir(src_dir):
@@ -166,21 +178,99 @@ class PmaProcessPanel(ttk.Frame):
                     pma_files.append(path)
                 elif low.endswith(".xls"):
                     xls_files.append(path)
+        return pma_files, xls_files
 
+    def _refresh_pickers(self):
+        pma_files, xls_files = self._list_pma_source_files()
         self._pma_choices = pma_files
-        self._pma_picker.config(values=[os.path.basename(p) for p in pma_files])
-        if len(pma_files) == 1:
+        self._pma_picker.config(values=[""] + [os.path.basename(p) for p in pma_files])
+        self._xls_choices = xls_files
+        self._xls_picker.config(values=[""] + [os.path.basename(p) for p in xls_files])
+
+    def _defaults_path(self) -> str:
+        src_dir = self._pma_source_dir()
+        return os.path.join(src_dir, PMA_DEFAULTS_FILENAME) if src_dir else ""
+
+    def _load_defaults(self) -> dict:
+        path = self._defaults_path()
+        if path and os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                pass
+        return {}
+
+    def _save_defaults(self, data: dict):
+        src_dir = self._pma_source_dir()
+        if not src_dir:
+            return
+        try:
+            os.makedirs(src_dir, exist_ok=True)
+            with open(self._defaults_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except OSError as exc:
+            self._log(f"[PMA] Could not save default source selection: {exc}")
+
+    def _update_defaults_label(self):
+        defaults = self._load_defaults()
+        parts = []
+        if defaults.get("pma"):
+            parts.append(f"PMA default: {defaults['pma']}")
+        if defaults.get("xls"):
+            parts.append(f"Recipe Gen default: {defaults['xls']}")
+        self._defaults_lbl.config(text="   |   ".join(parts))
+
+    def _set_pma_default(self):
+        name = self._pma_picker_var.get()
+        if not name:
+            self._log("[PMA] Pick a PMA file first to set it as the default.")
+            return
+        defaults = self._load_defaults()
+        defaults["pma"] = name
+        self._save_defaults(defaults)
+        self._update_defaults_label()
+        self._log(f"[PMA] '{name}' set as the default PMA file — it will "
+                  "auto-load whenever this ATA folder is opened.")
+
+    def _set_xls_default(self):
+        name = self._xls_picker_var.get()
+        if not name:
+            self._log("[PMA] Pick a recipe generator file first to set it as the default.")
+            return
+        defaults = self._load_defaults()
+        defaults["xls"] = name
+        self._save_defaults(defaults)
+        self._update_defaults_label()
+        self._log(f"[PMA] '{name}' set as the default recipe generator file — it "
+                  "will auto-load whenever this ATA folder is opened.")
+
+    def scan_ata_folder(self):
+        self._refresh_pickers()
+        pma_files, xls_files = self._pma_choices, self._xls_choices
+        defaults = self._load_defaults()
+
+        pma_default = next(
+            (p for p in pma_files if os.path.basename(p) == defaults.get("pma")), None)
+        if pma_default:
+            self._pma_picker_var.set(os.path.basename(pma_default))
+            self.load_path(pma_default)
+        elif len(pma_files) == 1:
             self._pma_picker_var.set(os.path.basename(pma_files[0]))
             self.load_path(pma_files[0])
         else:
             self._pma_picker_var.set("")
             if len(pma_files) > 1:
                 self._log(f"[PMA] {len(pma_files)} .PMA file(s) found in "
-                          f"{PMA_SOURCE_SUBDIR}\\ — pick one from the PMA dropdown.")
+                          f"{PMA_SOURCE_SUBDIR}\\ — pick one from the PMA dropdown "
+                          "(or ⭐ Set Default to auto-load it next time).")
 
-        self._xls_choices = xls_files
-        self._xls_picker.config(values=[os.path.basename(p) for p in xls_files])
-        if len(xls_files) == 1:
+        xls_default = next(
+            (p for p in xls_files if os.path.basename(p) == defaults.get("xls")), None)
+        if xls_default:
+            self._xls_picker_var.set(os.path.basename(xls_default))
+            self._load_recipe_generator_path(xls_default)
+        elif len(xls_files) == 1:
             self._xls_picker_var.set(os.path.basename(xls_files[0]))
             self._load_recipe_generator_path(xls_files[0])
         else:
@@ -188,16 +278,148 @@ class PmaProcessPanel(ttk.Frame):
             if len(xls_files) > 1:
                 self._log(f"[PMA] {len(xls_files)} recipe-generator .xls file(s) found "
                           f"in {PMA_SOURCE_SUBDIR}\\ — pick one from the Recipe "
-                          "Generator dropdown.")
+                          "Generator dropdown (or ⭐ Set Default to auto-load it next time).")
+
+        self._update_defaults_label()
+
+    def _copy_if_missing(self, src: str, dest_dir: str) -> str:
+        if not os.path.isfile(src):
+            return src
+        if os.path.abspath(os.path.dirname(src)) == os.path.abspath(dest_dir):
+            return src
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except OSError as exc:
+            self._log(f"[PMA] Could not create {PMA_SOURCE_SUBDIR}\\: {exc}")
+            return src
+        dest = os.path.join(dest_dir, os.path.basename(src))
+        if not os.path.exists(dest):
+            try:
+                shutil.copy2(src, dest)
+                self._log(f"[PMA] Copied {os.path.basename(src)} → {PMA_SOURCE_SUBDIR}\\")
+            except OSError as exc:
+                self._log(f"[PMA] Could not copy {src} to {PMA_SOURCE_SUBDIR}\\: {exc}")
+                return src
+        return dest
+
+    def _ensure_recipe_gen_in_pma_source(self, path: str) -> str:
+        src_dir = self._pma_source_dir()
+        if not src_dir:
+            return path
+        return self._copy_if_missing(path, src_dir)
+
+    def _ensure_pma_set_in_pma_source(self, path: str) -> str:
+        src_dir = self._pma_source_dir()
+        if not src_dir:
+            return path
+        new_path = self._copy_if_missing(path, src_dir)
+        try:
+            fields = egpma.parse_pma_file(path)
+        except OSError:
+            return new_path
+        for sib in egpma.sibling_file_paths(path, fields):
+            self._copy_if_missing(sib, src_dir)
+        return new_path
+
+    def _delete_pma(self):
+        name = self._pma_picker_var.get()
+        path = next((p for p in self._pma_choices if os.path.basename(p) == name), None)
+        if not path:
+            self._log("[PMA] No PMA file selected to delete.")
+            return
+        if not messagebox.askyesno(
+            "Delete PMA File",
+            f"Delete '{name}' and its .PMV/.PMS moveset files from "
+            f"{PMA_SOURCE_SUBDIR}\\?\nThis cannot be undone."
+        ):
+            return
+        try:
+            fields = egpma.parse_pma_file(path)
+            for sib in egpma.sibling_file_paths(path, fields):
+                if os.path.isfile(sib):
+                    try:
+                        os.remove(sib)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        try:
+            os.remove(path)
+        except OSError as exc:
+            self._log(f"[PMA] Could not delete {path}: {exc}")
+            return
+        if self._pma_path == path:
+            self._clear_pma()
+        defaults = self._load_defaults()
+        if defaults.get("pma") == name:
+            del defaults["pma"]
+            self._save_defaults(defaults)
+        self._log(f"[PMA] Deleted {name} from {PMA_SOURCE_SUBDIR}\\")
+        self._refresh_pickers()
+        self._pma_picker_var.set("")
+        self._update_defaults_label()
+
+    def _delete_xls(self):
+        name = self._xls_picker_var.get()
+        path = next((p for p in self._xls_choices if os.path.basename(p) == name), None)
+        if not path:
+            self._log("[PMA] No recipe generator file selected to delete.")
+            return
+        if not messagebox.askyesno(
+            "Delete Recipe Generator",
+            f"Delete '{name}' from {PMA_SOURCE_SUBDIR}\\?\nThis cannot be undone."
+        ):
+            return
+        try:
+            os.remove(path)
+        except OSError as exc:
+            self._log(f"[PMA] Could not delete {path}: {exc}")
+            return
+        pma_wafer = getattr(self._main_layout, "pma_wafer", None)
+        xls_data = getattr(pma_wafer, "_xls_shot_data", None) if pma_wafer else None
+        if pma_wafer is not None and xls_data and xls_data.get("path") == path:
+            self._clear_xls()
+        defaults = self._load_defaults()
+        if defaults.get("xls") == name:
+            del defaults["xls"]
+            self._save_defaults(defaults)
+        self._log(f"[PMA] Deleted {name} from {PMA_SOURCE_SUBDIR}\\")
+        self._refresh_pickers()
+        self._xls_picker_var.set("")
+        self._update_defaults_label()
+
+    def _clear_pma(self):
+        self._pma_path = ""
+        self._fields = {}
+        self._touchdowns = []
+        self._move_list = []
+        self._fields_tree.delete(*self._fields_tree.get_children())
+        self._move_tree.delete(*self._move_tree.get_children())
+        self._summary_var.set("Load a .PMA file to begin.")
+        self._path_lbl.config(text="No PMA file loaded", foreground="gray")
+        pma_wafer = getattr(self._main_layout, "pma_wafer", None)
+        if pma_wafer is not None:
+            pma_wafer.clear_pma_source()
+
+    def _clear_xls(self):
+        pma_wafer = getattr(self._main_layout, "pma_wafer", None)
+        if pma_wafer is not None:
+            pma_wafer.clear_xls_source()
 
     def _on_pma_picked(self, _evt=None):
         name = self._pma_picker_var.get()
+        if not name:
+            self._clear_pma()
+            return
         path = next((p for p in self._pma_choices if os.path.basename(p) == name), None)
         if path:
             self.load_path(path)
 
     def _on_xls_picked(self, _evt=None):
         name = self._xls_picker_var.get()
+        if not name:
+            self._clear_xls()
+            return
         path = next((p for p in self._xls_choices if os.path.basename(p) == name), None)
         if path:
             self._load_recipe_generator_path(path)
@@ -208,6 +430,9 @@ class PmaProcessPanel(ttk.Frame):
             filetypes=[("PMA recipe files", "*.PMA *.pma"), ("All files", "*.*")])
         if not path:
             return
+        path = self._ensure_pma_set_in_pma_source(path)
+        self._refresh_pickers()
+        self._pma_picker_var.set(os.path.basename(path))
         self.load_path(path)
 
     def _open_recipe_generator(self):
@@ -215,7 +440,15 @@ class PmaProcessPanel(ttk.Frame):
         if pma_wafer is None:
             self._log("[PMA] PMA Wafer tab is not available.")
             return
-        pma_wafer.open_workbook_dialog()
+        path = filedialog.askopenfilename(
+            title="Open Recipe Generator (.xls)",
+            filetypes=[("Excel 97-2003 Workbook", "*.xls"), ("All files", "*.*")])
+        if not path:
+            return
+        path = self._ensure_recipe_gen_in_pma_source(path)
+        self._refresh_pickers()
+        self._xls_picker_var.set(os.path.basename(path))
+        pma_wafer.load_workbook_path(path)
 
     def _load_recipe_generator_path(self, path: str):
         pma_wafer = getattr(self._main_layout, "pma_wafer", None)
@@ -262,6 +495,9 @@ class PmaProcessPanel(ttk.Frame):
         pma_wafer = getattr(self._main_layout, "pma_wafer", None)
         if pma_wafer is not None and touchdowns:
             shot_data = egpma.to_shot_data(path, fields, touchdowns)
+            prior = getattr(pma_wafer, "_xls_shot_data", None) or pma_wafer.workbook_data
+            if prior and prior.get("align_die"):
+                shot_data["align_die"] = prior["align_die"]
             pma_wafer.show_touchdowns(shot_data)
 
         move_list = egpma.build_move_list(touchdowns)

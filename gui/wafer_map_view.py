@@ -44,7 +44,7 @@ ATA_KEY_FILES = {
     "ata_metadata.csv":         ("Wafer / lot metadata", "shared"),
     "ata_sites.csv":            ("Probe sites", "shared"),
     "ata_pad_layout.csv":       ("Pad geometry", "shared"),
-    "reference_pad_layout.csv": ("Hand-drawn pad layout sketch (Pad to Probe -> Custom; not used by recipes/wiring)", "shared"),
+    "reference_pad_layout.csv": ("Hand-drawn pad layout sketch (Probe Card -> Custom; not used by recipes/wiring)", "shared"),
     "ata_alignment_marks.csv":  ("Alignment marks", "shared"),
     "alignment_marks.csv":      ("Alignment marks (alt)", "shared"),
     "ata_devices.csv":          ("Device definitions", "shared"),
@@ -433,7 +433,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
 
     def _refresh_card_picker(self):
         names = list(self._cards.keys())
-        self._picker.config(values=names)
+        self._picker.config(values=[""] + names)
         self._picker_var.set(self._current)
         self.config(text=f"{self._title()} — '{self._current}'"
                     if self._current else f"{self._title()} — no card")
@@ -442,13 +442,16 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         self.switch_to_card(self._picker_var.get())
 
     def switch_to_card(self, name: str):
-        if name == self._current or name not in self._cards:
+        if name == self._current or (name and name not in self._cards):
             return
         self._current = name
-        self._rows = self._cards[name]
+        self._rows = self._cards.get(name, [])
         self._refresh()
         self._refresh_card_picker()
-        self._log(f"[WIRING] Active probe card: {name}")
+        if name:
+            self._log(f"[WIRING] Active probe card: {name}")
+        else:
+            self._log("[WIRING] Probe card deselected.")
         self._on_card_change(name)
 
     def _new_card(self):

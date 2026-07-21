@@ -1,0 +1,17 @@
+CountMovesMajor=127
+DeviceIDMajor=\\probefire\ProbeRecipe\murphy\GIAL5 Whole Wafer ISODeviceIDMajor.PMS
+MovesMajor=\\probefire\ProbeRecipe\murphy\GIAL5 Whole Wafer ISOMovesMajor
+CountMovesMinor=1
+DeviceIDMinor=\\probefire\ProbeRecipe\murphy\GIAL5 Whole Wafer ISODeviceIDMinor.PMS
+MovesMinor=\\probefire\ProbeRecipe\murphy\GIAL5 Whole Wafer ISOMovesMinor
+DieSizeX=15860
+DieSizeY=7080
+XMoveFirstFromAlignSite=-63440
+YMoveFirstFromAlignSite=-63720
+PreAlignMessage=Align
+PostAlignMessage=Make sure the plate and the alligator clip are clamped down
+PictureFile=APicture.BMP
+ShortWait=50
+ExternalDMM2NPLC=10
+ExternalDMM2Function=OHM
+ExternalDMM2Range=1000000

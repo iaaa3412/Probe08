@@ -1,10 +1,13 @@
 import os
+import string
 import yaml
 
 _CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "instruments")
 TOPOLOGY_PATH = os.path.join(_CONFIG_DIR, "switch_topology.yaml")
 
-ROW_LETTERS = list("ABCDEFGH")
+ROW_LETTERS_POOL = list(string.ascii_uppercase)
+MIN_ROW_COUNT = 1
+MAX_ROW_COUNT = len(ROW_LETTERS_POOL)
 INSTRUMENTS = ("SMU", "DMM", "WGEN", "")
 SMU_CHANNELS = ("A", "B")
 WGEN_CHANNELS = ("CH1", "CH2")
@@ -74,6 +77,10 @@ def row_roles() -> dict:
     return load_topology()["row_roles"]
 
 
+def row_letters() -> list:
+    return sorted(row_roles().keys())
+
+
 def role_label(role: dict) -> str:
     instrument = (role or {}).get("instrument", "")
     channel = (role or {}).get("channel", "")
@@ -114,7 +121,7 @@ def rows_for(step_type: str, chan: str, instrument: str):
 
     def _match(want_instrument, want_channel=None, want_polarity=None):
         out = []
-        for letter in ROW_LETTERS:
+        for letter in sorted(roles):
             role = roles.get(letter)
             if not role or role.get("instrument") != want_instrument:
                 continue

@@ -1205,6 +1205,8 @@ class MainLayout(ttk.Frame):
 
         ttk.Button(ctrl, text="📁 Load ATA Folder…",
                   command=self.controller.cmd_import_map).pack(side="left", padx=(0, 10))
+        ttk.Button(ctrl, text="＋ New ATA Folder…",
+                  command=self.controller.cmd_new_ata_folder).pack(side="left", padx=(0, 10))
 
         ttk.Label(ctrl, text="Working Directory:").pack(side="left", padx=(0, 4))
         ttk.Entry(ctrl, textvariable=self.working_dir_var, width=26).pack(
@@ -1290,7 +1292,7 @@ class MainLayout(ttk.Frame):
         else:
             self._ata_tree.insert(
                 "", "end",
-                values=("–", "probe_cards/", "No probe cards yet — create one on Pad to Probe"),
+                values=("–", "probe_cards/", "No probe cards yet — create one on Probe Card"),
                 tags=("missing",))
 
         others = sorted(f for f in all_files if f not in ATA_KEY_FILES)
@@ -1690,7 +1692,17 @@ class MainLayout(ttk.Frame):
         self._pad_custom_loaded = True
         self.controller.log(f"[PAD] Custom layout saved to {path}")
 
+    def _exec2_on_card_picked(self):
+        name = self._exec2_card_var.get()
+        if not hasattr(self, "pin_wiring"):
+            return
+        if name != self.pin_wiring.get_active_card():
+            self.pin_wiring.switch_to_card(name)
+
     def _on_probe_card_change(self, card_name: str):
+        if hasattr(self, "_exec2_card_var"):
+            self._exec2_card_cb.config(values=[""] + sorted(self.pin_wiring.get_card_names()))
+            self._exec2_card_var.set(card_name)
         if not hasattr(self, "recipe_panel"):
             return
         self.recipe_panel.load_recipes(card_name, self.pin_wiring.get_recipes())
@@ -1803,8 +1815,9 @@ class MainLayout(ttk.Frame):
         nb.add(tab, text="PMA Wafer")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        self.pma_wafer = PmaWaferPanel(tab, controller=self.controller,
-                                       get_folder=lambda: self._ata_folder)
+        self.pma_wafer = PmaWaferPanel(
+            tab, controller=self.controller, get_folder=lambda: self._ata_folder,
+            main_layout=self if self._system == "accretech" else None)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _tab_pma_process(self, nb):
@@ -1857,6 +1870,14 @@ class MainLayout(ttk.Frame):
         ttk.Button(ctrl, text="⟳ Load Recipe",
                    command=self._exec2_load_recipe).pack(side="left", padx=4, pady=5)
 
+        tk.Label(ctrl, text="Probe Card:", bg="#f1f5f9").pack(side="left", padx=(10, 2), pady=6)
+        self._exec2_card_var = tk.StringVar(value="")
+        self._exec2_card_cb = ttk.Combobox(
+            ctrl, textvariable=self._exec2_card_var, width=14, state="readonly")
+        self._exec2_card_cb.pack(side="left", pady=6)
+        self._exec2_card_cb.bind("<<ComboboxSelected>>",
+                                 lambda _e: self._exec2_on_card_picked())
+
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
         self._exec2_full_btn = ttk.Button(
@@ -1870,16 +1891,8 @@ class MainLayout(ttk.Frame):
         self._exec2_test_pma_btn.pack(side="left", padx=2, pady=5)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
-        ttk.Button(ctrl, text="Touchdown/Measure",
-                   command=self._exec2_touchdown_measure).pack(side="left", padx=2, pady=5)
-
 
         for label, cmd in [
-            ("⬆  Z Up",       self._exec2_manual_z_up),
-            ("⬇  Z Down",     self._exec2_manual_z_down),
-            ("⏮  First Die (G)", self._exec2_manual_go_to_start),
-            ("▶▶  Next Die",   self._exec2_manual_next_die),
-            ("📍  XY",         self._exec2_get_xy),
             ("⏏  Unload (U)",  self._exec2_manual_unload),
             ("⏹  Stop Run",       self._exec2_abort),
         ]:
@@ -1899,31 +1912,44 @@ class MainLayout(ttk.Frame):
         left_col.rowconfigure(1, weight=1)
         left_col.columnconfigure(0, weight=1)
 
-        pos_lf = ttk.LabelFrame(left_col, text="Chuck Position", padding=10)
+        pos_lf = ttk.LabelFrame(left_col, text="Chuck Position", padding=6)
         pos_lf.grid(row=0, column=0, sticky="nsew", pady=(0, 4))
         pos_lf.columnconfigure(0, weight=1)
+        pos_lf.columnconfigure(1, weight=1)
 
         self._exec2_xy_var = tk.StringVar(value="X: —\nY: —")
         ttk.Label(pos_lf, textvariable=self._exec2_xy_var,
-                  font=("Consolas", 16, "bold"), foreground="#0077cc",
-                  justify="center").pack(expand=True)
-
-        ttk.Separator(pos_lf, orient="horizontal").pack(fill="x", pady=8)
+                  font=("Consolas", 13, "bold"), foreground="#0077cc",
+                  justify="center").grid(row=0, column=0, columnspan=2, pady=(0, 2))
 
         self._exec2_die_var = tk.StringVar(value="Die: —")
         ttk.Label(pos_lf, textvariable=self._exec2_die_var,
-                  font=("Consolas", 10), foreground="#374151",
-                  justify="center").pack()
+                  font=("Consolas", 9), foreground="#374151",
+                  justify="center").grid(row=1, column=0, columnspan=2)
 
         self._exec2_step_var = tk.StringVar(value="Step: —")
         ttk.Label(pos_lf, textvariable=self._exec2_step_var,
-                  font=("Consolas", 10), foreground="#6b7280",
-                  justify="center").pack(pady=(2, 8))
+                  font=("Consolas", 9), foreground="#6b7280",
+                  justify="center").grid(row=2, column=0, columnspan=2, pady=(0, 4))
 
-        ttk.Button(pos_lf, text="↻  Refresh XY",
-                   command=self._exec2_get_xy).pack(fill="x")
-        ttk.Button(pos_lf, text="Reset Counts",
-                   command=self._exec2_reset_counts).pack(fill="x", pady=(4, 0))
+        ttk.Separator(pos_lf, orient="horizontal").grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=3)
+
+        ttk.Button(pos_lf, text="🦶 Touchdown/Measure",
+                   command=self._exec2_touchdown_measure).grid(
+                   row=4, column=0, columnspan=2, sticky="ew", pady=1)
+        ttk.Button(pos_lf, text="⬆ Z Up", command=self._exec2_manual_z_up).grid(
+                   row=5, column=0, sticky="ew", padx=(0, 1), pady=1)
+        ttk.Button(pos_lf, text="⬇ Z Down", command=self._exec2_manual_z_down).grid(
+                   row=5, column=1, sticky="ew", padx=(1, 0), pady=1)
+        ttk.Button(pos_lf, text="⏮ First Die", command=self._exec2_manual_go_to_start).grid(
+                   row=6, column=0, sticky="ew", padx=(0, 1), pady=1)
+        ttk.Button(pos_lf, text="▶▶ Next Die", command=self._exec2_manual_next_die).grid(
+                   row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
+        ttk.Button(pos_lf, text="↻ Refresh XY", command=self._exec2_get_xy).grid(
+                   row=7, column=0, sticky="ew", padx=(0, 1), pady=(4, 0))
+        ttk.Button(pos_lf, text="Reset Counts", command=self._exec2_reset_counts).grid(
+                   row=7, column=1, sticky="ew", padx=(1, 0), pady=(4, 0))
 
         steps_lf = ttk.LabelFrame(left_col, text="Recipe Steps", padding=(6, 4))
         steps_lf.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
@@ -2177,11 +2203,16 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[RUN] Cannot start — no recipe loaded "
                             "(pick one and ⟳ Load Recipe first).")
             ok = False
-        if (self._exec2_map_source_var.get() != "Accretech"
-                or not self._exec2_wafer_map._last_dies):
-            self._exec2_log("[RUN] Cannot start — no Accretech wafer map loaded "
-                            "(📂 Load Wafer Map, set source to 'Accretech'; extract "
-                            "one on the Accr Wafer tab first if you haven't).")
+        if self._system == "accretech":
+            if (self._exec2_map_source_var.get() != "Accretech"
+                    or not self._exec2_wafer_map._last_dies):
+                self._exec2_log("[RUN] Cannot start — no Accretech wafer map loaded "
+                                "(📂 Load Wafer Map, set source to 'Accretech'; extract "
+                                "one on the Accr Wafer tab first if you haven't).")
+                ok = False
+        elif not self._exec2_wafer_map._last_dies:
+            self._exec2_log("[RUN] Cannot start — no wafer map loaded "
+                            "(📂 Load Wafer Map; set source to 'Electroglas' or 'GDS').")
             ok = False
         required_instruments = ("prober", "smu", "dmm", "switch", "wave_gen")
         missing_instruments = [k for k in required_instruments if k not in self.controller.drivers]
@@ -2682,6 +2713,13 @@ class MainLayout(ttk.Frame):
             delay = 0.0
         return count, delay
 
+    def _exec2_nplc_spec(self, step: dict):
+        try:
+            nplc = float(step.get("nplc") or 1)
+        except ValueError:
+            return None
+        return nplc if nplc != 1 else None
+
     def _exec2_take_average(self, read_one, avg_count: int, avg_delay_ms: float, unit: str) -> float:
         readings = []
         for k in range(avg_count):
@@ -2803,6 +2841,10 @@ class MainLayout(ttk.Frame):
 
                 if t == "resistance":
                     if instrument == "SMU":
+                        if not sim and smu and smu.inst:
+                            nplc = self._exec2_nplc_spec(s)
+                            if nplc is not None:
+                                smu.set_nplc(smu_ch, nplc)
                         read_one = ((lambda: abs(random.gauss(50, 15)))
                                    if sim or not (smu and smu.inst)
                                    else (lambda: smu.measure_resistance(smu_ch)))
@@ -2819,6 +2861,10 @@ class MainLayout(ttk.Frame):
                     readings_by_name[name] = (r, "ohm")
                 elif t == "voltage" and mode == "measure":
                     if instrument == "SMU":
+                        if not sim and smu and smu.inst:
+                            nplc = self._exec2_nplc_spec(s)
+                            if nplc is not None:
+                                smu.set_nplc(smu_ch, nplc)
                         read_one = ((lambda: random.gauss(3.3, 0.1))
                                    if sim or not (smu and smu.inst)
                                    else (lambda: smu.measure_voltage(smu_ch)))
@@ -2887,6 +2933,9 @@ class MainLayout(ttk.Frame):
                                     smu.set_current_limit(smu_ch, float(limit))
                                 smu.turn_output_on(smu_ch)
                                 last_set_voltage_by_ch[smu_ch] = float(lvl)
+                            nplc = self._exec2_nplc_spec(s)
+                            if nplc is not None:
+                                smu.set_nplc(smu_ch, nplc)
                             read_one = lambda: smu.measure_current(smu_ch)
                         else:
                             read_one = lambda: abs(random.gauss(4e-7, 2e-7))

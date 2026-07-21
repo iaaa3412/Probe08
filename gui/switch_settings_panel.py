@@ -22,6 +22,9 @@ class SwitchSettingsPanel(ttk.Frame):
     def _log(self, msg: str):
         self.controller.log(msg)
 
+    def _row_letters(self) -> list:
+        return sorted(self._roles.keys())
+
     def _build_header(self):
         hdr = ttk.Frame(self, padding=(10, 10, 10, 4))
         hdr.grid(row=0, column=0, sticky="ew")
@@ -29,10 +32,11 @@ class SwitchSettingsPanel(ttk.Frame):
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
         ttk.Label(hdr, foreground="gray", font=("Segoe UI", 8), wraplength=780, justify="left",
                  text="Defines how the switch matrix is physically wired: which slots hold "
-                      "cards (and how many probe-card pins/columns each one covers), and "
-                      "which instrument each row letter (A-H) connects to. Recipes resolve "
-                      "their HI/LO channel codes from this — saving changes here takes "
-                      "effect immediately for any step computed afterward."
+                      "cards (and how many probe-card pins/columns each one covers), how "
+                      "many row letters the matrix has, and which instrument each row "
+                      "connects to. Recipes resolve their HI/LO channel codes from this — "
+                      "saving changes here takes effect immediately for any step computed "
+                      "afterward."
                  ).pack(anchor="w", pady=(2, 0))
 
     def _build_slots_section(self):
@@ -60,13 +64,20 @@ class SwitchSettingsPanel(ttk.Frame):
         ttk.Entry(add_row, textvariable=self._slot_cols_var, width=6).pack(
             side="left", padx=(2, 10))
 
+        ttk.Separator(add_row, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(add_row, text="Number of rows:").pack(side="left")
+        self._row_count_var = tk.StringVar(value=str(len(self._roles)))
+        ttk.Spinbox(add_row, from_=topo.MIN_ROW_COUNT, to=topo.MAX_ROW_COUNT,
+                   textvariable=self._row_count_var, width=5).pack(side="left", padx=(4, 8))
+        ttk.Button(add_row, text="Apply", command=self._apply_row_count).pack(side="left")
+
         rows_row = ttk.Frame(lf)
         rows_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
         ttk.Label(rows_row, text="Rows on this card:").pack(side="left")
-        self._slot_row_vars = {letter: tk.BooleanVar() for letter in topo.ROW_LETTERS}
-        for letter in topo.ROW_LETTERS:
-            ttk.Checkbutton(rows_row, text=letter,
-                            variable=self._slot_row_vars[letter]).pack(side="left", padx=2)
+        self._slot_rows_frame = ttk.Frame(rows_row)
+        self._slot_rows_frame.pack(side="left")
+        self._slot_row_vars: dict = {}
+        self._rebuild_slot_row_checkboxes()
 
         btn_row = ttk.Frame(lf)
         btn_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
@@ -76,6 +87,18 @@ class SwitchSettingsPanel(ttk.Frame):
                   command=self._remove_slot).pack(side="left", padx=(6, 0))
 
         self._refresh_slots_tree()
+
+    def _rebuild_slot_row_checkboxes(self):
+        for child in self._slot_rows_frame.winfo_children():
+            child.destroy()
+        letters = self._row_letters()
+        old_vars = self._slot_row_vars
+        self._slot_row_vars = {}
+        for letter in letters:
+            var = tk.BooleanVar(value=old_vars[letter].get() if letter in old_vars else False)
+            self._slot_row_vars[letter] = var
+            ttk.Checkbutton(self._slot_rows_frame, text=letter, variable=var).pack(
+                side="left", padx=2)
 
     def _refresh_slots_tree(self):
         self._slots_tree.delete(*self._slots_tree.get_children())
@@ -108,7 +131,7 @@ class SwitchSettingsPanel(ttk.Frame):
         except ValueError:
             messagebox.showerror("Invalid Columns", "Columns must be a positive integer.")
             return
-        rows = [letter for letter in topo.ROW_LETTERS if self._slot_row_vars[letter].get()]
+        rows = [letter for letter in self._row_letters() if self._slot_row_vars[letter].get()]
         if not rows:
             messagebox.showerror("No Rows Selected", "Pick at least one row for this slot.")
             return
@@ -153,8 +176,9 @@ class SwitchSettingsPanel(ttk.Frame):
         edit_row.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         ttk.Label(edit_row, text="Row:").pack(side="left")
         self._role_row_var = tk.StringVar(value="A")
-        ttk.Combobox(edit_row, textvariable=self._role_row_var, values=topo.ROW_LETTERS,
-                    width=4, state="readonly").pack(side="left", padx=(2, 10))
+        self._role_row_cb = ttk.Combobox(edit_row, textvariable=self._role_row_var,
+                                         values=self._row_letters(), width=4, state="readonly")
+        self._role_row_cb.pack(side="left", padx=(2, 10))
 
         ttk.Label(edit_row, text="Instrument:").pack(side="left")
         self._role_instrument_var = tk.StringVar()
@@ -198,11 +222,49 @@ class SwitchSettingsPanel(ttk.Frame):
 
     def _refresh_roles_tree(self):
         self._roles_tree.delete(*self._roles_tree.get_children())
-        for letter in topo.ROW_LETTERS:
+        for letter in self._row_letters():
             role = self._roles.get(letter, {})
             self._roles_tree.insert("", "end", iid=letter, values=(
                 letter, role.get("instrument", ""), role.get("channel", ""),
                 role.get("polarity", ""), topo.role_label(role)))
+
+    def _apply_row_count(self):
+        try:
+            n = int(self._row_count_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Row Count", "Enter a whole number.")
+            return
+        if not (topo.MIN_ROW_COUNT <= n <= topo.MAX_ROW_COUNT):
+            messagebox.showerror(
+                "Invalid Row Count",
+                f"Number of rows must be between {topo.MIN_ROW_COUNT} and "
+                f"{topo.MAX_ROW_COUNT}.")
+            self._row_count_var.set(str(len(self._roles)))
+            return
+        current = self._row_letters()
+        if n == len(current):
+            return
+        if n > len(current):
+            added = topo.ROW_LETTERS_POOL[len(current):n]
+            for letter in added:
+                self._roles[letter] = {"instrument": "", "channel": "", "polarity": ""}
+            self._log(f"[SETTINGS] Added row(s) {','.join(added)} "
+                      "(not saved yet — click Save Settings)")
+        else:
+            removed = current[n:]
+            for letter in removed:
+                self._roles.pop(letter, None)
+            for spec in self._slots:
+                spec["rows"] = [r for r in spec.get("rows", []) if r not in removed]
+            self._log(f"[SETTINGS] Removed row(s) {','.join(removed)} from "
+                      "roles and slots (not saved yet — click Save Settings)")
+        self._row_count_var.set(str(len(self._roles)))
+        self._role_row_cb.config(values=self._row_letters())
+        if self._role_row_var.get() not in self._roles:
+            self._role_row_var.set(self._row_letters()[0] if self._roles else "")
+        self._rebuild_slot_row_checkboxes()
+        self._refresh_roles_tree()
+        self._refresh_slots_tree()
 
     def _load_selected_role(self):
         sel = self._roles_tree.selection()
@@ -256,6 +318,10 @@ class SwitchSettingsPanel(ttk.Frame):
         data = topo.reset_topology()
         self._slots = [dict(s) for s in data["slots"]]
         self._roles = {k: dict(v) for k, v in data["row_roles"].items()}
+        self._row_count_var.set(str(len(self._roles)))
+        self._role_row_cb.config(values=self._row_letters())
+        self._role_row_var.set(self._row_letters()[0] if self._roles else "")
+        self._rebuild_slot_row_checkboxes()
         self._refresh_slots_tree()
         self._refresh_roles_tree()
         self._status_var.set("Reset to defaults and saved.")

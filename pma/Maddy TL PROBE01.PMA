@@ -1,0 +1,17 @@
+CountMovesMajor=266
+DeviceIDMajor=\\prober\ETL\Recipe Files\Maddy TL PROBE01DeviceIDMajor.PMS
+MovesMajor=\\prober\ETL\Recipe Files\Maddy TL PROBE01MovesMajor
+CountMovesMinor=1
+DeviceIDMinor=\\prober\ETL\Recipe Files\Maddy TL PROBE01DeviceIDMinor.PMS
+MovesMinor=\\prober\ETL\Recipe Files\Maddy TL PROBE01MovesMinor
+DieSizeX=10208
+DieSizeY=7694
+XMoveFirstFromAlignSite=-81664
+YMoveFirstFromAlignSite=-84634
+PreAlignMessage=Align
+PostAlignMessage=Make sure the plate and the alligator clip are clamped down
+PictureFile=APicture.BMP
+ShortWait=50
+ExternalDMM2NPLC=10
+ExternalDMM2Function=OHMF
+ExternalDMM2Range=1000

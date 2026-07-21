@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-from tkinter import filedialog
+from tkinter import filedialog, simpledialog, messagebox
 import os
 import csv
 import sys
@@ -473,6 +473,40 @@ class AtomicaDashboard(tk.Tk):
             initialdir=initial if initial and os.path.isdir(initial) else None)
         if not folder:
             return
+        self._do_load_ata_folder(folder)
+
+    def cmd_new_ata_folder(self):
+        working_dir = self.ui.working_dir_var.get()
+        if not working_dir:
+            messagebox.showerror("No Working Directory",
+                                 "Set a Working Directory first.")
+            return
+        if not os.path.isdir(working_dir):
+            try:
+                os.makedirs(working_dir, exist_ok=True)
+            except OSError as exc:
+                messagebox.showerror("Working Directory",
+                                     f"Could not create working directory:\n{exc}")
+                return
+        name = simpledialog.askstring("New ATA Folder", "Folder name:", parent=self)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if not name.lower().endswith("ata"):
+            name = f"{name}ATA"
+        folder = os.path.join(working_dir, name)
+        if os.path.exists(folder):
+            messagebox.showerror("Already Exists", f"{folder}\nalready exists.")
+            return
+        try:
+            os.makedirs(folder)
+        except OSError as exc:
+            messagebox.showerror("Could Not Create Folder", str(exc))
+            return
+        self.log(f"[SYSTEM] Created new ATA folder: {folder}")
+        self._refresh_ata_picker()
         self._do_load_ata_folder(folder)
 
     def cmd_refresh_ata(self):

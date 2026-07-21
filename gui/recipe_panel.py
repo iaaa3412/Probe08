@@ -472,6 +472,9 @@ class RecipePanel(ttk.Frame):
         self._btn_new = ttk.Button(bar, text="＋ New", width=7,
                                    command=self._new_recipe)
         self._btn_new.pack(side="left", padx=2, pady=4)
+        self._btn_rename = ttk.Button(bar, text="✎ Rename", width=9,
+                                      command=self._rename_recipe)
+        self._btn_rename.pack(side="left", padx=2, pady=4)
         self._btn_delete = ttk.Button(bar, text="🗑 Delete", width=9,
                                       command=self._delete_recipe)
         self._btn_delete.pack(side="left", padx=2, pady=4)
@@ -480,13 +483,14 @@ class RecipePanel(ttk.Frame):
 
         self._btn_load_ini = ttk.Button(bar, text="📂  Load .ini…", command=self._load)
         self._btn_load_ini.pack(side="left", padx=2, pady=4)
-        self._btn_import_legacy = ttk.Button(bar, text="📥  Import Legacy (.pma)…",
-                                             command=self._import_legacy)
-        self._btn_import_legacy.pack(side="left", padx=2, pady=4)
-        self._btn_import_workbook = ttk.Button(
-            bar, text="📥  Import Legacy Workbook (.xls)…",
-            command=self._import_legacy_workbook)
-        self._btn_import_workbook.pack(side="left", padx=2, pady=4)
+        if self._system != "accretech":
+            self._btn_import_legacy = ttk.Button(bar, text="📥  Import Legacy (.pma)…",
+                                                 command=self._import_legacy)
+            self._btn_import_legacy.pack(side="left", padx=2, pady=4)
+            self._btn_import_workbook = ttk.Button(
+                bar, text="📥  Import Legacy Workbook (.xls)…",
+                command=self._import_legacy_workbook)
+            self._btn_import_workbook.pack(side="left", padx=2, pady=4)
         self._btn_save = ttk.Button(bar, text="💾  Save", command=self._save)
         self._btn_save.pack(side="left", padx=2, pady=4)
 
@@ -1203,16 +1207,18 @@ class RecipePanel(ttk.Frame):
         else:
             self._validity_lbl.config(text="— Not validated", fg="#6b7280")
 
-    _LOCKABLE_BUTTONS = (
-        "_btn_new", "_btn_delete", "_btn_load_ini", "_btn_import_legacy",
-        "_btn_import_workbook", "_btn_save", "_btn_add_step",
-        "_btn_update_step", "_btn_remove_step", "_btn_move_up",
-        "_btn_move_down", "_btn_recompute",
-    )
+    def _lockable_buttons(self) -> tuple:
+        names = ["_btn_new", "_btn_rename", "_btn_delete", "_btn_load_ini"]
+        if self._system != "accretech":
+            names += ["_btn_import_legacy", "_btn_import_workbook"]
+        names += ["_btn_save", "_btn_add_step", "_btn_update_step",
+                 "_btn_remove_step", "_btn_move_up", "_btn_move_down",
+                 "_btn_recompute"]
+        return tuple(names)
 
     def set_locked(self, locked: bool):
         state = "disabled" if locked else "normal"
-        for attr in self._LOCKABLE_BUTTONS:
+        for attr in self._lockable_buttons():
             getattr(self, attr).config(state=state)
         self._picker.config(state="disabled" if locked else "readonly")
         self._locked_lbl.config(
@@ -1442,7 +1448,7 @@ class RecipePanel(ttk.Frame):
         if not card:
             messagebox.showerror(
                 "No Probe Card",
-                "Select or create a probe card first — on the Pad to Probe "
+                "Select or create a probe card first — on the Probe Card "
                 "tab. Recipes belong to exactly one probe card and are "
                 "stored inside its .csv file.")
             return
@@ -1474,6 +1480,36 @@ class RecipePanel(ttk.Frame):
             self.controller.log(f"[RECIPE] Created '{name}' — save to probe card "
                                 f"'{card}' failed")
 
+    def _rename_recipe(self):
+        old_name = self._current
+        new_name = simpledialog.askstring("Rename Recipe", "New recipe name:",
+                                          initialvalue=old_name, parent=self)
+        if not new_name or new_name == old_name:
+            return
+        new_name = _safe_filename(new_name)
+        if not new_name:
+            messagebox.showerror("Invalid Name", "Use letters, digits, space, - or _.")
+            return
+        if new_name in self._recipes:
+            messagebox.showerror("Duplicate", f"Recipe '{new_name}' already exists.")
+            return
+        self._store_form()
+        self._recipes[new_name] = self._recipes.pop(old_name)
+        self._current = new_name
+        self._load_form(new_name)
+        self._refresh_picker()
+
+        card = self._get_active_card()
+        if card and self._save_recipes(card, self._recipes):
+            self.controller.log(f"[RECIPE] Renamed '{old_name}' -> '{new_name}' "
+                                f"in probe card '{card}'")
+        elif card:
+            self.controller.log(f"[RECIPE] Renamed '{old_name}' -> '{new_name}' — "
+                                f"save to probe card '{card}' failed")
+        else:
+            self.controller.log(f"[RECIPE] Renamed '{old_name}' -> '{new_name}' "
+                                "(in-memory only — no probe card active)")
+
     def _delete_recipe(self):
         if len(self._recipes) <= 1:
             messagebox.showinfo("Cannot Delete", "At least one recipe must remain.")
@@ -1503,7 +1539,7 @@ class RecipePanel(ttk.Frame):
         if not card:
             messagebox.showerror(
                 "No Probe Card",
-                "Select or create a probe card first — on the Pad to Probe "
+                "Select or create a probe card first — on the Probe Card "
                 "tab. A loaded recipe is registered under the active card.")
             return
         path = filedialog.askopenfilename(
@@ -1543,7 +1579,7 @@ class RecipePanel(ttk.Frame):
         if not self._get_active_card():
             messagebox.showerror(
                 "No Probe Card",
-                "Select or create a probe card first — on the Pad to Probe "
+                "Select or create a probe card first — on the Probe Card "
                 "tab. An imported recipe is registered under the active card.")
             return
         path = filedialog.askopenfilename(
@@ -1560,7 +1596,7 @@ class RecipePanel(ttk.Frame):
         if not card:
             messagebox.showerror(
                 "No Probe Card",
-                "Select or create a probe card first — on the Pad to Probe "
+                "Select or create a probe card first — on the Probe Card "
                 "tab. An imported recipe is registered under the active card.")
             return False
         try:
@@ -1619,19 +1655,28 @@ class RecipePanel(ttk.Frame):
                 "Reading legacy .xls workbooks needs the xlrd package.\n\n"
                 "Run:  .venv\\Scripts\\pip install xlrd")
             return
-        card = self._get_active_card()
-        if not card:
-            messagebox.showerror(
-                "No Probe Card",
-                "Select or create a probe card first — on the Pad to Probe "
-                "tab. An imported recipe is registered under the active card.")
-            return
         path = filedialog.askopenfilename(
             title="Import Legacy Recipe Workbook (.xls)",
             filetypes=[("Excel 97-2003 Workbook", "*.xls"), ("All files", "*.*")],
         )
         if not path:
             return
+        self.import_legacy_workbook_from_path(path)
+
+    def import_legacy_workbook_from_path(self, path: str) -> bool:
+        if _pma_xlrd is None:
+            messagebox.showerror(
+                "xlrd Not Installed",
+                "Reading legacy .xls workbooks needs the xlrd package.\n\n"
+                "Run:  .venv\\Scripts\\pip install xlrd")
+            return False
+        card = self._get_active_card()
+        if not card:
+            messagebox.showerror(
+                "No Probe Card",
+                "Select or create a probe card first — on the Probe Card "
+                "tab. An imported recipe is registered under the active card.")
+            return False
         try:
             book = _pma_xlrd.open_workbook(path, formatting_info=True)
             info = _pma_read_main_menu_info(book)
@@ -1639,14 +1684,14 @@ class RecipePanel(ttk.Frame):
         except Exception as exc:
             self.controller.log(f"[RECIPE] Legacy workbook import error: {exc}")
             messagebox.showerror("Import Failed", f"Could not read that workbook:\n{exc}")
-            return
+            return False
         if not useful:
             messagebox.showwarning(
                 "Nothing to Import",
                 "No Name/Value measurement fields (Voltage, delays, "
                 "averaging, current limit) were found on that workbook's "
                 "MainMenu tab.")
-            return
+            return False
         steps = pma_params_to_steps(useful)
 
         dies_per_shot = 1
@@ -1702,6 +1747,7 @@ class RecipePanel(ttk.Frame):
             f"{repeat_note}"
             "HI/LO pins could not be inferred from the file — set them on the "
             "measurement step, then ✓ Validate before running.")
+        return True
 
     def _save(self):
         if not self._recipes:
@@ -1738,7 +1784,7 @@ class RecipePanel(ttk.Frame):
         self._load_form(self._current)
         self._refresh_picker()
 
-        self._card_picker.config(values=sorted(self._get_card_names()))
+        self._card_picker.config(values=[""] + sorted(self._get_card_names()))
         self._card_picker_var.set(card)
         if card:
             self._file_lbl.config(
@@ -1756,7 +1802,7 @@ class RecipePanel(ttk.Frame):
 
     def _on_card_picker_selected(self):
         name = self._card_picker_var.get()
-        if name and name != self._active_card:
+        if name != self._active_card:
             self._switch_card_cb(name)
 
     def get_steps(self) -> list:
