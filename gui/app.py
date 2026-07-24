@@ -70,7 +70,6 @@ class AtomicaDashboard(tk.Tk):
 
         self._build_bottom_routing()
         self.after(500, self.init_hardware)
-        self.after(700, self.init_hardware_eg)
         self.update_statistics_visuals()
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
@@ -669,6 +668,51 @@ class AtomicaDashboard(tk.Tk):
                     self.log(f"[ABORT] es error: {e}")
             threading.Thread(target=_send_k, daemon=True).start()
 
+_SINGLE_INSTANCE_MUTEX_NAME = "Global\\AtomicaTesterSingleInstanceMutex"
+_ERROR_ALREADY_EXISTS = 183
+_SW_RESTORE = 9
+_APP_WINDOW_TITLES = ("Accretech Tester", "Electroglas Tester")
+
+
+def _find_other_instance_window() -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def enum_proc(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        if buf.value in _APP_WINDOW_TITLES:
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(enum_proc, 0)
+    return found[0] if found else 0
+
+
+def _ensure_single_instance() -> bool:
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
+    if kernel32.GetLastError() != _ERROR_ALREADY_EXISTS:
+        return True
+    hwnd = _find_other_instance_window()
+    if hwnd:
+        user32 = ctypes.windll.user32
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+        user32.SetForegroundWindow(hwnd)
+    return False
+
+
 if __name__ == "__main__":
-    app = AtomicaDashboard()
-    app.mainloop()
+    if _ensure_single_instance():
+        app = AtomicaDashboard()
+        app.mainloop()

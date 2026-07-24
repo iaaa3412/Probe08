@@ -1,6 +1,6 @@
 # ── Instrument communication ──────────────────────────────────────────────────
 pyvisa>=1.13              # VISA layer (NI-VISA or pyvisa-py backend)
-# pyvisa-py>=0.7          # Pure-Python VISA backend (uncomment if no NI-VISA)
+pyvisa-py>=0.7            # Pure-Python VISA backend, tried as a fallback if no vendor VISA is found
 
 # ── Config / data ─────────────────────────────────────────────────────────────
 PyYAML>=6.0               # instruments.yaml config, switch routing export/import

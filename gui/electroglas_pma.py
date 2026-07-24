@@ -269,3 +269,154 @@ def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
         "x_headers": xs,
         "y_headers": ys,
     }
+
+
+# ---------------------------------------------------------------------------
+# Recipe GENERATION (the reverse of the parsing above) -- mirrors the
+# "IMT Recipe Generation" VBA macro suite (basProbeRecipe.CreateAllFiles /
+# WriteMovesFile / Padto7Digits) embedded in the real recipe-generator .xls
+# files, which is normally run from inside Excel. A grid here is:
+#   {"x_headers": [float, ...], "y_headers": [float, ...],
+#    "cells": {(row, col): {"device_id": str, "excluded": bool}}}
+# with row 0 / col 0 at (y_headers[0], x_headers[0]), matching MajorMoves'/
+# MinorMoves' own row-1/column-A header convention.
+# ---------------------------------------------------------------------------
+
+_STRUCTURAL_FIELDS = ("DieSizeX", "DieSizeY",
+                      "XMoveFirstFromAlignSite", "YMoveFirstFromAlignSite")
+
+
+def _pad7_gen(n: int) -> str:
+    return str(n).zfill(7)
+
+
+def serpentine_order(y_count: int, x_count: int, cells: dict) -> list:
+    """(row, col) visiting order for a grid scan, skipping excluded cells.
+
+    Replicates WriteMovesFile's row-major "boustrophedon" scan exactly:
+    the column direction only flips after a row that actually had at
+    least one non-excluded cell -- an all-excluded row leaves the next
+    row's direction unchanged, just like the VBA's HaveWritten-gated
+    IsRightward toggle.
+    """
+    order = []
+    is_rightward = True
+    have_written = False
+    for row in range(y_count):
+        if have_written:
+            is_rightward = not is_rightward
+        have_written = False
+        cols = range(x_count) if is_rightward else range(x_count - 1, -1, -1)
+        for col in cols:
+            cell = cells.get((row, col))
+            if cell is None or cell.get("excluded"):
+                continue
+            order.append((row, col))
+            have_written = True
+    return order
+
+
+def write_major_moves(dest_dir: str, recipe_name: str, grid: dict) -> dict:
+    """Writes <recipe_name>MovesMajorX.PMV / ...Y.PMV / DeviceIDMajor.PMS
+    from a spatial wafer grid (see module docstring above).
+
+    Device ids come from each cell's own text if present, else an
+    auto-incrementing zero-padded 7-digit id (Padto7Digits) -- the
+    counter only advances for auto-numbered cells, exactly like the VBA.
+    """
+    x_headers = grid["x_headers"]
+    y_headers = grid["y_headers"]
+    cells = grid["cells"]
+    order = serpentine_order(len(y_headers), len(x_headers), cells)
+
+    ids, xs, ys = [], [], []
+    counter = 1
+    for row, col in order:
+        text = (cells[(row, col)].get("device_id") or "").strip()
+        if text:
+            ids.append(text)
+        else:
+            ids.append(_pad7_gen(counter))
+            counter += 1
+        xs.append(x_headers[col])
+        ys.append(y_headers[row])
+
+    x_path = os.path.join(dest_dir, f"{recipe_name}MovesMajorX.PMV")
+    y_path = os.path.join(dest_dir, f"{recipe_name}MovesMajorY.PMV")
+    id_path = os.path.join(dest_dir, f"{recipe_name}DeviceIDMajor.PMS")
+    with open(x_path, "w", encoding="utf-8") as f:
+        f.writelines(fmt_num(v) + "\n" for v in xs)
+    with open(y_path, "w", encoding="utf-8") as f:
+        f.writelines(fmt_num(v) + "\n" for v in ys)
+    with open(id_path, "w", encoding="utf-8") as f:
+        f.writelines(i + "\n" for i in ids)
+    return {"count": len(order), "x_path": x_path, "y_path": y_path, "id_path": id_path}
+
+
+def write_minor_sites(dest_dir: str, recipe_name: str, sites: list) -> dict:
+    """Writes <recipe_name>MovesMinorX.PMV / ...Y.PMV / DeviceIDMinor.PMS
+    from a flat list of per-die sub-touchdown sites (each a dict with
+    "dx"/"dy" offsets and an optional "suffix" id) -- unlike Major, minor
+    sites are just sub-positions within one die, not a second spatial
+    wafer map, so no grid/serpentine scan applies: every listed site is
+    written in list order, blank suffixes auto-numbered.
+    """
+    x_path = os.path.join(dest_dir, f"{recipe_name}MovesMinorX.PMV")
+    y_path = os.path.join(dest_dir, f"{recipe_name}MovesMinorY.PMV")
+    id_path = os.path.join(dest_dir, f"{recipe_name}DeviceIDMinor.PMS")
+    ids = [(s.get("suffix") or "").strip() or _pad7_gen(i + 1)
+          for i, s in enumerate(sites)]
+    with open(x_path, "w", encoding="utf-8") as f:
+        f.writelines(fmt_num(s["dx"]) + "\n" for s in sites)
+    with open(y_path, "w", encoding="utf-8") as f:
+        f.writelines(fmt_num(s["dy"]) + "\n" for s in sites)
+    with open(id_path, "w", encoding="utf-8") as f:
+        f.writelines(i + "\n" for i in ids)
+    return {"count": len(sites), "x_path": x_path, "y_path": y_path, "id_path": id_path}
+
+
+def write_recipe_files(dest_dir: str, recipe_name: str, main_fields: dict,
+                       major: dict, minor_sites: list) -> str:
+    """Writes the full 7-file recipe set (.PMA + 3 Major + 3 Minor) and
+    returns the .PMA path. main_fields is an ordered name->value dict;
+    DieSizeX/DieSizeY/XMoveFirstFromAlignSite/YMoveFirstFromAlignSite are
+    written first (structural), then every other entry in insertion
+    order -- mirroring MainMenu's rows 35-300 free-form field loop.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    maj = write_major_moves(dest_dir, recipe_name, major)
+    minr = write_minor_sites(dest_dir, recipe_name, minor_sites)
+
+    lines = [
+        f"CountMovesMajor={maj['count']}",
+        f"DeviceIDMajor={maj['id_path']}",
+        f"MovesMajor={os.path.join(dest_dir, recipe_name + 'MovesMajor')}",
+        f"CountMovesMinor={minr['count']}",
+        f"DeviceIDMinor={minr['id_path']}",
+        f"MovesMinor={os.path.join(dest_dir, recipe_name + 'MovesMinor')}",
+    ]
+    for key in _STRUCTURAL_FIELDS:
+        value = str(main_fields.get(key, "")).strip()
+        if value:
+            lines.append(f"{key}={value}")
+    for key, value in main_fields.items():
+        if key in _STRUCTURAL_FIELDS:
+            continue
+        value = str(value).strip()
+        if value:
+            lines.append(f"{key}={value}")
+
+    pma_path = os.path.join(dest_dir, f"{recipe_name}.PMA")
+    with open(pma_path, "w", encoding="utf-8") as f:
+        f.writelines(line + "\n" for line in lines)
+    return pma_path
+
+
+def new_grid(rows: int, cols: int, x_start: float, y_start: float,
+            pitch_x: float, pitch_y: float) -> dict:
+    """A fresh, fully-included, blank-device-id grid of the given shape."""
+    x_headers = [x_start + i * pitch_x for i in range(cols)]
+    y_headers = [y_start + i * pitch_y for i in range(rows)]
+    cells = {(r, c): {"device_id": "", "excluded": False}
+            for r in range(rows) for c in range(cols)}
+    return {"x_headers": x_headers, "y_headers": y_headers, "cells": cells}

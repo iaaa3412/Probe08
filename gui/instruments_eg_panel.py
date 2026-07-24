@@ -3,6 +3,21 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
+from instrument_connection_panel import build_address_panel
+
+# (display name, instruments.yaml key) for every instrument the Electroglas
+# system talks to - see gui/app.py's init_hardware_eg() for the matching
+# driver-construction list this mirrors.
+_EG_INSTRUMENTS = [
+    ("Electroglas 2001X (Prober)", "prober_eg"),
+    ("Keithley 2400 (SMU)", "smu_eg"),
+    ("HP 3458A (DMM)", "dmm_eg"),
+    ("Agilent 6634B (Power Supply)", "power_supply_eg"),
+    ("HP Switchbox 1", "relay1_eg"),
+    ("HP Switchbox 2", "relay2_eg"),
+    ("HP Switchbox 3", "relay3_eg"),
+]
+
 
 class InstrumentsEgPanel(ttk.Frame):
     def __init__(self, parent, controller):
@@ -13,6 +28,7 @@ class InstrumentsEgPanel(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
 
+        self._build_addresses()
         self._build_smu()
         self._build_dmm()
         self._build_ps()
@@ -24,9 +40,14 @@ class InstrumentsEgPanel(ttk.Frame):
         drv = self.controller.drivers.get(key)
         return drv if (drv and drv.inst) else None
 
+    def _build_addresses(self):
+        panel = build_address_panel(
+            self, _EG_INSTRUMENTS, self._log, self.controller.init_hardware_eg)
+        panel.grid(row=0, column=0, columnspan=2, sticky="new", padx=8, pady=(8, 0))
+
     def _build_smu(self):
         lf = ttk.LabelFrame(self, text="SMU — Keithley 2400", padding=8)
-        lf.grid(row=0, column=0, sticky="new", padx=8, pady=8)
+        lf.grid(row=1, column=0, sticky="new", padx=8, pady=8)
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)
@@ -103,7 +124,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_dmm(self):
         lf = ttk.LabelFrame(self, text="DMM — HP 3458A", padding=8)
-        lf.grid(row=0, column=1, sticky="new", padx=8, pady=8)
+        lf.grid(row=1, column=1, sticky="new", padx=8, pady=8)
 
         btn_row = ttk.Frame(lf)
         btn_row.pack(fill="x")
@@ -153,7 +174,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_ps(self):
         lf = ttk.LabelFrame(self, text="Power Supply — Agilent 6634B", padding=8)
-        lf.grid(row=1, column=0, columnspan=2, sticky="new", padx=8, pady=(0, 8))
+        lf.grid(row=2, column=0, columnspan=2, sticky="new", padx=8, pady=(0, 8))
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)

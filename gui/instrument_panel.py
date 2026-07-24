@@ -12,6 +12,7 @@ from switch_debug_panel import SwitchDebugPanel
 from switch_settings_panel import SwitchSettingsPanel
 from switchbox_test_panel import SwitchboxTestPanel
 from instruments_eg_panel import InstrumentsEgPanel
+from instrument_connection_panel import build_address_panel
 from probe_routing_panel import scrollable_routing
 from prober_debug_panel import ProberDebugPanel
 from eg_prober_debug_panel import EgProberDebugPanel
@@ -22,6 +23,7 @@ from pma_wafer_panel import (PmaWaferPanel, pma_shots_to_grid, merge_with_accret
                              centroid_offset)
 from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
+from recipe_gen_panel import RecipeGenPanel
 import export_formats as xfmt
 from engineering_units import parse_engineering, format_engineering
 
@@ -350,6 +352,7 @@ class MainLayout(ttk.Frame):
         self._tab_pma_wafer(main_nb)
         if self._system == "electroglas":
             self._tab_pma_process(main_nb)
+            self._tab_recipe_gen(main_nb)
 
         debug_frame = ttk.Frame(top_nb)
         top_nb.add(debug_frame, text="  Debug  ")
@@ -375,14 +378,29 @@ class MainLayout(ttk.Frame):
             self.nanoz_panel = NanoZPanel(nanoz_frame, controller=self.controller, main_layout=self)
             self.nanoz_panel.pack(fill="both", expand=True)
 
+    _ACCRETECH_INSTRUMENTS = [
+        ("UF200R Prober", "prober"),
+        ("Switch Matrix (Keithley 707B)", "switch_matrix"),
+        ("SMU (Keithley 2636B)", "smu"),
+        ("DMM (Keysight 34461A)", "dmm"),
+        ("Wave Gen (Keysight 33512B)", "wave_gen"),
+    ]
+
+    def _build_addresses_accretech(self, parent, row: int):
+        panel = build_address_panel(
+            parent, self._ACCRETECH_INSTRUMENTS, self.controller.log, self._init_hardware_fn)
+        panel.grid(row=row, column=0, sticky="ew", padx=8, pady=(6, 0))
+
     def _tab_instruments(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Instruments")
-        tab.rowconfigure(2, weight=1)
+        tab.rowconfigure(3, weight=1)
         tab.columnconfigure(0, weight=1)
 
+        self._build_addresses_accretech(tab, row=0)
+
         rst = tk.Frame(tab, bg="#7f1d1d")
-        rst.grid(row=0, column=0, sticky="ew")
+        rst.grid(row=1, column=0, sticky="ew")
         tk.Button(
             rst,
             text="⚠  Global Reset — All Outputs OFF + Open All Switches",
@@ -402,7 +420,7 @@ class MainLayout(ttk.Frame):
         ).pack(side="left", padx=4, pady=4)
 
         sbar = tk.Frame(tab, bg="#0f172a")
-        sbar.grid(row=1, column=0, sticky="ew")
+        sbar.grid(row=2, column=0, sticky="ew")
         for key, lbl in [("smua", "SMU A"), ("smub", "SMU B"),
                           ("wg1", "WG CH1"), ("wg2", "WG CH2"),
                           ("dmm", "DMM"), ("prober", "Prober")]:
@@ -413,7 +431,7 @@ class MainLayout(ttk.Frame):
                      font=("Consolas", 8), padx=10, pady=2).pack(side="left")
 
         pane = ttk.PanedWindow(tab, orient="horizontal")
-        pane.grid(row=2, column=0, sticky="nsew")
+        pane.grid(row=3, column=0, sticky="nsew")
 
         dmm_pane = ttk.Frame(pane)
         pane.add(dmm_pane, weight=1)
@@ -1827,6 +1845,14 @@ class MainLayout(ttk.Frame):
         tab.columnconfigure(0, weight=1)
         self.pma_process = PmaProcessPanel(tab, controller=self.controller, main_layout=self)
         self.pma_process.grid(row=0, column=0, sticky="nsew")
+
+    def _tab_recipe_gen(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Recipe Gen")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        self.recipe_gen = RecipeGenPanel(tab, controller=self.controller, main_layout=self)
+        self.recipe_gen.grid(row=0, column=0, sticky="nsew")
 
     def _build_exec_panel(self):
         tab = ttk.Frame(self)
