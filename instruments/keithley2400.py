@@ -12,7 +12,16 @@ def _read_element(raw, index, default=0.0):
 class Keithley2400(GPIBInstrument):
     def __init__(self):
         super().__init__('smu_eg')
-        self.reset()
+        # Opening the session proves nothing about whether the 2400 is powered
+        # on, so this *RST raised straight out of the constructor whenever it
+        # was not - and gui/app.py builds every driver before it starts
+        # handling errors, so that single exception aborted the entire connect
+        # sequence and left the tab stuck on "Pinging hardware connections...".
+        if self.is_present():
+            try:
+                self.reset()
+            except Exception as e:
+                print(f"[SMU_EG] *RST failed: {e}")
 
     def get_id(self) -> str:
         return self.query("*IDN?") or ""
