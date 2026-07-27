@@ -203,9 +203,43 @@ recipeDeviceIDMajor.PMS     device IDs, one line per touchdown
 recipeMoves/DeviceIDMinor.*  sub-site offsets; usually a single 0
 ```
 
-`DieSizeX=7042` with a measured 3.521 mm die means the `.PMA` "die size" is the
-**2×2 quad pitch**, twice the physical die — and every `.PMV` coordinate is an
-exact integer multiple of it.
+### Die size is the step per touchdown, not the physical die
+
+Proved across the recipe library. Two product families each ship a single-die
+recipe *and* a quad recipe, and the quad's die size is exactly double in both
+axes:
+
+| Product | Recipe | DieSize | dies/shot |
+|---|---|---|---|
+| HP LaMP | `HP LaMP 21 PCMs` | 3521 × 1642 | 1 |
+| HP LaMP | `HP LaMP electrical gauge` | **7042 × 3284** | 4 |
+| LPLaMP | `LPLaMP 18 PCMs` | 2602 × 1642 | 1 |
+| LPLaMP | `LPLaMP electrical whole wafer` | **5204 × 3284** | 4 |
+
+Same product, same physical dies — only the touchdown footprint changed. So
+setting the prober's die size to the quad makes one die-indexed move step a
+whole shot, which is how a 4-die touchdown pattern is driven with `MD`.
+
+Every `.PMV` coordinate is an exact integer multiple of that pitch.
+
+Only 6 of 60 recipes surveyed are quad, all LaMP-family electrical ones;
+everything else (CYRUS, Murphy, Sena, HOLLY, GIAL5) is single-die.
+
+Corollary: the prober's SET PRMTR die size must match the recipe in use. A
+reference prober showing `3.52100 MM` is the HP LaMP **single-die** value, not
+a different product.
+
+### Alignment comes first
+
+The `.PMA` carries `PreAlignMessage=Align` and `PostAlignMessage=Make sure the
+plate and the alligator clip are clamped down`, and
+`XMoveFirstFromAlignSite`/`YMoveFirstFromAlignSite` give the offset **from the
+align site to the first touchdown**. `.PMS` files contain literal `TARGET`
+entries marking alignment targets rather than devices.
+
+So the run is: align at the align site, offset to the first touchdown, then
+walk the move list. Which panel operation performed that alignment is not
+established here.
 
 `DeviceIDMajor.PMS` carries **four IDs per line**, one per die in the quad:
 
