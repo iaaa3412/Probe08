@@ -25,9 +25,16 @@ ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A"
                                 "Agilent 6634B", "HP Switchbox 1", "HP Switchbox 2",
                                 "HP Switchbox 3"]
 
+# Still listed in the sidebar so the roster stays visible, but this prober does
+# not have them - they are skipped by the connect sweep instead of being
+# reported as failures. Other EG probers are fitted differently; the Instruments
+# panel's Scan Bus button reports what a given one actually carries.
+ELECTROGLAS_NOT_FITTED = ("Keithley 2400", "Agilent 6634B")
+
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
-ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "power_supply",
-                                "relay1", "relay2", "relay3")
+# No "smu"/"power_supply" for the same reason - requiring them would hold the
+# Electroglas tab at PENDING forever.
+ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "dmm", "relay1", "relay2", "relay3")
 
 
 class AtomicaDashboard(tk.Tk):
@@ -311,6 +318,44 @@ class AtomicaDashboard(tk.Tk):
                 ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
                 self.log(f"[ERROR] {name}: {e}")
 
+    def _connect_instruments_eg(self, ui, drivers, connections):
+        """Electroglas connect. Takes driver *factories*, not instances.
+
+        Separate from _connect_instruments so the Accretech path keeps its
+        existing behaviour untouched. Two things differ here:
+
+        - Each driver is built inside the try. The 2400 sends *RST from its
+          __init__, which raises when it is switched off, and with the whole
+          list built up front that single failure aborted the sequence before
+          any status label was updated - the tab just sat on "Pinging...".
+        - Presence is settled by a serial poll before any ID query. It answers
+          in milliseconds, where an absent instrument otherwise costs a full
+          ID-query timeout; this loop runs on the UI thread, so that froze the
+          window for ~30s whenever something on the bench was powered off.
+        """
+        for lbl in ui.status_labels.values():
+            lbl.config(foreground="orange")
+        for name in ELECTROGLAS_NOT_FITTED:
+            if name in ui.status_labels:
+                ui.status_labels[name].config(text=f"— {name} (not fitted)",
+                                              foreground="gray")
+        self.update_idletasks()
+        for name, key, build_driver in connections:
+            try:
+                driver = build_driver()
+                if not driver.is_present():
+                    raise Exception("no answer to serial poll — powered off or not on the bus?")
+                response = driver.get_id()
+                if response:
+                    drivers[key] = driver
+                    ui.status_labels[name].config(text=f"✅ {name}", foreground="green")
+                    self.log(f"[SYSTEM] Connected: {name}")
+                else:
+                    raise Exception("No response")
+            except Exception as e:
+                ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
+                self.log(f"[ERROR] {name}: {e}")
+
     def init_hardware(self):
         self.log("[SYSTEM] Pinging Accretech hardware connections...")
         connections = [
@@ -326,17 +371,22 @@ class AtomicaDashboard(tk.Tk):
 
     def init_hardware_eg(self):
         self.log("[SYSTEM] Pinging Electroglas hardware connections...")
+        # The Keithley 2400 and Agilent 6634B are not fitted to this prober, so
+        # they are left out of the connect sweep - see _EG_INSTRUMENTS in
+        # gui/instruments_eg_panel.py, which still lists them (and still lets
+        # you ping them individually) and carries the same note. Different EG
+        # probers carry different instruments; Scan Bus reports what a given
+        # one actually has.
         connections = [
-            ("Electroglas 2001X", "prober",       Electroglas2001X()),
-            ("Keithley 2400",     "smu",          Keithley2400()),
-            ("HP 3458A",          "dmm",          HP3458A()),
-            ("Agilent 6634B",     "power_supply", Agilent6634B()),
-            ("HP Switchbox 1",    "relay1",       HPSwitchbox("relay1_eg")),
-            ("HP Switchbox 2",    "relay2",       HPSwitchbox("relay2_eg")),
-            ("HP Switchbox 3",    "relay3",       HPSwitchbox("relay3_eg")),
+            ("Electroglas 2001X", "prober",  Electroglas2001X),
+            ("HP 3458A",          "dmm",     HP3458A),
+            ("HP Switchbox 1",    "relay1",  lambda: HPSwitchbox("relay1_eg")),
+            ("HP Switchbox 2",    "relay2",  lambda: HPSwitchbox("relay2_eg")),
+            ("HP Switchbox 3",    "relay3",  lambda: HPSwitchbox("relay3_eg")),
         ]
-        self._connect_instruments(self._by_system["electroglas"]["ui"],
-                                  self._by_system["electroglas"]["drivers"], connections)
+        self._connect_instruments_eg(self._by_system["electroglas"]["ui"],
+                                     self._by_system["electroglas"]["drivers"],
+                                     connections)
         self.check_system_ready()
 
     def check_system_ready(self):

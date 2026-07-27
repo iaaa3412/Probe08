@@ -59,10 +59,15 @@ instruments:
     address: "GPIB0::9::15::INSTR"
     timeout_ms: 3000
 
+  # Was GPIB0::9::12::INSTR (inherited from LaMP's tblInstruments, see
+  # references/electroglasgpib.csv). Nothing answers at secondary address 12 on
+  # the live bus. An ADLINK bus scan finds exactly three SWITCHBOX units, at
+  # PA 9 / SA 10, 14 and 15 - 14 and 15 are already claimed by relay3 and
+  # relay1, so switchbox 2 is the one at secondary address 10.
   relay2_eg:
     name: "HP Switchbox 2"
     protocol: "GPIB"
-    address: "GPIB0::9::12::INSTR"
+    address: "GPIB0::9::10::INSTR"
     timeout_ms: 3000
 
   relay3_eg:

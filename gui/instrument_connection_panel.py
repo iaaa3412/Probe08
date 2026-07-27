@@ -4,7 +4,10 @@ from tkinter import messagebox, ttk
 
 from instruments.gpib_base import (
     load_all_instrument_configs, set_instrument_address, ping_address, send_raw_command,
+    discover_bus,
 )
+
+_DEFAULT_ID_QUERIES = ("*IDN?", "ID?")
 
 
 def build_address_panel(parent, instruments, log_fn, reconnect_fn, height=220):
@@ -33,19 +36,116 @@ def build_address_panel(parent, instruments, log_fn, reconnect_fn, height=220):
                   foreground="red").pack(anchor="w")
         current = {}
 
-    addr_vars = {}
+    # Callers may pass (name, key), (name, key, id_queries) or
+    # (name, key, id_queries, fitted).
+    #   id_queries - ID strings to try once the instrument has answered a serial
+    #                poll. Pass () for pre-SCPI gear like the Electroglas 2001X
+    #                so ping never writes a command it cannot parse.
+    #   fitted     - False for an instrument this prober does not have. It stays
+    #                listed and its own Ping button still works, but Ping All
+    #                skips it. The EG probers are not all fitted alike, so use
+    #                Scan Bus to see what is actually plugged into this one.
+    #   write_probe - a harmless query to try writing. A serial poll is answered
+    #                by the GPIB interface chip alone, so it can pass on an
+    #                instrument whose software is not servicing the bus; only a
+    #                write proves commands will actually get through.
+    entries = [(e[0], e[1],
+                e[2] if len(e) > 2 else _DEFAULT_ID_QUERIES,
+                e[3] if len(e) > 3 else True,
+                e[4] if len(e) > 4 else None)
+               for e in instruments]
 
-    def _ping(name, addr_var, status_var):
+    addr_vars = {}
+    ping_vars = {}
+    ping_lbls = {}
+
+    def _ping(name, addr_var, status_var, status_lbl, id_queries, write_probe):
         address = addr_var.get().strip()
         if not address:
             status_var.set("no address entered")
+            status_lbl.config(foreground="gray")
             return
         status_var.set("pinging…")
+        status_lbl.config(foreground="#0077cc")
         def _run():
-            ok, msg = ping_address(address)
+            ok, msg = ping_address(address, id_queries=id_queries,
+                                   write_probe=write_probe)
             text = f"{'✅' if ok else '❌'} {msg}"
-            inner.after(0, lambda: status_var.set(text))
+            def _apply():
+                status_var.set(text)
+                status_lbl.config(foreground="green" if ok else "red")
+            inner.after(0, _apply)
             log_fn(f"[PING] {name} ({address}): {text}")
+        threading.Thread(target=_run, daemon=True).start()
+
+    # Tkinter is not thread-safe. Every StringVar.get() below happens on the
+    # main thread before the worker starts, and every write back goes through
+    # inner.after(); reading a Tk variable from the worker reaches into the Tcl
+    # interpreter off-thread and deadlocks the whole UI.
+
+    def _ping_all():
+        # One instrument at a time on a single worker. A GPIB bus has one
+        # controller, so firing every ping at once just makes them contend.
+        targets = []
+        for name, key, id_queries, fitted, write_probe in entries:
+            if not fitted:
+                ping_vars[key].set("not fitted — skipped")
+                ping_lbls[key].config(foreground="gray")
+                continue
+            targets.append((name, key, addr_vars[key].get().strip(),
+                            id_queries, write_probe))
+            ping_vars[key].set("queued…")
+            ping_lbls[key].config(foreground="gray")
+
+        def _run():
+            for name, key, address, id_queries, write_probe in targets:
+                if not address:
+                    inner.after(0, lambda k=key: ping_vars[k].set("no address entered"))
+                    continue
+                inner.after(0, lambda k=key: ping_vars[k].set("pinging…"))
+                ok, msg = ping_address(address, id_queries=id_queries,
+                                       write_probe=write_probe)
+                text = f"{'✅' if ok else '❌'} {msg}"
+                def _apply(k=key, t=text, good=ok):
+                    ping_vars[k].set(t)
+                    ping_lbls[k].config(foreground="green" if good else "red")
+                inner.after(0, _apply)
+                log_fn(f"[PING] {name} ({address}): {text}")
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _scan_bus():
+        # Identifies everything actually answering, including instruments that
+        # are not in instruments.yaml - the point being that the EG probers are
+        # fitted differently, so this reports the bench rather than the config.
+        log_fn("[SCAN] Identifying every instrument on the bus…")
+        configured = {addr_vars[key].get().strip().upper(): name
+                      for name, key, _, _, _ in entries if addr_vars[key].get().strip()}
+
+        def _run():
+            try:
+                found = discover_bus()
+            except Exception as e:
+                log_fn(f"[SCAN] failed: {e}")
+                return
+            if not found:
+                log_fn("[SCAN] nothing answering — check the GPIB adapter and that "
+                       "the instruments are powered on")
+                return
+
+            for item in found:
+                address = item["address"]
+                known = configured.get(address.upper())
+                label = known or "NOT IN instruments.yaml"
+                identity = item["identity"] or "(answers no ID query)"
+                log_fn(f"[SCAN]   {address:<22} {identity}   [{label}]")
+                for line in item["detail"]:
+                    log_fn(f"[SCAN]   {'':<22}   {line}")
+
+            seen = {item["address"].upper() for item in found}
+            for address, name in configured.items():
+                if address not in seen:
+                    log_fn(f"[SCAN]   ⚠ {name}: {address} is configured but nothing answers there")
+            log_fn(f"[SCAN] {len(found)} instrument(s) responding.")
         threading.Thread(target=_run, daemon=True).start()
 
     def _send(name, addr_var, cmd_var, status_var):
@@ -63,8 +163,9 @@ def build_address_panel(parent, instruments, log_fn, reconnect_fn, height=220):
             log_fn(f"[{name}] >> {cmd!r}  << {text}")
         threading.Thread(target=_run, daemon=True).start()
 
-    for name, key in instruments:
-        row_lf = ttk.LabelFrame(inner, text=name, padding=4)
+    for name, key, id_queries, fitted, write_probe in entries:
+        row_lf = ttk.LabelFrame(inner, text=name if fitted else f"{name}  (not fitted)",
+                                padding=4)
         row_lf.pack(fill="x", padx=2, pady=2)
 
         addr_row = ttk.Frame(row_lf)
@@ -74,14 +175,17 @@ def build_address_panel(parent, instruments, log_fn, reconnect_fn, height=220):
         addr_var = tk.StringVar(value=address)
         ttk.Entry(addr_row, textvariable=addr_var, width=26, font=("Consolas", 9)).pack(
             side="left", padx=(2, 6))
-        ping_status = tk.StringVar(value="—")
+        ping_status = tk.StringVar(value="—" if fitted else "not fitted on this prober")
+        ping_lbl = ttk.Label(addr_row, textvariable=ping_status, foreground="gray",
+                             font=("Consolas", 8), wraplength=260, justify="left")
         ttk.Button(addr_row, text="Ping", width=6,
-                   command=lambda n=name, av=addr_var, sv=ping_status:
-                   _ping(n, av, sv)).pack(side="left")
-        ttk.Label(addr_row, textvariable=ping_status, foreground="#0077cc",
-                  font=("Consolas", 8), wraplength=260, justify="left").pack(
-                  side="left", padx=(6, 0))
+                   command=lambda n=name, av=addr_var, sv=ping_status, sl=ping_lbl,
+                   iq=id_queries, wp=write_probe:
+                   _ping(n, av, sv, sl, iq, wp)).pack(side="left")
+        ping_lbl.pack(side="left", padx=(6, 0))
         addr_vars[key] = addr_var
+        ping_vars[key] = ping_status
+        ping_lbls[key] = ping_lbl
 
         cmd_row = ttk.Frame(row_lf)
         cmd_row.pack(fill="x", pady=(2, 0))
@@ -100,12 +204,15 @@ def build_address_panel(parent, instruments, log_fn, reconnect_fn, height=220):
                   side="left", padx=(6, 0))
 
     ttk.Label(outer, text="Ping/Send act on the address typed above right now, saved or not. "
-                          "Commands ending or starting with '?' are sent as queries.",
-              foreground="gray", font=("Arial", 8)).pack(anchor="w", pady=(4, 0))
+                          "Ping is a GPIB serial poll, so it also detects instruments that "
+                          "answer no ID query. Commands ending or starting with '?' are "
+                          "sent as queries.",
+              foreground="gray", font=("Arial", 8), wraplength=520,
+              justify="left").pack(anchor="w", pady=(4, 0))
 
     def _save_all():
         try:
-            for name, key in instruments:
+            for name, key, _, _, _ in entries:
                 address = addr_vars[key].get().strip()
                 if not address:
                     messagebox.showerror("Invalid Address", f"Address for '{name}' cannot be empty.")
@@ -117,6 +224,10 @@ def build_address_panel(parent, instruments, log_fn, reconnect_fn, height=220):
         log_fn("[SYSTEM] GPIB addresses saved to instruments.yaml — reconnecting...")
         reconnect_fn()
 
-    ttk.Button(outer, text="Save & Reconnect All", command=_save_all).pack(anchor="e", pady=(6, 0))
+    btns = ttk.Frame(outer)
+    btns.pack(fill="x", pady=(6, 0))
+    ttk.Button(btns, text="Scan Bus", command=_scan_bus).pack(side="left")
+    ttk.Button(btns, text="Ping All", command=_ping_all).pack(side="left", padx=(6, 0))
+    ttk.Button(btns, text="Save & Reconnect All", command=_save_all).pack(side="right")
 
     return outer

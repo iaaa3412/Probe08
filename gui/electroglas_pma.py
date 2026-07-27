@@ -88,7 +88,37 @@ def _read_strings(path: str) -> list:
         return [line.strip() for line in fh if line.strip()]
 
 
+def split_quad_devices(device_id: str) -> list:
+    """Split a slash-joined device ID into the dies of one touchdown.
+
+    LaMP-era recipes probe a 2x2 quad per touchdown - 4 dies contacted at once
+    through 8 probe-card pins - and record all four in a single .PMS line:
+
+        93-01/83-71/93-02/83-72
+        NA/86-14/NA/NA
+        TARGET/41-71/TARGET/41-72
+
+    'NA' marks a position with no die; 'TARGET' marks an alignment target
+    rather than a device. Recipes that probe one die per touchdown have no
+    slashes and come back as a single-element list.
+    """
+    parts = [p.strip() for p in str(device_id).split("/")]
+    return parts if len(parts) > 1 else [str(device_id).strip()]
+
+
 def load_touchdowns(pma_path: str, fields: dict) -> list:
+    """Read a .PMA plus its move/device sibling files into touchdown records.
+
+    UNITS ARE MICRONS. Verified against a real recipe: DieSizeX=7042 with a
+    measured die of 3.521mm means the .PMA's "die size" is the 2x2 QUAD pitch,
+    twice the physical die, and every move coordinate in the .PMV files is an
+    exact integer multiple of it. Coordinates are absolute, measured from the
+    align site, and XMoveFirstFromAlignSite/YMoveFirstFromAlignSite give the
+    offset from that site to the first touchdown.
+
+    The prober itself stores none of this - the PC holds the map and drives the
+    stage to each coordinate in turn (MA, absolute move in microns).
+    """
     major_x = _read_numbers(_moves_path(pma_path, fields, "MovesMajor", "X"))
     major_y = _read_numbers(_moves_path(pma_path, fields, "MovesMajor", "Y"))
     major_id = _read_strings(_device_id_path(pma_path, fields, "DeviceIDMajor"))
@@ -116,6 +146,10 @@ def load_touchdowns(pma_path: str, fields: dict) -> list:
                 "minor_index": j + 1,
                 "device_id": device_id,
                 "device_id_major": device_id_major,
+                # One entry per die in the touchdown - 4 for a LaMP 2x2 quad,
+                # 1 for a single-die recipe. Keeps the raw string intact above
+                # rather than replacing it, so existing callers are unaffected.
+                "devices": split_quad_devices(device_id),
                 "x": major_x[i] + mx,
                 "y": major_y[i] + my,
                 "major_x": major_x[i],

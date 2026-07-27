@@ -3,7 +3,21 @@ import yaml
 import sys
 import os
 
-_OPEN_TIMEOUT_MS = 1500
+# Opening a resource is a local driver call, not a round trip to the
+# instrument, so it has no reason to take long. Presence is established
+# afterwards by a serial poll.
+_OPEN_TIMEOUT_MS = 500
+
+# How long a serial poll waits before calling an address empty. A serial poll
+# is answered by the instrument's GPIB interface hardware, not its firmware, so
+# anything powered and on the bus replies in microseconds even while it is busy
+# executing a command - this only bounds what a *dead* address costs.
+#
+# Measured on the ADLINK USB-3488A: the driver rounds this up to its own 1s
+# quantum, so 100 and 300 both produce a ~1.0s wait on a dead address and
+# lowering it further buys nothing. It still bounds non-GPIB resources, where
+# the value is honoured as written.
+_POLL_TIMEOUT_MS = 300
 
 _VISA_BACKENDS = (None, "@py")
 _rm_cache = {}
@@ -27,18 +41,37 @@ def _resource_manager_for(via):
 
 def open_resource(address, open_timeout=_OPEN_TIMEOUT_MS):
     errors = []
+    is_gpib = address.strip().upper().startswith("GPIB")
+    default_ok = False
     for via in _VISA_BACKENDS:
+        # pyvisa-py cannot drive GPIB at all without gpib-ctypes. Once a vendor
+        # VISA has loaded and given its verdict on a GPIB address, retrying
+        # through pyvisa-py only costs seconds and ends in a misleading
+        # "install gpib-ctypes" message. Non-GPIB resources still get the
+        # fallback, and so does a machine with no vendor VISA at all.
+        if via == "@py" and is_gpib and default_ok:
+            continue
         try:
             rm = _resource_manager_for(via)
         except Exception as e:
-            errors.append(f"{via or 'default'}: {e}")
+            errors.append((via, f"backend unavailable: {e}"))
             continue
+        if via is None:
+            default_ok = True
         try:
             inst = rm.open_resource(address, open_timeout=open_timeout)
             return inst, (via or "default")
         except Exception as e:
-            errors.append(f"{via or 'default'}: {e}")
-    raise RuntimeError(f"Could not open {address!r}. Tried: " + "; ".join(errors))
+            errors.append((via, str(e)))
+
+    # When the vendor VISA loaded and gave a verdict, that verdict is the whole
+    # story - appending pyvisa-py's "install gpib-ctypes" advice on top of it
+    # just buries the real reason on a bench where NI-VISA owns the GPIB board.
+    primary = next((msg for via, msg in errors if via is None and "backend unavailable" not in msg), None)
+    if primary:
+        raise RuntimeError(f"Could not open {address!r}: {primary}")
+    raise RuntimeError(f"Could not open {address!r}. Tried: " +
+                       "; ".join(f"{via or 'default'}: {msg}" for via, msg in errors))
 
 
 class GPIBInstrument:
@@ -63,6 +96,29 @@ class GPIBInstrument:
         except Exception as e:
             print(f"[{config_key.upper()}] FAILED to connect: {e}")
             self.inst = None
+
+    def is_present(self) -> bool:
+        """Serial-poll the instrument to confirm hardware is really answering.
+
+        The open_resource() in __init__ is not proof of a link: VISA hands back
+        a session for any GPIB address in its resource table whether or not the
+        instrument is powered on. A serial poll needs no command support, so it
+        works even on pre-SCPI instruments.
+        """
+        if not self.inst:
+            return False
+        previous = self.inst.timeout
+        try:
+            self.inst.timeout = _POLL_TIMEOUT_MS
+            self.inst.read_stb()
+            return True
+        except Exception:
+            return False
+        finally:
+            try:
+                self.inst.timeout = previous
+            except Exception:
+                pass
 
     def write(self, command):
         if self.inst:
@@ -96,18 +152,170 @@ def set_instrument_address(config_key: str, address: str) -> None:
         yaml.safe_dump(config, file, default_flow_style=False, sort_keys=False)
 
 
-def ping_address(address: str, timeout_ms: int = 1000) -> tuple:
+_DEFAULT_ID_QUERIES = ("*IDN?", "ID?")
+
+
+def list_visa_resources() -> list:
+    errors = []
+    for via in _VISA_BACKENDS:
+        try:
+            rm = _resource_manager_for(via)
+            return sorted(rm.list_resources("?*"))
+        except Exception as e:
+            errors.append(f"{via or 'default'}: {e}")
+    raise RuntimeError("Could not list VISA resources. Tried: " + "; ".join(errors))
+
+
+# Not instruments: the GPIB board itself and the PXI memory-access resource.
+_NON_INSTRUMENT_RESOURCES = ("GPIB0::INTFC", "PXI0::MEMACC")
+
+
+def _is_measurement_not_identity(text: str) -> bool:
+    """True if `text` is a reading that leaked out of an instrument's buffer.
+
+    A free-running 3458A answers a query it does not understand with whatever
+    reading is sitting in its output buffer, so probing it with *IDN? yields
+    something like '8.201751693E+00'. That is a measurement, not an identity,
+    and listing it as one is worse than reporting no ID at all.
+    """
+    try:
+        float(text.split(",")[0])
+        return True
+    except ValueError:
+        return False
+
+
+def discover_bus(timeout_ms: int = 600) -> list:
+    """Identify every instrument currently answering on the bus.
+
+    The Electroglas probers are not all fitted the same way, so the panel needs
+    to report what is actually plugged in rather than assume the roster in
+    instruments.yaml. Returns a list of dicts with 'address', 'identity' and
+    'detail' keys.
+
+    Read-only throughout: a serial poll, then ID queries, then - for an HP
+    switchbox - SYST:CTYP? to name the relay cards it holds. Nothing here
+    changes an instrument setting or moves a relay.
+    """
+    found = []
+    for address in list_visa_resources():
+        if address in _NON_INSTRUMENT_RESOURCES or address.upper().startswith("ASRL"):
+            continue
+        try:
+            inst, _ = open_resource(address)
+        except Exception:
+            continue
+        try:
+            inst.timeout = _POLL_TIMEOUT_MS
+            try:
+                inst.read_stb()
+            except Exception:
+                continue
+
+            # Short timeout: this sweeps every address on the bus and most of
+            # them will not answer, so a generous per-query wait turns the scan
+            # into a coffee break. Any instrument that answers an ID query at
+            # all answers it well inside this.
+            inst.timeout = timeout_ms
+            identity = ""
+            for query in _DEFAULT_ID_QUERIES:
+                try:
+                    response = (inst.query(query) or "").strip()
+                except Exception:
+                    continue
+                if response and not _is_measurement_not_identity(response):
+                    identity = response
+                    break
+
+            detail = []
+            if "SWITCHBOX" in identity.upper():
+                # Each switchbox is a group of plug-in cards in the E1300A
+                # mainframe, and the EG benches hold different ones - this is
+                # what tells relay1 (an E1343A multiplexer) apart from relay2
+                # and relay3 (E1364A form C switches).
+                for slot in range(1, 5):
+                    try:
+                        card = (inst.query(f"SYST:CTYP? {slot}") or "").strip()
+                    except Exception:
+                        break
+                    if card and not card.upper().startswith("NONE"):
+                        detail.append(f"card {slot}: {card}")
+
+            found.append({"address": address, "identity": identity, "detail": detail})
+        finally:
+            try:
+                inst.close()
+            except Exception:
+                pass
+    return found
+
+
+def ping_address(address: str, timeout_ms: int = 1000,
+                 id_queries=_DEFAULT_ID_QUERIES, write_probe=None) -> tuple:
+    """Report whether a real instrument is answering at `address`.
+
+    Opening the resource proves nothing on GPIB: VISA hands back a session for
+    any address in its resource table whether or not hardware is listening.
+    Confirmed on this bench - GPIB0::24::INSTR (Keithley 2400, powered off)
+    opens cleanly, so the old open-plus-*IDN? check reported it connected.
+
+    A GPIB serial poll is the real presence test. It needs no command support
+    from the instrument, so it also covers pre-SCPI gear like the Electroglas
+    2001X, which answers no ID query at all (ADLINK's own bus scan lists it as
+    "Unknown instrument (PA:29)"). Pass id_queries=() for those instruments so
+    ping never writes an unrecognised command at them.
+
+    A serial poll is answered by the GPIB interface chip itself, though, so it
+    can succeed on an instrument whose software is not servicing the bus at
+    all - exactly what the 2001X does here. Pass write_probe with a harmless
+    query string to also confirm the instrument accepts a command byte.
+    """
+    is_gpib = address.strip().upper().startswith("GPIB")
     try:
         inst, via = open_resource(address)
     except Exception as e:
-        return False, str(e)
+        msg = str(e)
+        # VISA's wording for this is a paragraph long; in a status label next to
+        # the address, "not on the bus" is the part that matters.
+        if "VI_ERROR_RSRC_NFOUND" in msg:
+            return False, "not present on the bus (VISA does not see this address)"
+        return False, msg
     try:
+        # A live instrument answers a serial poll almost instantly; only a dead
+        # address burns the whole window, so keep that window short and save
+        # the caller's full timeout for the ID query that follows.
+        inst.timeout = min(timeout_ms, _POLL_TIMEOUT_MS)
+
+        polled = False
+        if hasattr(inst, "read_stb"):
+            try:
+                inst.read_stb()
+                polled = True
+            except Exception:
+                if is_gpib:
+                    return False, "no device at this address (no answer to serial poll)"
+
         inst.timeout = timeout_ms
-        try:
-            resp = inst.query("*IDN?").strip()
-            return True, (resp or f"connected via {via} - empty *IDN? response")
-        except Exception:
-            return True, f"connected via {via} - no *IDN? response (device may not support it)"
+
+        if write_probe is not None:
+            try:
+                inst.write(write_probe)
+            except Exception:
+                return False, ("answers a serial poll but refuses every command — "
+                               "GPIB interface alive, instrument not servicing the "
+                               "bus (host/remote control not enabled?)")
+
+        for query in id_queries:
+            try:
+                resp = (inst.query(query) or "").strip()
+            except Exception:
+                continue
+            if resp:
+                return True, resp
+
+        if polled:
+            return True, f"present via {via} - responds to serial poll, no ID string"
+        return True, f"opened via {via} - presence not verified"
     finally:
         try:
             inst.close()

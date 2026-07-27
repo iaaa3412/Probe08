@@ -1,4 +1,5 @@
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -8,22 +9,36 @@ _INT2 = "int2"
 _FLOAT2 = "float2"
 
 _ZERO_ARG_MOTION = [
-    ("Z Up (ZU)", "z_up",
-     "Send ZU?\n\n⚠ CONTACT: the chuck rises to probing height — the wafer "
-     "TOUCHES the probe card needles."),
-    ("Z Down (ZD)", "z_down",
-     "Send ZD?\n\nThe chuck drops — the wafer separates from the probe "
-     "card. This is the safe direction."),
+    ("Z Up (ZU) — TOUCHDOWN", "z_up",
+     "Send ZU?\n\n⚠ CONTACT: the chuck rises until the EDGE SENSOR detects "
+     "the needles touching, then applies Z OVERTRAVEL (SP5Z) past that "
+     "point.\n\n"
+     "Measured on this machine: ZU lands at Z2987, matching a manual "
+     "touchdown at Z2990.\n\n"
+     "Overtravel is needle pressure — check SET PRMTR line 06 before "
+     "sending. This machine's own value is 1.50 mils; a reference prober of "
+     "the same family uses 1.00."),
+    ("Z Down (ZD) — separate from card", "z_down",
+     "Send ZD?\n\nThe chuck drops to the Z DOWN LIMIT — the wafer separates "
+     "from the probe card. This is the safe direction."),
     ("Move to First Die (MF)", "move_to_start_die",
      "Send MF?\n\nPositions the first die of the current wafer map."),
     ("Move to Home (HO)", "move_to_home",
      "Send HO?\n\nReturns the chuck to its mechanical home position."),
 ]
 
+# Z values are in 0.1-mil units (command = mils x 10). This machine's limits:
+# 2000 = 200.0 mils = Z DOWN LIMIT, 4000 = 400.0 mils = Z UP LIMIT. ZM is the
+# one that actually moves the axis - ZU/ZD are no-ops without a wafer profile.
 _ONE_ARG_MOTION = [
-    ("Z Absolute (ZM)", "move_z_absolute", "Z"),
-    ("Z Relative (ZR)", "move_z_relative", "dZ"),
-    ("Theta Relative (MT)", "move_theta_relative", "dθ"),
+    # ZM is open-loop: it goes to a commanded height with no contact sensing.
+    # Fine for bench work with nothing fitted; NOT the way to approach a probe
+    # card. Touchdown is found by PZ/auto-profile via the edge sensor.
+    ("Z Absolute (ZM) — open loop, no contact sensing", "move_z_absolute", "Z"),
+    ("Z Relative (ZR) — 0.1 mil steps", "move_z_relative", "dZ"),
+    # Verified: MT rotates the chuck and ?T reports the angle, 1:1 with the
+    # command value. The physical unit per count is NOT established.
+    ("Theta Relative (MT) — ?T tracks 1:1, unit unknown", "move_theta_relative", "dθ"),
 ]
 
 _TWO_ARG_MOTION = [
@@ -58,6 +73,10 @@ _LIMIT_COMMANDS = [
     ("Z Overtravel (SP5Z)", "set_z_overtravel", _INT1, ("Z",)),
     ("Z Undertravel (SP10Z)", "set_z_undertravel", _INT1, ("Z",)),
     ("Zprofile Height (PH)", "set_zprofile_height", _NONE, ()),
+    # LaMP sets 2 = Auto Profile, which is why ZU/ZD do nothing without a
+    # profiled wafer. Other values are undocumented - read them off the
+    # prober's SET MODE page rather than guessing.
+    ("Z Travel Mode (SM5E)  2=auto profile", "set_z_travel_mode", _INT1, ("Mode",)),
 ]
 
 _COUNTER_COMMANDS = [
@@ -78,11 +97,39 @@ _MISC_COMMANDS = [
 _MOTION_PREFIXES = ("ZU", "ZD", "ZM", "ZR", "MT", "MM", "MO", "MA", "MD",
                     "FM", "MF", "HO", "J", "U", "L", "I")
 
+# Jog direction -> (dX, dY) in die coordinates.
+#
+# Die 0,0 sits at the BOTTOM-RIGHT of travel, so the only reachable quadrant is
+# up and to the LEFT. Increasing X therefore moves the chuck LEFT and
+# increasing Y moves it UP - the X axis reads inverted against screen
+# intuition, which is exactly the trap these constants exist to remove. Flip
+# the pair here if the physical behaviour ever disagrees; nothing else needs
+# touching.
+_JOG_LEFT = (1, 0)      # +X
+_JOG_RIGHT = (-1, 0)    # -X  (refused at the 0 edge)
+_JOG_UP = (0, 1)        # +Y
+_JOG_DOWN = (0, -1)     # -Y  (refused at the 0 edge)
+
 
 class EgProberDebugPanel(ttk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
+
+        # ONE GPIB conversation at a time, panel-wide.
+        #
+        # Every background action here used to get its own thread, and some
+        # chain another (a motion finishes, then fires a status read). Two
+        # threads sharing one VISA session interleave their drain/write/read
+        # steps, so each collects the other's acknowledgement - which shows up
+        # as moves that execute without confirmation, mismatched replies, and
+        # eventually timeouts that persist.
+        #
+        # A scripted run doing the identical commands strictly one at a time
+        # never reproduced any of it: 12/12 acknowledged, 0.3-0.4s each, and
+        # deliberately provoking MF, an axis limit and a device clear changed
+        # nothing. The difference was concurrency, not the prober.
+        self._gpib_lock = threading.Lock()
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -107,7 +154,12 @@ class EgProberDebugPanel(ttk.Frame):
         self._resp_var.set(f"[{label}]  {resp}")
 
     def _run_bg(self, fn, *args):
-        threading.Thread(target=fn, args=args, daemon=True).start()
+        """Run driver work off the UI thread, serialised against every other
+        such call in this panel. See _gpib_lock in __init__ for why."""
+        def _serialised():
+            with self._gpib_lock:
+                fn(*args)
+        threading.Thread(target=_serialised, daemon=True).start()
 
     def _build_topbar(self):
         bar = ttk.Frame(self, padding=(6, 4))
@@ -119,12 +171,327 @@ class EgProberDebugPanel(ttk.Frame):
         self._status_lbl.pack(side="left")
         ttk.Button(bar, text="Read Status (?S)",
                    command=self._cmd_read_status).pack(side="right", padx=2)
+        ttk.Button(bar, text="Refresh Telemetry",
+                   command=self._cmd_read_telemetry).pack(side="right", padx=2)
+        ttk.Button(bar, text="Send LaMP Init",
+                   command=self._cmd_send_init).pack(side="right", padx=2)
+        ttk.Button(bar, text="⚡ Resync Link",
+                   command=self._cmd_recover).pack(side="right", padx=2)
 
     def _build_main(self):
         pane = ttk.PanedWindow(self, orient="horizontal")
         pane.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
         self._build_left(pane)
         self._build_right(pane)
+
+    def _cmd_recover(self):
+        """Unwedge the link after a VI_ERROR_TMO.
+
+        A timeout leaves the prober refusing every subsequent write, so without
+        this the only way out was restarting the app. Drains, then device
+        clear, then reopens the session - none of which move the machine.
+        """
+        drv = self._drv()
+        if not drv:
+            return
+        self._set_status("resyncing link…", "#0077cc")
+
+        def _run():
+            try:
+                result = drv.recover()
+            except Exception as e:
+                result = f"recovery failed: {e}"
+            ok = result.startswith("recovered")
+            self._log(f"[RESYNC] {result}")
+            self.after(0, lambda: self._set_status(result,
+                                                   "#22bb55" if ok else "red"))
+            if ok:
+                self.after(0, self._cmd_read_status)
+        self._run_bg(_run)
+
+    def _cmd_read_telemetry(self):
+        """Read every verified '?' query and show the decoded result.
+
+        Read-only - no motion, no configuration change.
+        """
+        drv = self._drv()
+        if not drv:
+            return
+
+        def _run():
+            try:
+                data = drv.read_telemetry()
+            except Exception as e:
+                self.after(0, lambda: self._set_status(f"Telemetry failed: {e}", "red"))
+                return
+
+            decoded = [
+                ("Z state", data.get("z_state", "")),
+                ("Position", data.get("position", "")),
+                ("Z", data.get("z", "")),
+                ("Wafer #", data.get("wafer_number", "")),
+                ("Wafer diameter", (data.get("wafer_diameter_mm", "") and
+                                    f"{data['wafer_diameter_mm']} mm")),
+                ("Die tally", data.get("die_tally", "")),
+                ("Error", data.get("error", "")),
+            ]
+            lines = [f"  {k:<16} {v}" for k, v in decoded if v]
+            raw = [f"  {k:<16} {v}" for k, v in sorted(data.items())
+                   if k in ("status", "wafer_info", "die_counts", "cassette", "run_state")]
+
+            def _apply():
+                self._log("[TELEMETRY] decoded:")
+                for line in lines:
+                    self._log(line)
+                self._log("[TELEMETRY] raw replies:")
+                for line in raw:
+                    self._log(line)
+                err = data.get("error", "")
+                ok = err in ("E0", "")
+                self._set_status(
+                    f"Z {data.get('z_state', '?')}  |  pos {data.get('position', '?')}"
+                    f"  |  {data.get('die_tally', '')}  |  {err}",
+                    "green" if ok else "red")
+            self.after(0, _apply)
+        self._run_bg(_run)
+
+    def _cmd_send_init(self):
+        """Send the 20 configuration commands LaMP applied at startup.
+
+        Configuration only - SP/SM/SO/SX/WM 'set' commands. Nothing here moves
+        the chuck, stage or handler. It does overwrite the prober's current
+        setup, so it is confirmed first.
+        """
+        drv = self._drv()
+        if not drv:
+            return
+        if not messagebox.askokcancel(
+                "Send LaMP init sequence — CHECK Z LIMITS FIRST",
+                "Send the 20 configuration commands recovered from LaMP?\n\n"
+                "Nothing moves — these are SP/SM/SO/SX/WM setup commands only.\n"
+                "But they OVERWRITE the prober's Z setup, and LaMP's values do "
+                "not match what this machine was last set to:\n\n"
+                "    Z overtravel   ->  3.7 mils   (SP5Z37)\n"
+                "    Z clearance    ->  15 mils    (SP6Z150)\n"
+                "    Z UP LIMIT     ->  420 mils   (SP7Z4200)\n"
+                "    Z align height ->  216 mils   (SP9Z2160)\n"
+                "    Align scan vel ->  2000       (SP16V2000)\n\n"
+                "Overtravel is needle pressure and the up limit is how far the "
+                "chuck can climb toward the probe card. Compare these against "
+                "the prober's SET PRMTR page before continuing — if the current "
+                "values were chosen for the installed probe card, LaMP's are "
+                "for a different setup.\n\n"
+                "Z parameters are in 0.1-mil units (command = mils x 10)."):
+            return
+
+        def _run():
+            try:
+                count = drv.send_init_sequence(
+                    log=lambda line: self.after(0, lambda t=line: self._log(f"[INIT] {t}")))
+            except Exception as e:
+                self.after(0, lambda: self._set_status(f"Init failed: {e}", "red"))
+                return
+            self.after(0, lambda: self._set_status(
+                f"Init sequence sent ({count} commands)", "green"))
+            self.after(0, lambda: self._log(
+                "[INIT] complete — press Refresh Telemetry to read back the result"))
+        self._run_bg(_run)
+
+    def _build_jog(self, parent):
+        """Arrow-pad jog, the software equivalent of the prober's joystick.
+
+        XY uses MD (relative die), which is the only XY motion verified to work
+        and which ?P tracks exactly. Z uses ZR (relative), because ZU/ZD are
+        no-ops while Z TRAVEL MODE is auto profile.
+
+        Step sizes are read on the main thread before the worker starts -
+        Tkinter is not thread-safe.
+        """
+        lf = ttk.LabelFrame(parent, text="Jog  (arrow keys work when focused)",
+                            padding=6)
+        lf.pack(fill="x", padx=4, pady=(4, 6))
+
+        row = ttk.Frame(lf)
+        row.pack(fill="x")
+        ttk.Label(row, text="XY step (dies):").pack(side="left")
+        self._jog_xy_step = tk.StringVar(value="1")
+        ttk.Entry(row, textvariable=self._jog_xy_step, width=4).pack(side="left", padx=(2, 8))
+        ttk.Label(row, text="Z step (0.1 mil):").pack(side="left")
+        self._jog_z_step = tk.StringVar(value="100")
+        ttk.Entry(row, textvariable=self._jog_z_step, width=6).pack(side="left", padx=2)
+
+        # One jog at a time. The prober QUEUES commands it has not finished, so
+        # repeated presses stack up and execute long afterwards - cumulative
+        # travel nobody asked for. Every button is disabled until the MC
+        # acknowledgement for the move in flight comes back. It also keeps two
+        # GPIB conversations from overlapping, which is what wedges the link.
+        self._jog_busy = False
+        self._jog_buttons = []
+
+        pad = ttk.Frame(lf)
+        pad.pack(pady=(8, 4))
+
+        def mk(text, r, c, cmd, **kw):
+            b = ttk.Button(pad, text=text, width=8, command=cmd)
+            b.grid(row=r, column=c, padx=2, pady=2, **kw)
+            self._jog_buttons.append(b)
+            return b
+
+        # Die coordinate 0,0 is at the BOTTOM-RIGHT of travel, so the reachable
+        # quadrant is up and to the LEFT: increasing X moves the chuck LEFT,
+        # increasing Y moves it UP. Arrows are labelled by what the chuck
+        # physically does, with the die-coordinate sign in brackets - pressing
+        # "right" when 0,0 is already the right-hand edge is what the prober
+        # refuses with MF.
+        mk("↑ up (+Y)", 0, 1, lambda: self._jog_xy(*_JOG_UP))
+        mk("← left (+X)", 1, 0, lambda: self._jog_xy(*_JOG_LEFT))
+        mk("⌂ 0,0", 1, 1, self._jog_goto_origin)
+        mk("→ right (−X)", 1, 2, lambda: self._jog_xy(*_JOG_RIGHT))
+        mk("↓ down (−Y)", 2, 1, lambda: self._jog_xy(*_JOG_DOWN))
+        mk("where?", 0, 0, self._jog_show_position)
+        ttk.Separator(pad, orient="vertical").grid(row=0, column=3, rowspan=3,
+                                                   sticky="ns", padx=8)
+        mk("Z ▲ up", 0, 4, lambda: self._jog_z(1))
+        mk("Z ▼ down", 2, 4, lambda: self._jog_z(-1))
+
+        self._jog_pos = tk.StringVar(value="press a direction to read position")
+        ttk.Label(lf, textvariable=self._jog_pos, font=("Consolas", 9),
+                  wraplength=380, justify="left").pack(anchor="w", pady=(4, 0))
+
+        ttk.Label(lf, text="MD is bounded by the driver's step cap and, once set, "
+                           "its die envelope — the prober itself does NOT stop "
+                           "you going off the platen.",
+                  foreground="#aa5500", font=("Arial", 8), wraplength=380,
+                  justify="left").pack(anchor="w", pady=(4, 0))
+
+        # Arrow keys follow the physical direction, same mapping as the buttons.
+        for key, (dx, dy) in (("<Up>", _JOG_UP), ("<Down>", _JOG_DOWN),
+                              ("<Left>", _JOG_LEFT), ("<Right>", _JOG_RIGHT)):
+            self.bind_all(key, lambda e, x=dx, y=dy: self._jog_xy(x, y))
+
+    def _jog_set_busy(self, busy: bool):
+        """Lock the jog pad while a move is in flight. Main thread only."""
+        self._jog_busy = busy
+        state = "disabled" if busy else "normal"
+        for button in self._jog_buttons:
+            button.config(state=state)
+
+    def _jog_start(self, label, work):
+        """Run one jog at a time, unlocking only when the prober has replied.
+
+        Presses made while busy are DROPPED, not queued: the prober already
+        queues what it has not finished, so buffering on this side too would
+        just stack up travel that arrives long after the operator stopped
+        asking for it.
+        """
+        if self._jog_busy:
+            return
+        drv = self._drv()
+        if not drv:
+            return
+        self._jog_set_busy(True)
+
+        # Tick a visible elapsed counter while waiting. The buttons are locked
+        # until the prober acknowledges, which can take many seconds when it is
+        # working through queued moves - without this the pad just sits greyed
+        # out and looks like the GUI has hung, which is exactly how it was
+        # being read.
+        self._jog_done = False
+        started = time.monotonic()
+
+        def _tick():
+            if self._jog_done:
+                return
+            waited = time.monotonic() - started
+            self._jog_pos.set(f"{label} — waiting for prober… {waited:0.1f}s "
+                              f"(it executes queued moves in order)")
+            self.after(200, _tick)
+        _tick()
+
+        def _run():
+            try:
+                text = work(drv)
+            except Exception as e:
+                hint = ("  —  press ⚡ Resync Link"
+                        if "VI_ERROR_TMO" in str(e) or "Timeout" in str(e) else "")
+                text = f"blocked: {e}{hint}"
+                self._log(f"[JOG] {label} refused: {e}")
+            elapsed = time.monotonic() - started
+
+            def _finish(t=text, secs=elapsed):
+                self._jog_done = True
+                self._jog_pos.set(f"{t}   ({secs:0.1f}s)")
+                self._jog_set_busy(False)
+            self.after(0, _finish)
+        self._run_bg(_run)
+
+    def _jog_xy(self, sx, sy):
+        try:
+            step = abs(int(self._jog_xy_step.get()))
+        except ValueError:
+            messagebox.showerror("Jog", "XY step must be a whole number of dies.")
+            return
+        dx, dy = sx * step, sy * step
+
+        def work(drv):
+            ack = drv.move_relative_die(dx, dy)
+            pos = drv.get_xy_position()
+            self._log(f"[JOG] MD {dx:+d},{dy:+d} -> {pos}")
+            return f"?P = {pos}   [{ack}]"
+        self._jog_start(f"MD {dx:+d},{dy:+d}", work)
+
+    def _jog_z(self, direction):
+        try:
+            step = abs(int(self._jog_z_step.get()))
+        except ValueError:
+            messagebox.showerror("Jog", "Z step must be a whole number (0.1 mil units).")
+            return
+        dz = direction * step
+
+        def work(drv):
+            low, high = drv.z_limits
+            here = drv._parse_z(drv.query("?Z"))
+            # Z parks at Z0, outside the limits, and a relative move from there
+            # is refused because the target is still outside. Step into range
+            # first rather than reporting a failure the operator can do nothing
+            # obvious about.
+            if here is not None and not low <= here <= high:
+                entry = low if dz > 0 else high
+                ack = drv.move_z_absolute(entry)
+                z = drv.query("?Z")
+                self._log(f"[JOG] Z was parked at {here}, outside "
+                          f"[{low}..{high}] — moved to {z}")
+                return (f"?Z = {z}   [{ack}]   "
+                        f"(was parked outside the Z limits, moved into range)")
+            ack = drv.move_z_relative(dz)
+            z = drv.query("?Z")
+            self._log(f"[JOG] ZR {dz:+d} -> {z}")
+            return f"?Z = {z}   [{ack}]"
+        self._jog_start(f"ZR {dz:+d}", work)
+
+    def _jog_goto_origin(self):
+        """Walk the chuck back to die 0,0.
+
+        Steps there with MD rather than a single absolute move - see
+        goto_die(). Whether 0,0 is wafer centre or the load corner depends
+        entirely on where FIRST/FD last set the datum, so this goes to the
+        prober's current origin, not to a fixed physical place.
+        """
+        def work(drv):
+            here = drv.get_xy_position()
+            if drv._parse_die_position(here) == (0, 0):
+                return f"already at {here}"
+            result = drv.goto_die(0, 0)
+            self._log(f"[JOG] goto 0,0: {here} -> {result}")
+            return f"?P = {drv.get_xy_position()}   (walked from {here})"
+        self._jog_start("goto 0,0", work)
+
+    def _jog_show_position(self):
+        def work(drv):
+            return (f"?P = {drv.get_xy_position()}   "
+                    f"?Z = {drv.query('?Z')}   "
+                    f"{drv.decode_status(drv.get_prober_status())}")
+        self._jog_start("reading position", work)
 
     def _build_left(self, pane):
         outer = ttk.Frame(pane)
@@ -148,6 +515,8 @@ class EgProberDebugPanel(ttk.Frame):
             sc.yview_scroll(-1 if e.delta > 0 else 1, "units")
         sc.bind("<MouseWheel>", _wheel)
         left.bind("<MouseWheel>", _wheel)
+
+        self._build_jog(left)
 
         mf = ttk.LabelFrame(left, text="Chuck / Die Motion", padding=6)
         mf.pack(fill="x", padx=4, pady=(4, 6))
@@ -245,9 +614,11 @@ class EgProberDebugPanel(ttk.Frame):
                 return
             try:
                 status = drv.get_prober_status()
-                self._log(f"[PROBER] ?S -> {status}")
-                color = "red" if "error" in (status or "").lower() else "#22bb55"
-                self.after(0, lambda: self._set_status(f"Status: {status}", color))
+                plain = drv.decode_status(status)
+                self._log(f"[PROBER] ?S -> {status}    = {plain}")
+                bad = "unrecognised" in plain or "CONTACTING" in plain
+                self.after(0, lambda: self._set_status(plain,
+                                                       "#cc7700" if bad else "#22bb55"))
             except Exception as e:
                 self._log(f"[PROBER] Status error: {e}")
                 self.after(0, lambda: self._set_status(f"Status error: {e}", "red"))
@@ -268,8 +639,11 @@ class EgProberDebugPanel(ttk.Frame):
             try:
                 self._log(f"[PROBER] >> {label}  args={args}")
                 result = getattr(drv, method)(*args)
-                self._log(f"[PROBER] << {result}")
-                self.after(0, lambda: self._show_response(label, str(result)))
+                verdict = ("move complete"
+                           if str(result).strip().lower().startswith("mc")
+                           else str(result))
+                self._log(f"[PROBER] << {result}    = {verdict}")
+                self.after(0, lambda: self._show_response(label, verdict))
                 self.after(0, self._cmd_read_status)
             except Exception as e:
                 self._log(f"[PROBER] ERROR ({label}): {e}")

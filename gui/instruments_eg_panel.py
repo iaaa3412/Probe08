@@ -5,17 +5,44 @@ from tkinter import ttk
 
 from instrument_connection_panel import build_address_panel
 
-# (display name, instruments.yaml key) for every instrument the Electroglas
-# system talks to - see gui/app.py's init_hardware_eg() for the matching
-# driver-construction list this mirrors.
+# (display name, instruments.yaml key, ID queries, fitted) for every instrument
+# the Electroglas system talks to - see gui/app.py's init_hardware_eg() for the
+# matching driver-construction list this mirrors.
+#
+# ID queries: the right query differs per instrument, and getting it wrong makes
+# a healthy instrument look dead. Ping establishes presence by GPIB serial poll,
+# so these only decide what identification string gets displayed:
+#   - the 2001X is pre-SCPI and parses no ID query at all (an ADLINK bus scan
+#     reports it as "Unknown instrument (PA:29)"), so it gets none
+#   - the 3458A and 6634B are HP-era and answer "ID?", not "*IDN?"
+#     (confirmed in references/electroglasgpib.csv)
+#   - the switchboxes and the 2400 do answer "*IDN?"
+#
+# fitted: the EG probers are not all built the same way. This one has no
+# Keithley 2400 and no Agilent 6634B, so they are marked not-fitted - still
+# listed and still individually pingable, but skipped by Ping All and by
+# init_hardware_eg. Use Scan Bus to see what is actually on a given prober.
+#
+# Scan Bus on this prober reports:
+#   GPIB0::29::INSTR      Electroglas 2001X (answers no ID query)
+#   GPIB0::23::INSTR      HP 3458A
+#   GPIB0::9::0::INSTR    HEWLETT-PACKARD,E1300A - the VXI mainframe that holds
+#                         the switchbox cards; not driven directly
+#   GPIB0::9::15::INSTR   SWITCHBOX, card 1: E1343A (16-ch HV multiplexer)
+#   GPIB0::9::10::INSTR   SWITCHBOX, card 1: E1364A (16-ch form C switch)
+#   GPIB0::9::14::INSTR   SWITCHBOX, card 1: E1364A (16-ch form C switch)
+# The 5th field is a write probe. The 2001X answers a serial poll from its GPIB
+# interface chip while refusing every command byte, so a poll alone reports it
+# healthy when nothing would actually work. '?S' is a query and cannot move the
+# chuck, stage or handler - it just proves commands get through.
 _EG_INSTRUMENTS = [
-    ("Electroglas 2001X (Prober)", "prober_eg"),
-    ("Keithley 2400 (SMU)", "smu_eg"),
-    ("HP 3458A (DMM)", "dmm_eg"),
-    ("Agilent 6634B (Power Supply)", "power_supply_eg"),
-    ("HP Switchbox 1", "relay1_eg"),
-    ("HP Switchbox 2", "relay2_eg"),
-    ("HP Switchbox 3", "relay3_eg"),
+    ("Electroglas 2001X (Prober)", "prober_eg", (), True, "?S"),
+    ("Keithley 2400 (SMU)", "smu_eg", ("*IDN?",), False, None),
+    ("HP 3458A (DMM)", "dmm_eg", ("ID?",), True, None),
+    ("Agilent 6634B (Power Supply)", "power_supply_eg", ("ID?",), False, None),
+    ("HP Switchbox 1", "relay1_eg", ("*IDN?",), True, None),
+    ("HP Switchbox 2", "relay2_eg", ("*IDN?",), True, None),
+    ("HP Switchbox 3", "relay3_eg", ("*IDN?",), True, None),
 ]
 
 
