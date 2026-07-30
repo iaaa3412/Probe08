@@ -64,14 +64,15 @@ class NanoZPanel(ttk.Frame):
         self._fail_count = 0
         self._spl_path: str | None = None
         self._env_path: str | None = None
-        self._latest_spl: dict[str, dict] = {}
+        self._latest_spl: dict[tuple[str, str], dict] = {}
         self._latest_env: dict[str, dict] = {}
-        self._spl_history: dict[str, "collections.deque"] = {}
+        self._spl_history: dict[tuple[str, str], "collections.deque"] = {}
         self._env_history: dict[str, "collections.deque"] = {}
 
         self._build_ui()
         self.after(50, self._check_queue)
         self.after(300, self._refresh_charts_loop)
+        self.after(1000, self._auto_refresh_board_status)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
@@ -133,7 +134,7 @@ class NanoZPanel(ttk.Frame):
         cols = ("port", "sn", "fw", "sig", "use", "status", "spl", "env")
         self._board_tree = ttk.Treeview(boards_lf, columns=cols, show="headings", height=6)
         heads = [("port", "Port", 70), ("sn", "S/N", 100), ("fw", "Firmware", 80),
-                 ("sig", "Signature", 70), ("use", "Use", 45), ("status", "Status", 100),
+                 ("sig", "Signature", 70), ("use", "Use", 45), ("status", "Status", 280),
                  ("spl", "SPL#", 55), ("env", "ENV#", 55)]
         for cid, text, width in heads:
             self._board_tree.heading(cid, text=text)
@@ -291,6 +292,14 @@ class NanoZPanel(ttk.Frame):
         self._console_board_cb.pack(side="left", padx=(4, 12))
         self._console_board_cb.bind("<<ComboboxSelected>>",
                                     lambda _e: self._refresh_console_reading())
+        ttk.Label(pick, text="Chip:").pack(side="left")
+        self.console_chip_var = tk.StringVar(value="0")
+        self._console_chip_cb = ttk.Combobox(
+            pick, textvariable=self.console_chip_var, state="readonly", width=3,
+            values=("0", "1"))
+        self._console_chip_cb.pack(side="left", padx=(4, 12))
+        self._console_chip_cb.bind("<<ComboboxSelected>>",
+                                   lambda _e: self._refresh_console_reading())
 
         cmds = ttk.LabelFrame(
             top, text="Commands")
@@ -372,7 +381,13 @@ class NanoZPanel(ttk.Frame):
             pick, textvariable=self.console_board_var, state="readonly", width=14)
         self._chart_board_cb.pack(side="left", padx=(4, 12))
         self._chart_board_cb.bind("<<ComboboxSelected>>", lambda _e: self._redraw_charts())
-        ttk.Label(pick, text="active board",
+        ttk.Label(pick, text="Chip:").pack(side="left")
+        self._chart_chip_cb = ttk.Combobox(
+            pick, textvariable=self.console_chip_var, state="readonly", width=3,
+            values=("0", "1"))
+        self._chart_chip_cb.pack(side="left", padx=(4, 12))
+        self._chart_chip_cb.bind("<<ComboboxSelected>>", lambda _e: self._redraw_charts())
+        ttk.Label(pick, text="SPL is per-chip; ENV is board-wide",
                  foreground="#6b7280", wraplength=480, justify="left").pack(side="left")
 
         if _MPL:
@@ -452,7 +467,8 @@ class NanoZPanel(ttk.Frame):
         if not _MPL:
             return
         port = self.console_board_var.get()
-        spl_hist = list(self._spl_history.get(port, ()))
+        chip = self.console_chip_var.get()
+        spl_hist = list(self._spl_history.get((port, chip), ()))
         env_hist = list(self._env_history.get(port, ()))
 
         self._chart_ax_v.clear()
@@ -488,7 +504,7 @@ class NanoZPanel(ttk.Frame):
         self._chart_ax_v.set_title("Heater Voltage (mV) — SPL", fontsize=9)
         self._chart_ax_i.set_title("Sensor Current (mA) — SPL", fontsize=9)
         self._chart_ax_t.set_title("Temperature (°C) — ENV", fontsize=9)
-        self._chart_ax_t.set_xlabel(f"time (s, board {port or '—'})")
+        self._chart_ax_t.set_xlabel(f"time (s, board {port or '—'} chip {chip or '—'})")
         self._chart_canvas.draw_idle()
 
     _LOCKABLE_WIDGETS = ("_cycle_entry", "_duration_entry", "_btn_discover",
@@ -541,7 +557,7 @@ class NanoZPanel(ttk.Frame):
             self._boards[ident.port] = board
             iid = self._board_tree.insert("", "end", values=(
                 ident.port, ident.serial_number, ident.firmware, ident.signature,
-                "✓", "discovered", 0, 0))
+                "✓", self._board_status_text(board), 0, 0))
             self._board_rows[ident.port] = iid
         self._log_main(f"Discovery complete — {len(found)} board(s) found, "
                        f"{len(self._boards)} total known.")
@@ -564,7 +580,7 @@ class NanoZPanel(ttk.Frame):
         self._refresh_active_boards_label()
 
     def _connect_boards(self):
-        targets = [b for b in self._boards.values() if b.selected and not b.is_running]
+        targets = [b for b in self._boards.values() if b.selected and b.state != "connected"]
         if not targets:
             self._log_main("Connect Selected: nothing to connect (discover boards first, "
                            "or everything selected is already connected).")
@@ -573,15 +589,19 @@ class NanoZPanel(ttk.Frame):
 
     def _connect_boards_thread(self, targets: list):
         for board in targets:
+            was_error = board.state == "error"
             try:
-                board.start()
-                self.after(0, lambda p=board.port: self._set_board_status(p, "connected"))
-                self.after(0, lambda p=board.port: self._log(f"{p}: connected, reader running"))
+                board.reconnect() if was_error else board.start()
+                verb = "reconnected" if was_error else "connected"
+                self.after(0, lambda p=board.port, b=board: self._set_board_status(
+                    p, self._board_status_text(b)))
+                self.after(0, lambda p=board.port, v=verb: self._log(f"{p}: {v}, reader running"))
             except Exception as e:
-                self.after(0, lambda p=board.port, e=e: self._set_board_status(p, "ERROR"))
+                self.after(0, lambda p=board.port, e=e: self._set_board_status(
+                    p, self._error_status_text(e)))
                 self.after(0, lambda p=board.port, e=e: self._log(f"{p}: connect failed — {e}"))
         self.after(0, lambda: self._log_main(
-            f"{sum(1 for b in targets if b.is_running)}/{len(targets)} board(s) connected."))
+            f"{sum(1 for b in targets if b.state == 'connected')}/{len(targets)} board(s) connected."))
         self.after(0, self._refresh_active_boards_label)
 
     def _disconnect_boards(self):
@@ -597,7 +617,8 @@ class NanoZPanel(ttk.Frame):
     def _disconnect_boards_thread(self, targets: list):
         for board in targets:
             board.stop()
-            self.after(0, lambda p=board.port: self._set_board_status(p, "discovered"))
+            self.after(0, lambda p=board.port, b=board: self._set_board_status(
+                p, self._board_status_text(b)))
         self.after(0, lambda: self._log_main(
             f"{len(targets)} board(s) disconnected (ports closed)."))
         self.after(0, self._refresh_active_boards_label)
@@ -618,27 +639,36 @@ class NanoZPanel(ttk.Frame):
         vals[6], vals[7] = spl, env
         self._board_tree.item(iid, values=vals)
 
-    def _refresh_board_status(self):
-        connected = errored = idle = 0
+    @staticmethod
+    def _error_status_text(err) -> str:
+        return f"⚠ error: {err}"[:80]
+
+    def _board_status_text(self, board: "nzb.NanoZBoard") -> str:
+        state = board.state
+        if state == "error":
+            return self._error_status_text(board.last_error)
+        if state == "connected":
+            return "✅ connected"
+        return "— not connected"
+
+    def _refresh_board_status_quiet(self):
         for port, board in self._boards.items():
-            last_error = getattr(board, "last_error", "")
-            if board.is_running and last_error:
-                status = "ERROR"
-                errored += 1
-            elif board.is_running:
-                status = "connected"
-                connected += 1
-            else:
-                status = "discovered"
-                idle += 1
-            self._set_board_status(port, status)
-            if status == "ERROR":
-                self._log(f"{port}: last error — {last_error}")
+            self._set_board_status(port, self._board_status_text(board))
+
+    def _auto_refresh_board_status(self):
+        self._refresh_board_status_quiet()
+        self.after(1000, self._auto_refresh_board_status)
+
+    def _refresh_board_status(self):
+        self._refresh_board_status_quiet()
+        connected = sum(1 for b in self._boards.values() if b.state == "connected")
+        errored = sum(1 for b in self._boards.values() if b.state == "error")
+        idle = len(self._boards) - connected - errored
         self._log_main(f"Refresh Status — {connected} connected, {errored} error(s), "
                        f"{idle} not connected ({len(self._boards)} known).")
 
     def _refresh_active_boards_label(self):
-        active = [b for b in self._boards.values() if b.selected and b.is_running]
+        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
         if not active:
             self.active_boards_var.set("No boards connected yet — see the Setup tab.")
         else:
@@ -749,7 +779,8 @@ class NanoZPanel(ttk.Frame):
 
     def _refresh_console_reading(self):
         port = self.console_board_var.get()
-        spl_lines = self._format_reading_lines(self._latest_spl.get(port))
+        chip = self.console_chip_var.get()
+        spl_lines = self._format_reading_lines(self._latest_spl.get((port, chip)))
         env_lines = self._format_reading_lines(self._latest_env.get(port))
         for widget, lines in ((self.console_spl_text, spl_lines),
                               (self.console_env_text, env_lines)):
@@ -785,13 +816,15 @@ class NanoZPanel(ttk.Frame):
         port = item.get("port")
         board = self._boards.get(port)
         if kind == "spl":
+            chip = str(item.get("header_chip", ""))
+            key = (port, chip)
             self._spl_total += 1
             self._touchdown_packets += 1
-            if not item.get("checksum_ok", True) or "parse_error" in item:
+            if "parse_error" in item:
                 self._touchdown_errors += 1
-            self._latest_spl[port] = item
+            self._latest_spl[key] = item
             self._spl_history.setdefault(
-                port, collections.deque(maxlen=self._CHART_HISTORY_LEN)).append(item)
+                key, collections.deque(maxlen=self._CHART_HISTORY_LEN)).append(item)
             if self._spl_path:
                 row = {k: v for k, v in item.items() if k != "kind"}
                 try:
@@ -800,12 +833,12 @@ class NanoZPanel(ttk.Frame):
                     self._log(f"SPL CSV write error: {e}")
             if board:
                 self._set_board_counts(port, board.spl_count, board.env_count)
-            if port == self.console_board_var.get():
+            if port == self.console_board_var.get() and chip == self.console_chip_var.get():
                 self._refresh_console_reading()
         elif kind == "env":
             self._env_total += 1
             self._touchdown_packets += 1
-            if not item.get("checksum_ok", True) or "parse_error" in item:
+            if "parse_error" in item:
                 self._touchdown_errors += 1
             self._latest_env[port] = item
             self._env_history.setdefault(
@@ -833,7 +866,7 @@ class NanoZPanel(ttk.Frame):
         if not prober or not prober.inst:
             messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
             return
-        active = [b for b in self._boards.values() if b.selected and b.is_running]
+        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
                                  "🔌 Connect Selected at least one NanoZ board first.")
@@ -962,7 +995,7 @@ class NanoZPanel(ttk.Frame):
     def _manual_measure(self):
         if self._run_guard("Measure"):
             return
-        active = [b for b in self._boards.values() if b.selected and b.is_running]
+        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
                                  "🔌 Connect Selected at least one NanoZ board first.")
@@ -998,7 +1031,7 @@ class NanoZPanel(ttk.Frame):
     def _test_active_boards(self):
         if self._run_guard("Run Cycle"):
             return
-        active = [b for b in self._boards.values() if b.selected and b.is_running]
+        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
                                  "🔌 Connect Selected at least one NanoZ board first.")
@@ -1016,7 +1049,7 @@ class NanoZPanel(ttk.Frame):
     def _pause_active_boards(self):
         if self._run_guard("Pause"):
             return
-        active = [b for b in self._boards.values() if b.selected and b.is_running]
+        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
         if not active:
             self._log_main("Pause (Active Boards): nothing connected.")
             return
@@ -1083,7 +1116,7 @@ class NanoZPanel(ttk.Frame):
         if not prober or not prober.inst:
             messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
             return
-        active = [b for b in self._boards.values() if b.selected and b.is_running]
+        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
                                  "🔌 Connect Selected at least one NanoZ board first.")

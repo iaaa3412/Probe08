@@ -20,6 +20,7 @@ VER_RE = re.compile(r"SW:(V[^\s]+).*?S/N:\s*([0-9A-Fa-f]+-[0-9A-Fa-f]+)", re.S)
 WHOAMI_RE = re.compile(r"Iam\s+([0-9A-Fa-f]+)", re.I)
 ENV_HEADER_RE = re.compile(rb"#env(\d)!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s*$", re.I)
 SPL_HEADER_RE = re.compile(rb"#spl!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$", re.I)
+SEQ_HEADER_RE = re.compile(rb"#seq!\s+(-?\d+)\s+(-?\d+)\s*$", re.I)
 
 
 class NanoZError(RuntimeError):
@@ -45,13 +46,6 @@ class BoardIdentity:
     raw_ver: str
     raw_whoami: str
     usb_id: str
-
-
-def xor_checksum(data: bytes) -> int:
-    cs = 0
-    for b in data:
-        cs ^= b
-    return cs
 
 
 def now_stamp() -> str:
@@ -116,14 +110,16 @@ def read_text_for(ser: serial.Serial, seconds: float) -> str:
 
 
 def identify_on_port(port: str) -> Optional[BoardIdentity]:
+    ser = open_serial(port)
     try:
-        with open_serial(port) as ser:
-            send_ascii(ser, "ver")
-            raw_ver = read_text_for(ser, 0.75)
-            send_ascii(ser, "whoami")
-            raw_whoami = read_text_for(ser, 0.50)
+        send_ascii(ser, "ver")
+        raw_ver = read_text_for(ser, 0.75)
+        send_ascii(ser, "whoami")
+        raw_whoami = read_text_for(ser, 0.50)
     except Exception:
         return None
+    finally:
+        ser.close()
 
     m = VER_RE.search(raw_ver)
     if not m:
@@ -157,26 +153,31 @@ def discover_boards(ports: Optional[list[str]] = None,
     for port in candidates:
         if log:
             log(f"Probing {port}...")
-        ident = identify_on_port(port)
+        try:
+            ident = identify_on_port(port)
+        except Exception as e:
+            if log:
+                log(f"  -> could not open ({e}) - in use by another program?")
+            continue
         if ident:
             found.append(ident)
             if log:
                 log(f"  -> NanoZ board found: S/N {ident.serial_number}  FW {ident.firmware}")
         elif log:
-            log(f"  -> no response")
+            log(f"  -> no response (not a NanoZ board, or powered off)")
     return found
 
 
 def read_line_bytes(ser: serial.Serial, buffer: bytearray, timeout_s: float = 2.0) -> Optional[bytes]:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        for sep in (b"\n", b"\r"):
-            idx = buffer.find(sep)
-            if idx >= 0:
-                line = bytes(buffer[:idx]).strip()
-                del buffer[: idx + 1]
-                if line:
-                    return line
+        idx = buffer.find(b"\n")
+        if idx >= 0:
+            line = bytes(buffer[:idx]).strip(b"\r\n ")
+            del buffer[: idx + 1]
+            if line:
+                return line
+            continue
         chunk = ser.read(4096)
         if chunk:
             buffer.extend(chunk)
@@ -302,11 +303,20 @@ class NanoZBoard:
     def is_running(self) -> bool:
         return self._running
 
+    @property
+    def state(self) -> str:
+        if self._running and self.last_error:
+            return "error"
+        if self._running:
+            return "connected"
+        return "not_connected"
+
     def connect(self):
         if self.ser is None:
             self.ser = open_serial(self.port)
 
     def start(self):
+        self.last_error = ""
         self.connect()
         try:
             send_ascii(self.ser, "pause")
@@ -317,6 +327,10 @@ class NanoZBoard:
         self._running = True
         self._thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread.start()
+
+    def reconnect(self):
+        self.stop()
+        self.start()
 
     def run_cycle(self, cycle: int):
         if self.ser:
@@ -357,12 +371,9 @@ class NanoZBoard:
                 continue
             if line is None:
                 continue
-            if not line.startswith(b"#"):
-                text = line.decode(errors="replace")
-                self.out_queue.put({
-                    "kind": "text", "board_sn": self.identity.serial_number,
-                    "port": self.port, "text": text, "host_timestamp": now_stamp(),
-                })
+            self.last_error = ""
+            if not line.startswith(b"#") or line.startswith(b"##"):
+                self._emit_text(line)
                 continue
             sm = SPL_HEADER_RE.match(line)
             if sm:
@@ -372,10 +383,20 @@ class NanoZBoard:
             if em:
                 self._handle_env(em)
                 continue
+            if SEQ_HEADER_RE.match(line):
+                self._emit_text(line)
+                continue
             self.out_queue.put({
                 "kind": "unrecognized", "board_sn": self.identity.serial_number,
                 "port": self.port, "raw": line, "host_timestamp": now_stamp(),
             })
+
+    def _emit_text(self, line: bytes):
+        self.out_queue.put({
+            "kind": "text", "board_sn": self.identity.serial_number,
+            "port": self.port, "text": line.decode(errors="replace"),
+            "host_timestamp": now_stamp(),
+        })
 
     def _handle_spl(self, m):
         length_s, cs_s, chip_s, time_s, bfr_s = m.groups()
@@ -387,7 +408,6 @@ class NanoZBoard:
         except NanoZError as e:
             self.last_error = str(e)
             return
-        cs_ok = xor_checksum(data) == expected_cs
         try:
             parsed = parse_spl_data(data)
         except Exception as e:
@@ -400,7 +420,7 @@ class NanoZBoard:
             "die_row": row, "die_col": col,
             "header_chip": header_chip, "header_time_ms": header_time,
             "header_bfr": header_bfr, "len": length,
-            "checksum_expected": expected_cs, "checksum_ok": cs_ok,
+            "checksum_expected": expected_cs,
             **parsed,
         })
 
@@ -414,7 +434,6 @@ class NanoZBoard:
         except NanoZError as e:
             self.last_error = str(e)
             return
-        cs_ok = xor_checksum(data) == expected_cs
         try:
             parsed = parse_env_data(data)
         except Exception as e:
@@ -426,6 +445,6 @@ class NanoZBoard:
             "board_sn": self.identity.serial_number, "port": self.port,
             "die_row": row, "die_col": col,
             "env_x": env_x, "header_time_ms": header_time, "header_bfr": header_bfr,
-            "len": length, "checksum_expected": expected_cs, "checksum_ok": cs_ok,
+            "len": length, "checksum_expected": expected_cs,
             **parsed,
         })
