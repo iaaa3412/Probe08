@@ -38,8 +38,9 @@ def _pz_bind(canvas, on_reset):
 ATA_KEY_FILES = {
     "ata_wafer_map_gds.csv":       ("Die map & coordinates (GDS-derived)", "shared"),
     "ata_wafer_map_accretech.csv": ("Die map & coordinates (real prober extraction)", "accretech"),
-    "ata_wafer_map_pma.csv":       ("Die/shot map (PMA workbook extraction)", "shared"),
-    "ata_wafer_map_merged.csv":    ("Accretech + PMA merged map (multi-die-per-shot)", "accretech"),
+    "ata_wafer_map_pma.csv":       ("Die/shot map (PMA workbook extraction)", "electroglas"),
+    "ata_wafer_map_merged.csv":    ("Accretech + PMA merged map (multi-die-per-shot)", "electroglas"),
+    "ata_wafer_map_selected.csv":  ("Manually selected test dies (Accretech Run tab)", "accretech"),
     "ata_wafer_map_electroglas.csv": ("Die/touchdown map (PMA Process extraction)", "electroglas"),
     "ata_metadata.csv":         ("Wafer / lot metadata", "shared"),
     "ata_sites.csv":            ("Probe sites", "shared"),

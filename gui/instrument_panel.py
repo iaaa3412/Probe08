@@ -349,8 +349,8 @@ class MainLayout(ttk.Frame):
         self._tab_probe_card(main_nb)
         if self._system == "accretech":
             self._tab_accr_wafer(main_nb)
-        self._tab_pma_wafer(main_nb)
         if self._system == "electroglas":
+            self._tab_pma_wafer(main_nb)
             self._tab_pma_process(main_nb)
             self._tab_recipe_gen(main_nb)
 
@@ -1329,7 +1329,9 @@ class MainLayout(ttk.Frame):
         accr_wafer = getattr(self, "accr_wafer", None)
         if accr_wafer is not None:
             accr_wafer.load_from_ata(folder_path)
-        self.pma_wafer.load_from_ata(folder_path)
+        pma_wafer = getattr(self, "pma_wafer", None)
+        if pma_wafer is not None:
+            pma_wafer.load_from_ata(folder_path)
         self._exec2_map_folder = folder_path
         self._exec2_map_source_var.set("Accretech" if self._system == "accretech" else "GDS")
         self._exec2_draw_wafer_map(quiet_if_missing=True)
@@ -1835,7 +1837,7 @@ class MainLayout(ttk.Frame):
         tab.columnconfigure(0, weight=1)
         self.pma_wafer = PmaWaferPanel(
             tab, controller=self.controller, get_folder=lambda: self._ata_folder,
-            main_layout=self if self._system == "accretech" else None)
+            main_layout=None)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _tab_pma_process(self, nb):
@@ -1912,9 +1914,14 @@ class MainLayout(ttk.Frame):
         self._exec2_test_btn = ttk.Button(
             ctrl, text="▶  Test Die", command=self._exec2_start_test_die)
         self._exec2_test_btn.pack(side="left", padx=2, pady=5)
-        self._exec2_test_pma_btn = ttk.Button(
-            ctrl, text="▶  Test PMA", command=self._exec2_start_test_pma)
-        self._exec2_test_pma_btn.pack(side="left", padx=2, pady=5)
+        if self._system == "accretech":
+            self._exec2_test_selected_btn = ttk.Button(
+                ctrl, text="▶  Test Selected", command=self._exec2_start_test_selected)
+            self._exec2_test_selected_btn.pack(side="left", padx=2, pady=5)
+        else:
+            self._exec2_test_pma_btn = ttk.Button(
+                ctrl, text="▶  Test PMA", command=self._exec2_start_test_pma)
+            self._exec2_test_pma_btn.pack(side="left", padx=2, pady=5)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
@@ -2032,8 +2039,17 @@ class MainLayout(ttk.Frame):
                   side="left", padx=8)
 
         ttk.Separator(map_bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(map_bar, text="🔀 Compare/Merge PMA…",
-                   command=self._exec2_open_pma_compare_dialog).pack(side="left")
+        if self._system == "accretech":
+            ttk.Button(map_bar, text="💾 Save Selected Map",
+                       command=self._exec2_save_selected_map).pack(side="left")
+            ttk.Button(map_bar, text="📥 Load Selected Map",
+                       command=lambda: self._exec2_load_selected_map(
+                           quiet_if_missing=False)).pack(side="left", padx=(6, 0))
+            ttk.Button(map_bar, text="☑ Select All",
+                       command=self._exec2_select_all_sites).pack(side="left", padx=(6, 0))
+        else:
+            ttk.Button(map_bar, text="🔀 Compare/Merge PMA…",
+                       command=self._exec2_open_pma_compare_dialog).pack(side="left")
 
         self._exec2_wafer_map = WaferMapPanel(map_lf)
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
@@ -2094,6 +2110,22 @@ class MainLayout(ttk.Frame):
             f"{name}  ({n} dies)" if n else f"{name} — {filename} not found")
         if n or not quiet_if_missing:
             self._exec2_log(f"[RUN] Wafer map loaded from '{name}/{filename}' — {n} dies")
+        if self._system == "accretech":
+            self._sync_results_wafer_map()
+            self._exec2_load_selected_map(quiet_if_missing=True)
+
+    def _sync_results_wafer_map(self):
+        rwm = getattr(self, "_results_wafer_map", None)
+        if rwm is None:
+            return
+        dies = self._exec2_wafer_map._last_dies
+        if dies:
+            rwm._last_dies = dies
+            rwm._draw_from_die_list(dies)
+        else:
+            rwm.canvas.delete("all")
+            rwm.dies.clear()
+            rwm.canvas.create_text(150, 100, text="No wafer map loaded yet.", fill="gray")
 
     def _exec2_set_state(self, text: str, color: str):
         self._exec2_state_lbl.config(text=text, fg=color)
@@ -2182,11 +2214,19 @@ class MainLayout(ttk.Frame):
         return ok
 
     def _exec2_update_die_color(self, row: int, col: int, ok: bool):
+        status = "PASS" if ok else "FAIL"
         try:
             if (row, col) in self._exec2_wafer_map.dies:
-                self._exec2_wafer_map.update_die(row, col, "PASS" if ok else "FAIL")
+                self._exec2_wafer_map.update_die(row, col, status)
         except Exception:
             pass
+        rwm = getattr(self, "_results_wafer_map", None)
+        if rwm is not None:
+            try:
+                if (row, col) in rwm.dies:
+                    rwm.update_die(row, col, status)
+            except Exception:
+                pass
 
 
     def _exec2_switch_panels(self):
@@ -2348,6 +2388,84 @@ class MainLayout(ttk.Frame):
         self._exec2_log("[RUN] Randomized test sites: "
                         + ", ".join(f"R{r}C{c}" for r, c in picks))
 
+    def _exec2_select_all_sites(self):
+        dies = self._exec2_wafer_map._last_dies
+        if not dies:
+            self._exec2_log("[RUN] No wafer map loaded — load one before selecting dies.")
+            return
+        picks = [(d["row"], d["col"]) for d in dies]
+        self._exec2_wafer_map.set_picked(picks)
+        self._exec2_on_sites_changed(picks)
+        self._exec2_log(f"[RUN] Selected all {len(picks)} die(s) — "
+                        "click any die to deselect it.")
+
+    _SELECTED_MAP_FILENAME = "ata_wafer_map_selected.csv"
+
+    def _exec2_selected_map_path(self):
+        return (os.path.join(self._ata_folder, self._SELECTED_MAP_FILENAME)
+                if self._ata_folder else None)
+
+    def _exec2_save_selected_map(self):
+        from tkinter import messagebox
+        import csv
+        if not self._ata_folder:
+            messagebox.showerror(
+                "No ATA Folder",
+                "No ATA folder is loaded — use 📁 Load ATA Folder on the top "
+                "toolbar first.")
+            return
+        picks = self._exec2_wafer_map.get_picked()
+        if not picks:
+            messagebox.showinfo("No Dies Selected",
+                                "Click dies on the map to select them first.")
+            return
+        path = self._exec2_selected_map_path()
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            wr = csv.writer(f)
+            wr.writerow(["row", "col", "label"])
+            for r, c in picks:
+                wr.writerow([r, c, ""])
+        self._exec2_log(f"[RUN] Saved {len(picks)} selected die(s) → {path}")
+
+    def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
+        import csv
+        path = self._exec2_selected_map_path()
+        if not path or not os.path.exists(path):
+            if not quiet_if_missing:
+                self._exec2_log("[RUN] No saved Selected Map for this ATA folder yet — "
+                                "click dies on the map, then 💾 Save Selected Map.")
+            return []
+        picks = []
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    picks.append((int(row["row"]), int(row["col"])))
+                except (KeyError, ValueError, TypeError):
+                    continue
+        self._exec2_wafer_map.set_picked(picks)
+        self._exec2_on_sites_changed(picks)
+        if picks:
+            self._exec2_log(f"[RUN] Loaded {len(picks)} selected die(s) from {path}")
+        elif not quiet_if_missing:
+            self._exec2_log(f"[RUN] {path} has no valid rows.")
+        return picks
+
+    def _exec2_start_test_selected(self):
+        if self._exec2_running:
+            self._exec2_log("[RUN] A run is already active — stop it first.")
+            return
+        sites = self._exec2_wafer_map.get_picked()
+        if not sites:
+            sites = self._exec2_load_selected_map(quiet_if_missing=True)
+        if not sites:
+            self._exec2_log(
+                "[RUN] Test Selected: no dies selected — click dies on the map "
+                "(or 📥 Load Selected Map) before running.")
+            return
+        self._exec2_log(f"[RUN] ▶ Test Selected — {len(sites)} selected die(s): "
+                        + ", ".join(f"R{r}C{c}" for r, c in sites))
+        self._exec2_start_test_die()
 
     def _exec2_pma_accretech_rc(self):
         accr_wafer = getattr(self, "accr_wafer", None)
@@ -2774,6 +2892,7 @@ class MainLayout(ttk.Frame):
 
         pma_shot = getattr(self, "_exec2_current_pma_shot", None)
         pma_die_id = (pma_shot or {}).get("raw_text") or ""
+        cur_row, cur_col = self._exec2_current_rc or (None, None)
         last_set_voltage_by_ch = {}
 
         overall_ok = True
@@ -2882,7 +3001,8 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    R = {r:.4g} Ω  (via {instrument}){avg_txt}")
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{r:.6g}",
-                                       unit="ohm", connection=conn_str, instrument=instrument)
+                                       unit="ohm", connection=conn_str, instrument=instrument,
+                                       die_row=cur_row, die_col=cur_col)
                     last_reading = (name, r, "ohm")
                     readings_by_name[name] = (r, "ohm")
                 elif t == "voltage" and mode == "measure":
@@ -2902,7 +3022,8 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    V = {v:.4g} V  (via {instrument}){avg_txt}")
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{v:.6g}",
-                                       unit="V", connection=conn_str, instrument=instrument)
+                                       unit="V", connection=conn_str, instrument=instrument,
+                                       die_row=cur_row, die_col=cur_col)
                     last_reading = (name, v, "V")
                     readings_by_name[name] = (v, "V")
                 elif t == "voltage":
@@ -2945,7 +3066,8 @@ class MainLayout(ttk.Frame):
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{actual_current:.6g}",
                                        unit="A", voltage=actual_voltage,
-                                       connection=conn_str, instrument=instrument)
+                                       connection=conn_str, instrument=instrument,
+                                       die_row=cur_row, die_col=cur_col)
                     last_reading = (name, actual_current, "A")
                     readings_by_name[name] = (actual_current, "A")
                 elif t == "current":
@@ -2987,6 +3109,7 @@ class MainLayout(ttk.Frame):
                         step=name, type=t, mode=mode, value=f"{i_a:.6g}", unit="A",
                         die_id=pma_die_id or None,
                         switch=int(die_slot_m.group(1)) if die_slot_m else None,
+                        die_row=cur_row, die_col=cur_col,
                         set_voltage=set_voltage, voltage=actual_voltage,
                         connection=conn_str, instrument=instrument)
                     last_reading = (name, i_a, "A")
@@ -3013,13 +3136,14 @@ class MainLayout(ttk.Frame):
 
     def record_result(self, timestamp, recipe, die, step, type, mode, value, unit,
                       die_id=None, switch=None, set_voltage=None, voltage=None,
-                      connection=None, instrument=None):
+                      connection=None, instrument=None, die_row=None, die_col=None):
         row = {"timestamp": timestamp, "recipe": recipe, "die": die, "step": step,
                "type": type, "mode": mode, "value": value, "unit": unit,
                "die_id": die_id or "", "switch": switch if switch is not None else "",
                "set_voltage": set_voltage if set_voltage is not None else "",
                "voltage": voltage if voltage is not None else "",
-               "connection": connection or "", "instrument": instrument or ""}
+               "connection": connection or "", "instrument": instrument or "",
+               "row": die_row, "col": die_col}
         self.controller.results_data.append(row)
         if hasattr(self, "_results_tree"):
             def _ui():
@@ -3254,19 +3378,101 @@ class MainLayout(ttk.Frame):
         ttk.Button(results_lf, text="Clear Results", command=self.clear_results).grid(
             row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 6))
 
-        stats_frame = ttk.LabelFrame(tab, text="Run Statistics")
-        stats_frame.pack(fill="x", padx=15, pady=(0, 15))
+        if self._system == "accretech":
+            self._build_results_wafer_map(tab)
+        else:
+            stats_frame = ttk.LabelFrame(tab, text="Run Statistics")
+            stats_frame.pack(fill="x", padx=15, pady=(0, 15))
 
-        self.results_canvas = tk.Canvas(
-            stats_frame, width=300, height=300, bg="#f0f0f0", highlightthickness=0
-        )
-        self.results_canvas.pack(pady=15)
+            self.results_canvas = tk.Canvas(
+                stats_frame, width=300, height=300, bg="#f0f0f0", highlightthickness=0
+            )
+            self.results_canvas.pack(pady=15)
+            self.lbl_results_large = ttk.Label(
+                stats_frame,
+                text="Pass: 0   |   Fail: 0   |   Untested: 0",
+                font=("Arial", 14, "bold")
+            )
+            self.lbl_results_large.pack(pady=8)
+
+    def _build_results_wafer_map(self, tab):
+        map_frame = ttk.LabelFrame(tab, text="Wafer Map — Pass / Fail")
+        map_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+        map_frame.rowconfigure(1, weight=1)
+        map_frame.columnconfigure(0, weight=2)
+        map_frame.columnconfigure(1, weight=1)
+
         self.lbl_results_large = ttk.Label(
-            stats_frame,
-            text="Pass: 0   |   Fail: 0   |   Untested: 0",
-            font=("Arial", 14, "bold")
-        )
-        self.lbl_results_large.pack(pady=8)
+            map_frame, text="Total Passed: 0     |     Total Failed: 0     |     Untested: 0",
+            font=("Arial", 11, "bold"))
+        self.lbl_results_large.grid(row=0, column=0, columnspan=2, sticky="w",
+                                    padx=8, pady=(8, 4))
+
+        self._results_wafer_map = WaferMapPanel(map_frame)
+        self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
+        self._results_wafer_map.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
+
+        detail_lf = ttk.LabelFrame(map_frame, text="Selected Die")
+        detail_lf.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
+        detail_lf.rowconfigure(1, weight=1)
+        detail_lf.columnconfigure(0, weight=1)
+
+        self._results_die_var = tk.StringVar(
+            value="Click a die on the map to see its measurements.")
+        ttk.Label(detail_lf, textvariable=self._results_die_var, wraplength=220,
+                 justify="left").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+
+        dcols = ("step", "type", "value", "unit")
+        self._results_die_tree = ttk.Treeview(detail_lf, columns=dcols, show="headings", height=10)
+        for cid, text, width in (("step", "Step", 90), ("type", "Type", 60),
+                                 ("value", "Value", 70), ("unit", "Unit", 40)):
+            self._results_die_tree.heading(cid, text=text)
+            self._results_die_tree.column(cid, width=width, anchor="w" if cid == "step" else "center")
+        self._results_die_tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        ddsb = ttk.Scrollbar(detail_lf, orient="vertical", command=self._results_die_tree.yview)
+        ddsb.grid(row=1, column=1, sticky="ns")
+        self._results_die_tree.configure(yscrollcommand=ddsb.set)
+
+        self._results_selected_rc = None
+        self._sync_results_wafer_map()
+
+    def _on_results_map_click(self, event):
+        wm = self._results_wafer_map
+        hit = wm.canvas.find_closest(event.x, event.y)
+        if not hit:
+            return
+        rc = next((k for k, v in wm.dies.items() if v == hit[0]), None)
+        if rc is None:
+            return
+        self._results_show_die(rc)
+
+    def _results_show_die(self, rc):
+        wm = getattr(self, "_results_wafer_map", None)
+        if wm is None:
+            return
+        prev = self._results_selected_rc
+        if prev is not None and prev in wm.dies:
+            try:
+                wm.canvas.itemconfig(wm.dies[prev], width=1)
+            except Exception:
+                pass
+        self._results_selected_rc = rc
+        if rc in wm.dies:
+            try:
+                wm.canvas.itemconfig(wm.dies[rc], width=3)
+            except Exception:
+                pass
+        row, col = rc
+        matches = [r for r in self.controller.results_data
+                  if r.get("row") == row and r.get("col") == col]
+        self._results_die_var.set(
+            f"Die R{row}C{col} — {len(matches)} reading(s)" if matches
+            else f"Die R{row}C{col} — no measurements recorded yet.")
+        for iid in self._results_die_tree.get_children():
+            self._results_die_tree.delete(iid)
+        for r in matches:
+            self._results_die_tree.insert("", "end", values=(
+                r.get("step"), r.get("type"), r.get("value"), r.get("unit")))
 
 
     def _refresh_export_formats(self, select_name: str = None):

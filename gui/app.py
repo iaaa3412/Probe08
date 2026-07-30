@@ -478,7 +478,7 @@ class AtomicaDashboard(tk.Tk):
 
     def _refresh_ata_picker(self):
         self._ata_picker.configure(values=self._find_ata_folders())
-
+    
     def _on_ata_picker_selected(self):
         name = self._ata_picker_var.get()
         if not name:
@@ -492,7 +492,8 @@ class AtomicaDashboard(tk.Tk):
         self.ui.lbl_progress.config(text=f"Progress: {self.dies_tested} / {self.total_dies} tested")
         self.ui.lbl_results_large.config(text=f"Total Passed: {self.dies_passed}     |     Total Failed: {self.dies_failed}     |     Untested: {untested}")
         self.ui.draw_donut(self.ui.sidebar_canvas, 120, self.dies_passed, self.dies_failed, untested)
-        self.ui.draw_donut(self.ui.results_canvas, 300, self.dies_passed, self.dies_failed, untested)
+        if hasattr(self.ui, "results_canvas"):
+            self.ui.draw_donut(self.ui.results_canvas, 300, self.dies_passed, self.dies_failed, untested)
 
     def on_exec_stats_change(self, tested, passed, failed, total):
         self.dies_tested  = tested
