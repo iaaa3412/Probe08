@@ -1,0 +1,35 @@
+GPIB wiring:
+prober to hp3458a multimeter to hp 75000 series B to PC
+
+Hp 75000 series B setup:
+one relay in use, relay 4 E1364A 16 channel switch.
+two multimeter adapters, HP E1326B adapter
+multimeter not connected to hp 75000 other than the gpib, what to do?
+
+Relay 4 wiring:
+8 coax cables to probe card? not yet connected, labeled 3-10
+many of the green wires are presumably ground, comes from CH15NC and is also soldered to all coax wires
+CH0 NO - CH2 N0
+coax 3 - Ch0 C
+CH0 NC - CH1 NC
+CH1 NO - CH3 NO
+coax 4 - CH1 C
+CH1 NC - CH2 NC
+CH2 NO - Input HI of bottom 1326B adapter
+coax 5 - CH2 C
+CH2 NC - CH3 NC
+CH3 NO - Input LO of bottom 1326B adapter
+coax 6 - CH3 C
+CH8 NO - CH10 NO
+coax 7 - CH8 C
+CH8 NC - CH15 NC
+CH8 NC - CH9 NC
+CH9 NO - CH11 NO
+coax 8 - CH9 C
+CH9 NC - CH10 NC
+CH 10 NO - Current HI of bottom 1326B adapter
+coax 9 - CH10 C
+CH10 NC - CH11 NC
+CH11 NO - Current LO of bottom 1326B adapter
+coax 10 - CH11 C
+CH11 NC - CH3 NC

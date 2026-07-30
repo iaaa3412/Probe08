@@ -8,6 +8,10 @@ import os
 # afterwards by a serial poll.
 _OPEN_TIMEOUT_MS = 500
 
+# Fallback window for an address the driver has not opened before. See the
+# retry in open_resource() for why a cold open needs more than the warm one.
+_COLD_OPEN_TIMEOUT_MS = 2500
+
 # How long a serial poll waits before calling an address empty. A serial poll
 # is answered by the instrument's GPIB interface hardware, not its firmware, so
 # anything powered and on the bus replies in microseconds even while it is busy
@@ -58,11 +62,20 @@ def open_resource(address, open_timeout=_OPEN_TIMEOUT_MS):
             continue
         if via is None:
             default_ok = True
-        try:
-            inst = rm.open_resource(address, open_timeout=open_timeout)
-            return inst, (via or "default")
-        except Exception as e:
-            errors.append((via, str(e)))
+        # The ADLINK driver needs longer for the FIRST open of an address than
+        # for later ones, and when it does not get it the failure is an access
+        # violation out of the DLL, not a clean VISA error. Measured on this
+        # bench: GPIB0::23 failed twice at 500 ms, succeeded at 2000 ms, then
+        # succeeded at 500 ms every time after - the address had been warmed.
+        # So a failure is retried once with a generous window before the
+        # address is written off as absent.
+        for timeout in (open_timeout, max(_COLD_OPEN_TIMEOUT_MS, open_timeout * 4)):
+            try:
+                inst = rm.open_resource(address, open_timeout=timeout)
+                return inst, (via or "default")
+            except Exception as e:
+                last_error = str(e)
+        errors.append((via, last_error))
 
     # When the vendor VISA loaded and gave a verdict, that verdict is the whole
     # story - appending pyvisa-py's "install gpib-ctypes" advice on top of it

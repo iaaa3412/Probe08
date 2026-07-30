@@ -79,6 +79,7 @@ class WaferMapPanel(ttk.LabelFrame):
         self._picking_enabled = False
         self._pick_max = None
         self._on_pick_change = None
+        self._click_handler = None
         self._press_xy = None
         self.canvas.bind("<ButtonPress-1>", self._on_pick_press, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._on_pick_release, add="+")
@@ -114,10 +115,20 @@ class WaferMapPanel(ttk.LabelFrame):
     def _on_pick_press(self, e):
         self._press_xy = (e.x, e.y)
 
+    def set_click_handler(self, fn):
+        """Call fn(row, col) when a die is clicked, changing no colours.
+
+        Separate from picking on purpose: picking owns the fill of every square
+        (_recolor_picks repaints them all), so a consumer that maintains its own
+        status colours - the Electroglas run does - cannot use it without having
+        its colours wiped. Pass None to detach.
+        """
+        self._click_handler = fn
+
     def _on_pick_release(self, e):
         press = self._press_xy
         self._press_xy = None
-        if not self._picking_enabled or press is None:
+        if press is None:
             return
         dx, dy = e.x - press[0], e.y - press[1]
         if dx * dx + dy * dy > 16:
@@ -127,6 +138,13 @@ class WaferMapPanel(ttk.LabelFrame):
             return
         rc = next((k for k, v in self.dies.items() if v == hit[0]), None)
         if rc is None:
+            return
+        if self._click_handler is not None:
+            try:
+                self._click_handler(rc[0], rc[1])
+            except Exception:
+                pass
+        if not self._picking_enabled:
             return
         if rc in self._picked:
             self._picked.discard(rc)
@@ -331,6 +349,10 @@ class WaferMapPanel(ttk.LabelFrame):
         colors = {
             "UNTESTED":     "#7aaec8",
             "CURRENT":      "#dbeafe",
+            # Orange "you are here" for the Electroglas PMA run. A separate
+            # status rather than recolouring CURRENT, because the Accretech
+            # flow uses CURRENT and its appearance should not change.
+            "PROBING":      "#f59e0b",
             "CONTACT":      "#ede9fe",
             "TESTING":      "#dbeafe",
             "PASS":         "#00d200",

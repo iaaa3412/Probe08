@@ -23,6 +23,18 @@ from instrument_connection_panel import build_address_panel
 # listed and still individually pingable, but skipped by Ping All and by
 # init_hardware_eg. Use Scan Bus to see what is actually on a given prober.
 #
+# The E1326B inside the E1300A mainframe has FAILED its power-on self test. The
+# mainframe's own error queue reports 'Config error 1, Failed device' for it and
+# publishes no GPIB instrument, so it is marked not-fitted - it is expected to
+# fail a ping today, and saying so beats reporting a mystery. It stays listed so
+# a repaired or replacement module is picked up without a code change.
+# references/find_vxi_instruments.py compares the VXI backplane against what
+# GPIB can actually reach, which is how that was diagnosed.
+#
+# That makes the 3458A the measurement instrument for probe03: its ohms
+# functions source a known current and read the resulting voltage - the
+# isolation test - and it ranges to 1.2 GOhm against the E1326B's 1.048 MOhm.
+#
 # Scan Bus on this prober reports:
 #   GPIB0::29::INSTR      Electroglas 2001X (answers no ID query)
 #   GPIB0::23::INSTR      HP 3458A
@@ -39,6 +51,7 @@ _EG_INSTRUMENTS = [
     ("Electroglas 2001X (Prober)", "prober_eg", (), True, "?S"),
     ("Keithley 2400 (SMU)", "smu_eg", ("*IDN?",), False, None),
     ("HP 3458A (DMM)", "dmm_eg", ("ID?",), True, None),
+    ("HP E1326B (VXI DMM — failed self-test)", "dmm_vxi_eg", ("*IDN?",), False, None),
     ("Agilent 6634B (Power Supply)", "power_supply_eg", ("ID?",), False, None),
     ("HP Switchbox 1", "relay1_eg", ("*IDN?",), True, None),
     ("HP Switchbox 2", "relay2_eg", ("*IDN?",), True, None),

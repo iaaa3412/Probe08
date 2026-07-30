@@ -53,6 +53,17 @@ instruments:
     address: "GPIB0::25::INSTR"
     timeout_ms: 3000
 
+  # E1326B 5.5-digit multimeter installed internally in the E1300A mainframe -
+  # the meter the probe03 relay wiring actually lands on. Secondary address is
+  # the module's VXI logical address / 8; the factory setting is 24, i.e. 03.
+  # Nothing answers there yet: see references/find_vxi_instruments.py, which
+  # sweeps all 31 secondary addresses and says what to do if it finds none.
+  dmm_vxi_eg:
+    name: "HP E1326B (VXI DMM)"
+    protocol: "GPIB"
+    address: "GPIB0::9::3::INSTR"
+    timeout_ms: 5000
+
   relay1_eg:
     name: "HP Switchbox 1"
     protocol: "GPIB"
