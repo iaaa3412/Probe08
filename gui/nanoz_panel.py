@@ -10,7 +10,7 @@ import re
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
 from instruments.accretech_uf200r import AccretechUF200R
@@ -68,10 +68,14 @@ class NanoZPanel(ttk.Frame):
         self._latest_env: dict[str, dict] = {}
         self._spl_history: dict[tuple[str, str], "collections.deque"] = {}
         self._env_history: dict[str, "collections.deque"] = {}
+        self._cycle_start_time: "dt.datetime | None" = None
+        self._mark_cycle_start()
+        self._shots: list[dict] = []
 
         self._build_ui()
         self.after(50, self._check_queue)
         self.after(300, self._refresh_charts_loop)
+        self.after(500, self._refresh_results_loop)
         self.after(1000, self._auto_refresh_board_status)
 
     def _build_ui(self):
@@ -87,9 +91,11 @@ class NanoZPanel(ttk.Frame):
         outer.add(sub_nb, weight=3)
 
         self._build_setup_tab(sub_nb)
+        self._build_recipe_tab(sub_nb)
         self._build_run_tab(sub_nb)
         self._build_console_tab(sub_nb)
         self._build_charts_tab(sub_nb)
+        self._build_results_tab(sub_nb)
 
         log_frame = ttk.LabelFrame(outer, text="NanoZ Log")
         outer.add(log_frame, weight=1)
@@ -111,14 +117,14 @@ class NanoZPanel(ttk.Frame):
         split = ttk.PanedWindow(tab, orient="vertical")
         split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
-        boards_lf = ttk.LabelFrame(split, text="NanoZ Boards  (double-click a row to toggle Use)")
+        boards_lf = ttk.LabelFrame(split, text="NanoZ Boards  (all connected boards are always live)")
         split.add(boards_lf, weight=3)
 
         brow = ttk.Frame(boards_lf)
         brow.pack(fill="x", padx=6, pady=(6, 2))
         self._btn_discover = ttk.Button(brow, text="🔍 Discover Boards", command=self._discover_boards)
         self._btn_discover.pack(side="left", padx=(0, 4))
-        self._btn_connect_boards = ttk.Button(brow, text="🔌 Connect Selected", command=self._connect_boards)
+        self._btn_connect_boards = ttk.Button(brow, text="🔌 Connect All", command=self._connect_boards)
         self._btn_connect_boards.pack(side="left", padx=4)
         self._btn_disconnect_boards = ttk.Button(brow, text="🔌 Disconnect Boards",
                                                  command=self._disconnect_boards)
@@ -131,16 +137,22 @@ class NanoZPanel(ttk.Frame):
         self.env_interval_var = tk.StringVar(value="1.0")
         ttk.Entry(brow, textvariable=self.env_interval_var, width=6).pack(side="left", padx=(4, 0))
 
-        cols = ("port", "sn", "fw", "sig", "use", "status", "spl", "env")
+        cols = ("port", "sn", "fw", "sig", "slot", "status", "spl", "env")
         self._board_tree = ttk.Treeview(boards_lf, columns=cols, show="headings", height=6)
         heads = [("port", "Port", 70), ("sn", "S/N", 100), ("fw", "Firmware", 80),
-                 ("sig", "Signature", 70), ("use", "Use", 45), ("status", "Status", 280),
+                 ("sig", "Signature", 70), ("slot", "Slot", 50), ("status", "Status", 280),
                  ("spl", "SPL#", 55), ("env", "ENV#", 55)]
         for cid, text, width in heads:
             self._board_tree.heading(cid, text=text)
             self._board_tree.column(cid, width=width, anchor="center" if cid != "sn" else "w")
         self._board_tree.pack(fill="x", padx=6, pady=6)
-        self._board_tree.bind("<Double-1>", self._on_board_row_toggle)
+        ttk.Label(boards_lf,
+                  text="Double-click a board's Slot cell to assign its physical position "
+                       "(1-20, top to bottom) on the probe card — this is what lets the "
+                       "Recipe tab's wafer-plan import know which board sits where.",
+                  foreground="#6b7280", wraplength=760, justify="left").pack(
+                  anchor="w", padx=6, pady=(0, 6))
+        self._board_tree.bind("<Double-1>", self._on_board_tree_double_click)
 
         prober_lf = ttk.LabelFrame(split, text="Prober")
         split.add(prober_lf, weight=1)
@@ -150,6 +162,276 @@ class NanoZPanel(ttk.Frame):
         self._btn_connect_prober.pack(side="left", padx=(0, 8))
         self.prober_status_var = tk.StringVar(value="Prober: not connected")
         ttk.Label(prow, textvariable=self.prober_status_var, foreground="#6b7280").pack(side="left")
+
+    def _build_recipe_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Recipe")
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(2, weight=1)
+
+        ttk.Label(tab,
+                  text="Each row is one prober shot (a single touchdown that contacts several "
+                       "dies at once). Click a board's cell to include/exclude it from that "
+                       "shot — included boards all run their cycle together when the shot "
+                       "lands. Shot order is top → bottom.",
+                  foreground="#6b7280", wraplength=760, justify="left").grid(
+                  row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+
+        bar = ttk.Frame(tab)
+        bar.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+        self._btn_recipe_add = ttk.Button(bar, text="＋ Add Shot", command=self._add_shot)
+        self._btn_recipe_add.pack(side="left", padx=(0, 4))
+        self._btn_recipe_dup = ttk.Button(bar, text="⎘ Duplicate", command=self._duplicate_shot)
+        self._btn_recipe_dup.pack(side="left", padx=4)
+        self._btn_recipe_remove = ttk.Button(bar, text="\U0001f5d1 Remove", command=self._remove_shots)
+        self._btn_recipe_remove.pack(side="left", padx=4)
+        self._btn_recipe_up = ttk.Button(bar, text="▲", width=3,
+                                         command=lambda: self._move_shot(-1))
+        self._btn_recipe_up.pack(side="left", padx=(10, 2))
+        self._btn_recipe_down = ttk.Button(bar, text="▼", width=3,
+                                           command=lambda: self._move_shot(1))
+        self._btn_recipe_down.pack(side="left", padx=2)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        self._btn_recipe_enable_all = ttk.Button(bar, text="Enable All Boards",
+                                                 command=lambda: self._set_selected_boards(True))
+        self._btn_recipe_enable_all.pack(side="left", padx=4)
+        self._btn_recipe_disable_all = ttk.Button(bar, text="Disable All Boards",
+                                                  command=lambda: self._set_selected_boards(False))
+        self._btn_recipe_disable_all.pack(side="left", padx=4)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        self._btn_recipe_import_plan = ttk.Button(bar, text="📥 Import Wafer Plan (.xlsx)…",
+                                                   command=self._import_wafer_plan)
+        self._btn_recipe_import_plan.pack(side="left", padx=4)
+        self._recipe_boards_lbl = ttk.Label(bar, text="", foreground="#6b7280")
+        self._recipe_boards_lbl.pack(side="left", padx=(12, 0))
+
+        tree_frame = ttk.Frame(tab)
+        tree_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+        self._recipe_tree = ttk.Treeview(tree_frame, columns=("seq",), show="headings", height=16,
+                                         selectmode="extended")
+        self._recipe_tree.grid(row=0, column=0, sticky="nsew")
+        rvsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._recipe_tree.yview)
+        rvsb.grid(row=0, column=1, sticky="ns")
+        rhsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self._recipe_tree.xview)
+        rhsb.grid(row=1, column=0, sticky="ew")
+        self._recipe_tree.configure(yscrollcommand=rvsb.set, xscrollcommand=rhsb.set)
+        self._recipe_tree.bind("<Button-1>", self._on_recipe_click)
+        self._recipe_tree.bind("<Double-1>", self._on_recipe_double_click)
+
+        self._rebuild_recipe_columns()
+
+    def _recipe_ports(self) -> list:
+        return sorted(self._boards.keys())
+
+    def _port_header(self, port: str) -> str:
+        board = self._boards.get(port)
+        slot = board.identity.slot if board else None
+        return f"{port} (slot {slot})" if slot else f"{port} (no slot)"
+
+    def _rebuild_recipe_columns(self):
+        ports = self._recipe_ports()
+        cols = ("seq", "label", "active") + tuple(ports)
+        self._recipe_tree.configure(columns=cols)
+        heads = [("seq", "#", 36), ("label", "Label", 220), ("active", "Active", 60)]
+        heads += [(p, self._port_header(p), 100) for p in ports]
+        for cid, text, width in heads:
+            self._recipe_tree.heading(cid, text=text)
+            self._recipe_tree.column(cid, width=width, anchor="w" if cid == "label" else "center")
+        self._recipe_boards_lbl.config(
+            text=f"{len(ports)} board(s) known" if ports
+            else "no boards known yet — discover/connect on the Setup tab first")
+        self._redraw_recipe_tree()
+
+    def _redraw_recipe_tree(self):
+        for iid in self._recipe_tree.get_children():
+            self._recipe_tree.delete(iid)
+        ports = self._recipe_ports()
+        for i, shot in enumerate(self._shots, 1):
+            excluded = shot["excluded_boards"]
+            active_n = sum(1 for p in ports if p not in excluded)
+            vals = [str(i), shot["label"] or f"Shot {i}", f"{active_n}/{len(ports)}"]
+            vals += ["·" if p in excluded else "✓" for p in ports]
+            self._recipe_tree.insert("", "end", values=vals)
+
+    def _selected_shot_indices(self) -> list:
+        return sorted(self._recipe_tree.index(iid) for iid in self._recipe_tree.selection())
+
+    def _selected_shot_index(self):
+        idxs = self._selected_shot_indices()
+        return idxs[0] if idxs else None
+
+    def _persist_recipe(self):
+        folder = getattr(self._main_layout, "_ata_folder", None)
+        if not folder:
+            return
+        try:
+            nzb.save_recipe(folder, self._shots)
+        except OSError as e:
+            self._log(f"Could not save NanoZ recipe: {e}")
+
+    def _add_shot(self):
+        self._shots.append({"label": "", "excluded_boards": set()})
+        self._redraw_recipe_tree()
+        self._persist_recipe()
+        children = self._recipe_tree.get_children()
+        if children:
+            self._recipe_tree.selection_set(children[-1])
+            self._recipe_tree.see(children[-1])
+
+    def _duplicate_shot(self):
+        idx = self._selected_shot_index()
+        if idx is None:
+            self._log_main("Duplicate Shot: select a shot first.")
+            return
+        src = self._shots[idx]
+        clone = dict(src)
+        clone["label"] = (src["label"] + " (copy)") if src["label"] else ""
+        clone["excluded_boards"] = set(src["excluded_boards"])
+        self._shots.insert(idx + 1, clone)
+        self._redraw_recipe_tree()
+        self._persist_recipe()
+        children = self._recipe_tree.get_children()
+        self._recipe_tree.selection_set(children[idx + 1])
+        self._recipe_tree.see(children[idx + 1])
+
+    def _remove_shots(self):
+        idxs = self._selected_shot_indices()
+        if not idxs:
+            self._log_main("Remove Shot: select at least one shot first.")
+            return
+        for i in reversed(idxs):
+            del self._shots[i]
+        self._redraw_recipe_tree()
+        self._persist_recipe()
+
+    def _move_shot(self, delta: int):
+        idx = self._selected_shot_index()
+        if idx is None:
+            return
+        new_idx = idx + delta
+        if not (0 <= new_idx < len(self._shots)):
+            return
+        self._shots[idx], self._shots[new_idx] = self._shots[new_idx], self._shots[idx]
+        self._redraw_recipe_tree()
+        self._persist_recipe()
+        children = self._recipe_tree.get_children()
+        self._recipe_tree.selection_set(children[new_idx])
+        self._recipe_tree.see(children[new_idx])
+
+    def _rename_shot(self, idx: int):
+        if not (0 <= idx < len(self._shots)):
+            return
+        current = self._shots[idx]["label"]
+        new = simpledialog.askstring("Rename Shot", "Label for this shot:",
+                                     initialvalue=current, parent=self)
+        if new is None:
+            return
+        self._shots[idx]["label"] = new.strip()
+        self._redraw_recipe_tree()
+        children = self._recipe_tree.get_children()
+        if 0 <= idx < len(children):
+            self._recipe_tree.selection_set(children[idx])
+        self._persist_recipe()
+
+    def _toggle_shot_board(self, idx: int, port: str):
+        if not (0 <= idx < len(self._shots)):
+            return
+        excluded = self._shots[idx]["excluded_boards"]
+        if port in excluded:
+            excluded.discard(port)
+        else:
+            excluded.add(port)
+        self._redraw_recipe_tree()
+        children = self._recipe_tree.get_children()
+        if 0 <= idx < len(children):
+            self._recipe_tree.selection_set(children[idx])
+        self._persist_recipe()
+
+    def _set_selected_boards(self, included: bool):
+        idxs = self._selected_shot_indices()
+        if not idxs:
+            self._log_main("Select at least one shot first.")
+            return
+        ports = self._recipe_ports()
+        for i in idxs:
+            self._shots[i]["excluded_boards"] = set() if included else set(ports)
+        self._redraw_recipe_tree()
+        children = self._recipe_tree.get_children()
+        self._recipe_tree.selection_set([children[i] for i in idxs if 0 <= i < len(children)])
+        self._persist_recipe()
+
+    def _on_recipe_click(self, event):
+        if self._recipe_tree.identify_region(event.x, event.y) != "cell":
+            return
+        row_iid = self._recipe_tree.identify_row(event.y)
+        col_id = self._recipe_tree.identify_column(event.x)
+        if not row_iid or not col_id:
+            return
+        cols = self._recipe_tree["columns"]
+        col_idx = int(col_id[1:]) - 1
+        if not (0 <= col_idx < len(cols)):
+            return
+        port = cols[col_idx]
+        if port not in self._recipe_ports():
+            return
+        self._toggle_shot_board(self._recipe_tree.index(row_iid), port)
+
+    def _on_recipe_double_click(self, event):
+        if self._recipe_tree.identify_region(event.x, event.y) != "cell":
+            return
+        row_iid = self._recipe_tree.identify_row(event.y)
+        col_id = self._recipe_tree.identify_column(event.x)
+        if not row_iid or not col_id:
+            return
+        cols = self._recipe_tree["columns"]
+        col_idx = int(col_id[1:]) - 1
+        if not (0 <= col_idx < len(cols)) or cols[col_idx] != "label":
+            return
+        self._rename_shot(self._recipe_tree.index(row_iid))
+
+    def _import_wafer_plan(self):
+        path = filedialog.askopenfilename(
+            title="Import Wafer Plan",
+            filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
+        if not path:
+            return
+        if self._shots and not messagebox.askyesno(
+            "Replace Recipe",
+            f"This will replace the current recipe ({len(self._shots)} shot(s)) with "
+            "shots generated from the wafer plan. Continue?"):
+            return
+        threading.Thread(target=self._import_wafer_plan_thread, args=(path,), daemon=True).start()
+
+    def _import_wafer_plan_thread(self, path: str):
+        try:
+            plan = nzb.load_wafer_plan(path)
+        except Exception as e:
+            self.after(0, lambda e=e: messagebox.showerror("Import Failed", str(e)))
+            return
+        ports = self._recipe_ports()
+        slot_by_port = {p: self._boards[p].identity.slot for p in ports
+                        if self._boards[p].identity.slot}
+        unassigned = [p for p in ports if p not in slot_by_port]
+        shots = nzb.build_shots_from_wafer_plan(plan, ports, slot_by_port)
+        stats = nzb.wafer_plan_stats(plan)
+
+        def _finish():
+            self._shots = shots
+            self._redraw_recipe_tree()
+            self._persist_recipe()
+            msg = (f"Wafer plan imported — {len(shots)} touchdown shot(s), "
+                  f"probe head {plan.probe_height} dies tall, "
+                  f"{plan.dies_per_shot}x{plan.dies_per_shot}-die shots. "
+                  f"Physical positions across the whole plan: {stats['product']} product, "
+                  f"{stats['reference']} reference (skipped), {stats['off_wafer']} off-wafer.")
+            if unassigned:
+                msg += (f" {len(unassigned)} known board(s) have no assigned slot and are "
+                       f"excluded from every shot: {', '.join(unassigned)} "
+                       f"— assign slots on the Setup tab and re-import.")
+            self._log_main(msg)
+        self.after(0, _finish)
 
     def _build_run_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -170,7 +452,7 @@ class NanoZPanel(ttk.Frame):
         prow = ttk.Frame(ctrl_lf)
         prow.pack(fill="x", padx=6, pady=(6, 2))
         ttk.Label(prow, text="Cycle #:").pack(side="left")
-        self.cycle_var = tk.StringVar(value="1")
+        self.cycle_var = tk.StringVar(value="0")
         self._cycle_entry = ttk.Entry(prow, textvariable=self.cycle_var, width=6)
         self._cycle_entry.pack(side="left", padx=(4, 12))
         ttk.Label(prow, text="Touchdown duration (s):").pack(side="left")
@@ -184,6 +466,8 @@ class NanoZPanel(ttk.Frame):
         self.start_btn.pack(side="left", padx=(0, 4))
         self.test_btn = ttk.Button(crow, text="▶ Test Die", command=self._start_test_die)
         self.test_btn.pack(side="left", padx=4)
+        self.recipe_btn = ttk.Button(crow, text="▶ Run Recipe", command=self._start_recipe_run)
+        self.recipe_btn.pack(side="left", padx=4)
         self.stop_btn = ttk.Button(crow, text="⏹ Stop Run", command=self._stop_lot, state="disabled")
         self.stop_btn.pack(side="left", padx=4)
         self.state_var = tk.StringVar(value="IDLE")
@@ -247,8 +531,22 @@ class NanoZPanel(ttk.Frame):
         ttk.Label(status_lf, textvariable=self.active_boards_var, wraplength=520,
                  justify="left").pack(anchor="w", padx=6, pady=6)
 
+        shot_lf = ttk.LabelFrame(controls, text="Recipe — Current Shot")
+        shot_lf.grid(row=2, column=0, sticky="ew", pady=4)
+        self.recipe_shot_var = tk.StringVar(value="No recipe run active — see the Recipe tab.")
+        ttk.Label(shot_lf, textvariable=self.recipe_shot_var, wraplength=520,
+                 justify="left").pack(anchor="w", padx=6, pady=(6, 2))
+        sd_cols = ("port", "slot", "decision", "reason")
+        self._shot_decision_tree = ttk.Treeview(shot_lf, columns=sd_cols, show="headings", height=5)
+        sd_heads = [("port", "Board", 80), ("slot", "Slot", 50),
+                   ("decision", "Decision", 80), ("reason", "Reason", 260)]
+        for cid, text, width in sd_heads:
+            self._shot_decision_tree.heading(cid, text=text)
+            self._shot_decision_tree.column(cid, width=width, anchor="center" if cid != "reason" else "w")
+        self._shot_decision_tree.pack(fill="x", padx=6, pady=(0, 6))
+
         stat_lf = ttk.LabelFrame(controls, text="Pass / Fail")
-        stat_lf.grid(row=2, column=0, sticky="ew", pady=(0, 0))
+        stat_lf.grid(row=3, column=0, sticky="ew", pady=(0, 0))
         srow = ttk.Frame(stat_lf)
         srow.pack(fill="x", padx=6, pady=6)
         ttk.Label(srow, text="PASS:").pack(side="left")
@@ -322,7 +620,7 @@ class NanoZPanel(ttk.Frame):
         crow2 = ttk.Frame(cmds)
         crow2.pack(fill="x", padx=6, pady=(2, 6))
         ttk.Label(crow2, text="Cycle #:").pack(side="left")
-        self.console_cycle_var = tk.StringVar(value="1")
+        self.console_cycle_var = tk.StringVar(value="0")
         ttk.Entry(crow2, textvariable=self.console_cycle_var, width=5).pack(side="left", padx=(4, 8))
         ttk.Button(crow2, text="▶ run", command=self._console_run).pack(side="left", padx=2)
         ttk.Button(crow2, text="⏸ pause",
@@ -415,6 +713,71 @@ class NanoZPanel(ttk.Frame):
             ax.text(0.5, 0.5, "no data yet", ha="center", va="center",
                     transform=ax.transAxes, color="#999999")
         self._chart_canvas.draw_idle()
+
+    def _build_results_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Results")
+        self._results_tab = tab
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(1, weight=1)
+
+        top = ttk.Frame(tab)
+        top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        ttk.Label(top, text="Latest current/voltage per board, chip and sensor. "
+                            "Avg is over readings since the last Reset Counts / run start.",
+                 foreground="#6b7280", wraplength=700, justify="left").pack(side="left")
+
+        cols = ("port", "chip", "sensor", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
+        self._results_tree = ttk.Treeview(tab, columns=cols, show="headings", height=16)
+        heads = [("port", "Port", 70), ("chip", "Chip", 50), ("sensor", "Sensor", 60),
+                 ("v_now", "V now (mV)", 100), ("i_now", "I now (mA)", 100),
+                 ("v_avg", "V avg (mV)", 100), ("i_avg", "I avg (mA)", 100),
+                 ("n", "N", 50), ("updated", "Updated", 140)]
+        for cid, text, width in heads:
+            self._results_tree.heading(cid, text=text)
+            self._results_tree.column(cid, width=width, anchor="center")
+        self._results_tree.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+    def _results_tab_visible(self):
+        try:
+            return self._sub_nb.select() == str(self._results_tab)
+        except Exception:
+            return False
+
+    def _refresh_results_loop(self):
+        if self._results_tab_visible():
+            self._redraw_results()
+        self.after(500, self._refresh_results_loop)
+
+    def _redraw_results(self):
+        for iid in self._results_tree.get_children():
+            self._results_tree.delete(iid)
+
+        cutoff = self._cycle_start_time
+        for port, chip in sorted(self._latest_spl.keys()):
+            key = (port, chip)
+            latest = self._latest_spl[key]
+            hist = list(self._spl_history.get(key, ()))
+            windowed = [h for h in hist if cutoff and (self._pkt_time(h) or cutoff) >= cutoff]
+            if not windowed:
+                windowed = hist
+            updated = latest.get("host_timestamp", "")
+            updated = updated.split("T")[-1] if "T" in updated else updated
+            for s in (1, 2, 3, 4):
+                v_field, i_field = f"dac_mv_s{s}", f"adc_current_ma_s{s}"
+                v_now, i_now = latest.get(v_field), latest.get(i_field)
+                v_vals = [h[v_field] for h in windowed if v_field in h]
+                i_vals = [h[i_field] for h in windowed if i_field in h]
+                v_avg = sum(v_vals) / len(v_vals) if v_vals else None
+                i_avg = sum(i_vals) / len(i_vals) if i_vals else None
+                self._results_tree.insert("", "end", values=(
+                    port, chip, f"s{s}",
+                    f"{v_now:.2f}" if v_now is not None else "—",
+                    f"{i_now:.5f}" if i_now is not None else "—",
+                    f"{v_avg:.2f}" if v_avg is not None else "—",
+                    f"{i_avg:.5f}" if i_avg is not None else "—",
+                    len(windowed), updated,
+                ))
 
     def _charts_tab_visible(self):
         if not _MPL:
@@ -513,7 +876,11 @@ class NanoZPanel(ttk.Frame):
                         "_btn_manual_zup", "_btn_manual_zdown", "_btn_manual_first_die",
                         "_btn_manual_next_die", "_btn_manual_xy", "_btn_manual_unload",
                         "_btn_measure", "_btn_randomize_sites",
-                        "_btn_test_active", "_btn_pause_active")
+                        "_btn_test_active", "_btn_pause_active",
+                        "_btn_recipe_add", "_btn_recipe_dup", "_btn_recipe_remove",
+                        "_btn_recipe_up", "_btn_recipe_down",
+                        "_btn_recipe_enable_all", "_btn_recipe_disable_all",
+                        "_btn_recipe_import_plan")
 
     _CHART_HISTORY_LEN = 300
     _CHART_GAP_THRESHOLD_S = 3.0
@@ -544,46 +911,46 @@ class NanoZPanel(ttk.Frame):
         found = nzb.discover_boards(log=lambda m: self.after(0, lambda m=m: self._log(m)))
         self.after(0, lambda: self._on_discovered(found))
 
-    def _on_discovered(self, found: list):
+    def _add_board(self, ident: "nzb.BoardIdentity"):
+        if ident.port in self._boards:
+            return None
         try:
             env_interval_s = float(self.env_interval_var.get())
         except ValueError:
             env_interval_s = 1.0
-        for ident in found:
-            if ident.port in self._boards:
-                continue
-            board = nzb.NanoZBoard(ident, self._queue, die_provider=lambda: self._current_rc,
-                                   env_interval_s=env_interval_s)
-            self._boards[ident.port] = board
-            iid = self._board_tree.insert("", "end", values=(
-                ident.port, ident.serial_number, ident.firmware, ident.signature,
-                "✓", self._board_status_text(board), 0, 0))
-            self._board_rows[ident.port] = iid
+        board = nzb.NanoZBoard(ident, self._queue, die_provider=lambda: self._current_rc,
+                               env_interval_s=env_interval_s)
+        self._boards[ident.port] = board
+        iid = self._board_tree.insert("", "end", values=(
+            ident.port, ident.serial_number, ident.firmware, ident.signature,
+            ident.slot if ident.slot else "—",
+            self._board_status_text(board), 0, 0))
+        self._board_rows[ident.port] = iid
+        return board
+
+    def _persist_boards(self):
+        folder = getattr(self._main_layout, "_ata_folder", None)
+        if not folder:
+            return
+        try:
+            nzb.save_known_boards(folder, [b.identity for b in self._boards.values()])
+        except OSError as e:
+            self._log(f"Could not save NanoZ board memory: {e}")
+
+    def _on_discovered(self, found: list):
+        added = sum(1 for ident in found if self._add_board(ident))
         self._log_main(f"Discovery complete — {len(found)} board(s) found, "
-                       f"{len(self._boards)} total known.")
+                       f"{added} new, {len(self._boards)} total known.")
         self._refresh_console_boards()
         self._refresh_active_boards_label()
-
-    def _on_board_row_toggle(self, _event):
-        sel = self._board_tree.selection()
-        if not sel:
-            return
-        iid = sel[0]
-        port = self._board_tree.item(iid, "values")[0]
-        board = self._boards.get(port)
-        if not board:
-            return
-        board.selected = not board.selected
-        vals = list(self._board_tree.item(iid, "values"))
-        vals[4] = "✓" if board.selected else ""
-        self._board_tree.item(iid, values=vals)
-        self._refresh_active_boards_label()
+        self._rebuild_recipe_columns()
+        self._persist_boards()
 
     def _connect_boards(self):
-        targets = [b for b in self._boards.values() if b.selected and b.state != "connected"]
+        targets = [b for b in self._boards.values() if b.state != "connected"]
         if not targets:
-            self._log_main("Connect Selected: nothing to connect (discover boards first, "
-                           "or everything selected is already connected).")
+            self._log_main("Connect All: nothing to connect (discover boards first, "
+                           "or everything known is already connected).")
             return
         threading.Thread(target=self._connect_boards_thread, args=(targets,), daemon=True).start()
 
@@ -639,6 +1006,35 @@ class NanoZPanel(ttk.Frame):
         vals[6], vals[7] = spl, env
         self._board_tree.item(iid, values=vals)
 
+    def _on_board_tree_double_click(self, event):
+        if self._board_tree.identify_region(event.x, event.y) != "cell":
+            return
+        row_iid = self._board_tree.identify_row(event.y)
+        col_id = self._board_tree.identify_column(event.x)
+        if not row_iid or not col_id:
+            return
+        cols = self._board_tree["columns"]
+        col_idx = int(col_id[1:]) - 1
+        if not (0 <= col_idx < len(cols)) or cols[col_idx] != "slot":
+            return
+        port = self._board_tree.item(row_iid, "values")[0]
+        board = self._boards.get(port)
+        if not board:
+            return
+        new_slot = simpledialog.askinteger(
+            "Assign Probe-Card Slot",
+            f"Physical slot for {port} (1-20, top to bottom of the probe head):",
+            initialvalue=board.identity.slot or 1, minvalue=1, maxvalue=99, parent=self)
+        if new_slot is None:
+            return
+        board.identity.slot = new_slot
+        vals = list(self._board_tree.item(row_iid, "values"))
+        vals[4] = str(new_slot)
+        self._board_tree.item(row_iid, values=vals)
+        self._persist_boards()
+        self._rebuild_recipe_columns()
+        self._log_main(f"{port} assigned to probe-card slot {new_slot}.")
+
     @staticmethod
     def _error_status_text(err) -> str:
         return f"⚠ error: {err}"[:80]
@@ -668,7 +1064,7 @@ class NanoZPanel(ttk.Frame):
                        f"{idle} not connected ({len(self._boards)} known).")
 
     def _refresh_active_boards_label(self):
-        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
+        active = [b for b in self._boards.values() if b.state == "connected"]
         if not active:
             self.active_boards_var.set("No boards connected yet — see the Setup tab.")
         else:
@@ -717,6 +1113,20 @@ class NanoZPanel(ttk.Frame):
             self._log_main(f"Wafer map auto-loaded from "
                            f"'{os.path.basename(folder_path)}' — {n} die(s).")
 
+        remembered = nzb.load_known_boards(folder_path)
+        added = sum(1 for ident in remembered if self._add_board(ident))
+        if added:
+            self._log_main(f"Remembered {added} NanoZ board(s) from this ATA folder "
+                           f"— Connect All once they're plugged in.")
+            self._refresh_console_boards()
+            self._refresh_active_boards_label()
+
+        self._shots = nzb.load_recipe(folder_path)
+        if self._shots:
+            self._log_main(f"Recipe loaded from '{os.path.basename(folder_path)}' "
+                           f"— {len(self._shots)} shot(s).")
+        self._rebuild_recipe_columns()
+
     def _refresh_console_boards(self):
         ports = sorted(self._boards.keys())
         self._console_board_cb.config(values=ports)
@@ -732,7 +1142,7 @@ class NanoZPanel(ttk.Frame):
         board = self._console_selected_board()
         if not board or not board.is_running:
             messagebox.showerror("No Board Selected",
-                                 "Pick a connected board first (Setup tab -> Connect Selected).")
+                                 "Pick a connected board first (Setup tab -> Connect All).")
             return
         board.send_raw(cmd)
         self._log(f"{board.port}: >> {cmd}")
@@ -866,10 +1276,10 @@ class NanoZPanel(ttk.Frame):
         if not prober or not prober.inst:
             messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
             return
-        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
+        active = [b for b in self._boards.values() if b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
-                                 "🔌 Connect Selected at least one NanoZ board first.")
+                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
             return
         try:
             cycle = int(self.cycle_var.get())
@@ -889,6 +1299,7 @@ class NanoZPanel(ttk.Frame):
         self._run_mode = "full"
         self.start_btn.config(state="disabled")
         self.test_btn.config(state="disabled")
+        self.recipe_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
         self.state_var.set("RUNNING (Full Die)")
         self._set_locked(True)
@@ -995,10 +1406,10 @@ class NanoZPanel(ttk.Frame):
     def _manual_measure(self):
         if self._run_guard("Measure"):
             return
-        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
+        active = [b for b in self._boards.values() if b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
-                                 "🔌 Connect Selected at least one NanoZ board first.")
+                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
             return
         try:
             cycle = int(self.cycle_var.get())
@@ -1031,16 +1442,17 @@ class NanoZPanel(ttk.Frame):
     def _test_active_boards(self):
         if self._run_guard("Run Cycle"):
             return
-        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
+        active = [b for b in self._boards.values() if b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
-                                 "🔌 Connect Selected at least one NanoZ board first.")
+                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
             return
         try:
             cycle = int(self.cycle_var.get())
         except ValueError:
             messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
             return
+        self._mark_cycle_start()
         for board in active:
             board.run_cycle(cycle)
         self._log_main(f"Run Cycle {cycle} triggered on {len(active)} active board(s): "
@@ -1049,7 +1461,7 @@ class NanoZPanel(ttk.Frame):
     def _pause_active_boards(self):
         if self._run_guard("Pause"):
             return
-        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
+        active = [b for b in self._boards.values() if b.state == "connected"]
         if not active:
             self._log_main("Pause (Active Boards): nothing connected.")
             return
@@ -1116,10 +1528,10 @@ class NanoZPanel(ttk.Frame):
         if not prober or not prober.inst:
             messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
             return
-        active = [b for b in self._boards.values() if b.selected and b.state == "connected"]
+        active = [b for b in self._boards.values() if b.state == "connected"]
         if not active:
             messagebox.showerror("No Boards Connected",
-                                 "🔌 Connect Selected at least one NanoZ board first.")
+                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
             return
         sites = self.wafer_map.get_picked()
         if not sites:
@@ -1147,6 +1559,7 @@ class NanoZPanel(ttk.Frame):
         self._run_mode = "test"
         self.start_btn.config(state="disabled")
         self.test_btn.config(state="disabled")
+        self.recipe_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
         self.state_var.set("RUNNING (Test Die)")
         self.wafer_map.enable_picking(0)
@@ -1221,6 +1634,138 @@ class NanoZPanel(ttk.Frame):
             self._run_mode = None
             self.after(0, lambda: self._finish_lot("TEST DIE COMPLETE"))
 
+    def _shot_active_boards(self, shot: dict) -> list:
+        excluded = shot.get("excluded_boards", set())
+        return [b for p, b in self._boards.items() if p not in excluded and b.state == "connected"]
+
+    def _show_current_shot(self, idx: int, shot: dict):
+        total = len(self._shots)
+        self.recipe_shot_var.set(f"Shot {idx + 1}/{total}: {shot['label']}")
+        for iid in self._shot_decision_tree.get_children():
+            self._shot_decision_tree.delete(iid)
+        excluded = shot.get("excluded_boards", set())
+        reasons = shot.get("board_reasons") or {}
+        for port in self._recipe_ports():
+            board = self._boards.get(port)
+            slot = board.identity.slot if board and board.identity.slot else "—"
+            if port in excluded:
+                decision = "SKIP"
+                reason = reasons.get(port) or "excluded (manual)"
+            elif not board or board.state != "connected":
+                decision = "SKIP"
+                reason = "not connected"
+            else:
+                decision = "RUN"
+                reason = "—"
+            self._shot_decision_tree.insert("", "end", values=(port, slot, decision, reason))
+
+    def _start_recipe_run(self):
+        if self._running:
+            self._log_main("A run is already active.")
+            return
+        if not self._shots:
+            messagebox.showerror("No Recipe",
+                                 "No recipe shots defined — import a wafer plan or add "
+                                 "shots on the Recipe tab first.")
+            return
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
+            return
+        if not any(b.state == "connected" for b in self._boards.values()):
+            messagebox.showerror("No Boards Connected",
+                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
+            return
+        try:
+            cycle = int(self.cycle_var.get())
+            duration_s = float(self.duration_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Parameters", "Cycle # and duration must be numeric.")
+            return
+
+        self._spl_path, self._env_path = self._new_csv_paths()
+        self._log_main(f"Starting Run Recipe — {len(self._shots)} shot(s), cycle {cycle}, "
+                       f"{duration_s:g}s/touchdown.")
+        self._log(f"SPL CSV: {self._spl_path}")
+        self._log(f"ENV CSV: {self._env_path}")
+
+        self._reset_counts()
+        self._running = True
+        self._run_mode = "recipe"
+        self.start_btn.config(state="disabled")
+        self.test_btn.config(state="disabled")
+        self.recipe_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.state_var.set("RUNNING (Recipe)")
+        self.wafer_map.enable_picking(0)
+        self._set_locked(True)
+        self._lot_thread = threading.Thread(
+            target=self._recipe_thread_body, args=(prober, cycle, duration_s), daemon=True)
+        self._lot_thread.start()
+
+    def _recipe_thread_body(self, prober, cycle: int, duration_s: float):
+        try:
+            self.after(0, lambda: self._log(">> D  (Separate)"))
+            prober.z_down()
+
+            shots = self._shots
+            idx = 0
+            while self._running and idx < len(shots):
+                shot = shots[idx]
+                die_col = shot.get("die_column")
+                row = shot.get("td_start_row")
+                self.after(0, lambda i=idx, s=shot: self._show_current_shot(i, s))
+                active_boards = self._shot_active_boards(shot)
+                self.after(0, lambda i=idx, n=len(shots), s=shot, ab=active_boards: self._log_main(
+                    f"Shot {i + 1}/{n}: {s['label']} — "
+                    + (f"{len(ab)} board(s) active: " + ", ".join(b.port for b in ab)
+                       if ab else "no boards active, skipping touchdown")))
+
+                if die_col is None or row is None or not active_boards:
+                    idx += 1
+                    continue
+
+                self._current_rc = (row, die_col)
+                die_label = f"R{row}C{die_col}"
+                self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
+                self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
+
+                self.after(0, lambda r=row, c=die_col: self._log(f">> J  (Position die X={c} Y={r})"))
+                stb = prober.move_to_die_xy(die_col, row)
+                if stb == 81:
+                    self.after(0, lambda: self._log_main("STB=81 — wafer end, stopping."))
+                    break
+                if stb == 90:
+                    self.after(0, lambda: self._log_main(
+                        "STB=90 — probing stop (<STOP> pushed), stopping."))
+                    break
+                self.after(0, lambda stb=stb: self._log(f"<< STB={stb}"))
+                self._ensure_separated(prober, stb)
+
+                ok = self._zup_measure_zdown(prober, active_boards, cycle, duration_s, shot["label"])
+                if not self._running:
+                    break
+                status = "PASS" if ok else "FAIL"
+                if status == "PASS":
+                    self._pass_count += 1
+                else:
+                    self._fail_count += 1
+                self.after(0, self._update_pass_fail_display)
+                self.after(0, lambda r=row, c=die_col, s=status: self.wafer_map.update_die(r, c, s))
+
+                idx += 1
+        except Exception as e:
+            self.after(0, lambda e=e: self._log_main(f"ERROR: {e}"))
+        finally:
+            for board in self._boards.values():
+                try:
+                    board.pause()
+                except Exception:
+                    pass
+            self._running = False
+            self._run_mode = None
+            self.after(0, lambda: self._finish_lot("RECIPE RUN COMPLETE"))
+
     _WAFER_READY_TIMEOUT_S = 60.0
     _NEXT_DIE_TIMEOUT_S = 60.0
     _UNLOAD_LOAD_TIMEOUT_S = 180.0
@@ -1272,6 +1817,7 @@ class NanoZPanel(ttk.Frame):
     def _finish_lot(self, msg: str = "LOT COMPLETE"):
         self.start_btn.config(state="normal")
         self.test_btn.config(state="normal")
+        self.recipe_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
         self.state_var.set(msg)
         self._set_locked(False)
@@ -1281,6 +1827,7 @@ class NanoZPanel(ttk.Frame):
     def _trigger_cycle_and_wait(self, boards: list, cycle: int, duration_s: float, label: str) -> bool:
         self._touchdown_errors = 0
         self._touchdown_packets = 0
+        self._mark_cycle_start()
         for board in boards:
             board.run_cycle(cycle)
         self.after(0, lambda: self._log_main(
@@ -1341,9 +1888,13 @@ class NanoZPanel(ttk.Frame):
         self.after(0, self._update_pass_fail_display)
         self.after(0, lambda: self.wafer_map.update_die(row, col, status))
 
+    def _mark_cycle_start(self):
+        self._cycle_start_time = dt.datetime.now() - dt.timedelta(milliseconds=5)
+
     def _reset_counts(self):
         self._pass_count = 0
         self._fail_count = 0
+        self._mark_cycle_start()
         self._update_pass_fail_display()
 
     def _update_pass_fail_display(self):

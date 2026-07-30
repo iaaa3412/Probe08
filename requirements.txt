@@ -17,6 +17,7 @@ xlrd>=2.0                 # reads legacy .xls "IMT Prober Recipe Generation" wor
 
 # ── NanoZ EK-IV boards (NanoZ tab) ─────────────────────────────────────────────
 pyserial>=3.5              # serial COM-port comms with the NanoZ EK-IV eval boards
+openpyxl>=3.1              # reads Nautilus wafer-plan .xlsx workbooks (NanoZ Recipe tab import)
 
 # ── Optional: standalone executable build ─────────────────────────────────────
 # pyinstaller>=6.0        # uncomment to build Windows .exe: pyinstaller main.spec
