@@ -24,6 +24,8 @@ try:
         pass
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
     from matplotlib.figure import Figure
+    from matplotlib.patches import Rectangle
+    from matplotlib.collections import PatchCollection
     _MPL = True
 except ImportError:
     _MPL = False
@@ -71,6 +73,13 @@ class NanoZPanel(ttk.Frame):
         self._cycle_start_time: "dt.datetime | None" = None
         self._mark_cycle_start()
         self._shots: list[dict] = []
+        self._recipe_name_var = tk.StringVar(value="")
+        self._current_recipe_name: str | None = None
+        self._wafer_plan: "nzb.WaferPlan | None" = None
+        self._wafer_plan_path: str | None = None
+        self._nzmap_dies_by_rc: dict[tuple[int, int], dict] = {}
+        self._nzmap_accr_dies_by_rc: dict[tuple[int, int], dict] = {}
+        self._nzmap_source_var = tk.StringVar(value="probe_plan")
 
         self._build_ui()
         self.after(50, self._check_queue)
@@ -92,6 +101,7 @@ class NanoZPanel(ttk.Frame):
 
         self._build_setup_tab(sub_nb)
         self._build_recipe_tab(sub_nb)
+        self._build_wafer_map_tab(sub_nb)
         self._build_run_tab(sub_nb)
         self._build_console_tab(sub_nb)
         self._build_charts_tab(sub_nb)
@@ -167,7 +177,7 @@ class NanoZPanel(ttk.Frame):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Recipe")
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(2, weight=1)
+        tab.rowconfigure(3, weight=1)
 
         ttk.Label(tab,
                   text="Each row is one prober shot (a single touchdown that contacts several "
@@ -177,8 +187,26 @@ class NanoZPanel(ttk.Frame):
                   foreground="#6b7280", wraplength=760, justify="left").grid(
                   row=0, column=0, sticky="w", padx=8, pady=(8, 4))
 
+        name_row = ttk.Frame(tab)
+        name_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+        ttk.Label(name_row, text="Recipe:").pack(side="left")
+        self._recipe_name_cb = ttk.Combobox(
+            name_row, textvariable=self._recipe_name_var, state="readonly", width=26)
+        self._recipe_name_cb.pack(side="left", padx=(4, 4))
+        self._recipe_name_cb.bind(
+            "<<ComboboxSelected>>", lambda _e: self._load_named_recipe())
+        ttk.Button(name_row, text="💾 Save As…", command=self._save_recipe_as).pack(
+            side="left", padx=2)
+        ttk.Button(name_row, text="📂 Load", command=lambda: self._load_named_recipe()).pack(
+            side="left", padx=2)
+        ttk.Button(name_row, text="🗑 Delete", command=self._delete_named_recipe).pack(
+            side="left", padx=2)
+        self._recipe_active_lbl = ttk.Label(name_row, text="(no recipe saved yet)",
+                                            foreground="#6b7280")
+        self._recipe_active_lbl.pack(side="left", padx=(12, 0))
+
         bar = ttk.Frame(tab)
-        bar.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+        bar.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
         self._btn_recipe_add = ttk.Button(bar, text="＋ Add Shot", command=self._add_shot)
         self._btn_recipe_add.pack(side="left", padx=(0, 4))
         self._btn_recipe_dup = ttk.Button(bar, text="⎘ Duplicate", command=self._duplicate_shot)
@@ -206,7 +234,7 @@ class NanoZPanel(ttk.Frame):
         self._recipe_boards_lbl.pack(side="left", padx=(12, 0))
 
         tree_frame = ttk.Frame(tab)
-        tree_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        tree_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
         self._recipe_tree = ttk.Treeview(tree_frame, columns=("seq",), show="headings", height=16,
@@ -264,12 +292,112 @@ class NanoZPanel(ttk.Frame):
 
     def _persist_recipe(self):
         folder = getattr(self._main_layout, "_ata_folder", None)
-        if not folder:
+        if not folder or not self._current_recipe_name:
             return
         try:
-            nzb.save_recipe(folder, self._shots)
+            nzb.save_named_recipe(folder, self._current_recipe_name, self._shots,
+                                  wafer_plan_path=self._wafer_plan_path)
         except OSError as e:
             self._log(f"Could not save NanoZ recipe: {e}")
+
+    def _refresh_recipe_name_cb(self):
+        folder = getattr(self._main_layout, "_ata_folder", None)
+        names = nzb.list_recipe_names(folder) if folder else []
+        self._recipe_name_cb.config(values=names)
+        self._run_recipe_name_cb.config(values=names)
+        self._recipe_name_var.set(self._current_recipe_name or "")
+        active_text = (f"active: {self._current_recipe_name}" if self._current_recipe_name
+                      else "(unsaved — 💾 Save As… to keep this recipe)")
+        self._recipe_active_lbl.config(text=active_text)
+        self._run_recipe_active_lbl.config(text=active_text)
+
+    def _save_recipe_as(self):
+        folder = getattr(self._main_layout, "_ata_folder", None)
+        if not folder:
+            messagebox.showerror("No ATA Folder",
+                                 "Load an ATA folder from the toolbar first.")
+            return
+        if not self._shots:
+            messagebox.showinfo("No Shots", "Add or import some shots before saving a recipe.")
+            return
+        name = simpledialog.askstring(
+            "Save Recipe", "Recipe name:",
+            initialvalue=self._current_recipe_name or "", parent=self)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if name in nzb.list_recipe_names(folder) and not messagebox.askyesno(
+            "Overwrite Recipe", f"A recipe named '{name}' already exists — overwrite it?"):
+            return
+        nzb.save_named_recipe(folder, name, self._shots, wafer_plan_path=self._wafer_plan_path)
+        self._current_recipe_name = name
+        self._refresh_recipe_name_cb()
+        self._log_main(f"Recipe saved as '{name}' — {len(self._shots)} shot(s). "
+                       "Will auto-load next time this ATA folder is opened.")
+
+    def _load_named_recipe(self, name: str | None = None):
+        folder = getattr(self._main_layout, "_ata_folder", None)
+        if not folder:
+            messagebox.showerror("No ATA Folder",
+                                 "Load an ATA folder from the toolbar first.")
+            return
+        name = name or self._recipe_name_var.get()
+        if not name:
+            messagebox.showinfo("No Recipe Selected", "Pick a recipe from the dropdown first.")
+            return
+        self._shots = nzb.load_named_recipe(folder, name)
+        self._current_recipe_name = name
+        nzb.set_active_recipe(folder, name)
+        self._redraw_recipe_tree()
+        self._refresh_recipe_name_cb()
+        self._log_main(f"Recipe '{name}' loaded — {len(self._shots)} shot(s).")
+        self._autoload_wafer_plan_for_recipe(folder, name)
+
+    def _autoload_wafer_plan_for_recipe(self, folder: str, name: str):
+        """Reload the .xlsx wafer plan a recipe was generated from, if one was
+        recorded and the file is still there — keeps the Wafer Map tab in sync
+        with whichever recipe is active instead of requiring a manual re-import."""
+        path = nzb.get_recipe_wafer_plan_path(folder, name)
+        if not path:
+            return
+        if not os.path.isfile(path):
+            self._log_main(f"Recipe '{name}' remembers wafer plan '{path}' but that "
+                           "file is no longer there — Wafer Map tab left as-is.")
+            return
+        threading.Thread(target=self._autoload_wafer_plan_thread, args=(path,),
+                         daemon=True).start()
+
+    def _autoload_wafer_plan_thread(self, path: str):
+        try:
+            plan = nzb.load_wafer_plan(path)
+        except Exception as e:
+            self.after(0, lambda e=e: self._log_main(
+                f"Could not auto-reload wafer plan '{path}': {e}"))
+            return
+
+        def _finish():
+            self._wafer_plan = plan
+            self._wafer_plan_path = path
+            self._redraw_nanoz_wafer_map()
+            self._log_main(f"Wafer map auto-loaded from '{os.path.basename(path)}' "
+                           "alongside the recipe.")
+        self.after(0, _finish)
+
+    def _delete_named_recipe(self):
+        folder = getattr(self._main_layout, "_ata_folder", None)
+        name = self._recipe_name_var.get()
+        if not folder or not name:
+            return
+        if not messagebox.askyesno("Delete Recipe",
+                                   f"Delete recipe '{name}'? This cannot be undone."):
+            return
+        nzb.delete_named_recipe(folder, name)
+        if self._current_recipe_name == name:
+            self._current_recipe_name = None
+        self._refresh_recipe_name_cb()
+        self._log_main(f"Recipe '{name}' deleted.")
 
     def _add_shot(self):
         self._shots.append({"label": "", "excluded_boards": set()})
@@ -419,8 +547,11 @@ class NanoZPanel(ttk.Frame):
 
         def _finish():
             self._shots = shots
+            self._wafer_plan = plan
+            self._wafer_plan_path = path
             self._redraw_recipe_tree()
             self._persist_recipe()
+            self._redraw_nanoz_wafer_map()
             msg = (f"Wafer plan imported — {len(shots)} touchdown shot(s), "
                   f"probe head {plan.probe_height} dies tall, "
                   f"{plan.dies_per_shot}x{plan.dies_per_shot}-die shots. "
@@ -432,6 +563,132 @@ class NanoZPanel(ttk.Frame):
                        f"— assign slots on the Setup tab and re-import.")
             self._log_main(msg)
         self.after(0, _finish)
+
+    def _build_wafer_map_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Wafer Map")
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(2, weight=1)
+
+        ttk.Label(tab,
+                  text="Probe Plan is the wafer geometry extracted from the imported "
+                       ".xlsx (Recipe tab → Import Wafer Plan) — product dies are blue, "
+                       "reference/monitor dies are dark red, and it carries computed die "
+                       "serials. Accretech is the wafer map extracted on the Run tab — "
+                       "the two are independent views of the same physical wafer, not "
+                       "combined. Click a die to see its details.",
+                  foreground="#6b7280", wraplength=760, justify="left").grid(
+                  row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+
+        src_row = ttk.Frame(tab)
+        src_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
+        ttk.Label(src_row, text="View:").pack(side="left", padx=(0, 4))
+        ttk.Radiobutton(src_row, text="Probe Plan (.xlsx)", variable=self._nzmap_source_var,
+                        value="probe_plan", command=self._redraw_nanoz_wafer_map).pack(side="left")
+        ttk.Radiobutton(src_row, text="Accretech", variable=self._nzmap_source_var,
+                        value="accretech", command=self._redraw_nanoz_wafer_map).pack(side="left")
+
+        if _MPL:
+            self._nzmap_fig = Figure(figsize=(8, 8), dpi=100)
+            self._nzmap_ax = self._nzmap_fig.add_subplot(111)
+            self._nzmap_ax.set_aspect("equal")
+            self._nzmap_canvas = FigureCanvasTkAgg(self._nzmap_fig, master=tab)
+            self._nzmap_canvas.get_tk_widget().grid(
+                row=2, column=0, sticky="nsew", padx=8, pady=(0, 0))
+            toolbar = NavigationToolbar2Tk(self._nzmap_canvas, tab, pack_toolbar=False)
+            toolbar.update()
+            toolbar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
+            self._nzmap_canvas.mpl_connect("button_press_event", self._on_nzmap_click)
+
+            info_lf = ttk.LabelFrame(tab, text="Selected Die")
+            info_lf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+            self._nzmap_die_var = tk.StringVar(value="Click a die to see its row/col/serial.")
+            ttk.Label(info_lf, textvariable=self._nzmap_die_var,
+                     font=("Consolas", 10)).pack(anchor="w", padx=6, pady=6)
+            self._draw_empty_nzmap()
+        else:
+            ttk.Label(tab, text="matplotlib not installed — install it to view the wafer map.",
+                     foreground="red").grid(row=2, column=0, sticky="nw", padx=10, pady=10)
+
+    def _draw_empty_nzmap(self, message: str | None = None):
+        if not _MPL:
+            return
+        self._nzmap_ax.clear()
+        self._nzmap_ax.set_aspect("equal")
+        self._nzmap_ax.text(
+            0.5, 0.5, message or "No wafer plan imported yet — "
+                                 "Recipe tab → Import Wafer Plan (.xlsx)",
+            ha="center", va="center", transform=self._nzmap_ax.transAxes, color="#999999")
+        self._nzmap_canvas.draw_idle()
+
+    def _redraw_nanoz_wafer_map(self):
+        if not _MPL:
+            return
+        self._nzmap_dies_by_rc = {}
+        self._nzmap_accr_dies_by_rc = {}
+        if self._nzmap_source_var.get() == "accretech":
+            self._draw_accretech_nzmap()
+        else:
+            self._draw_probe_plan_nzmap()
+
+    def _draw_probe_plan_nzmap(self):
+        plan = self._wafer_plan
+        if plan is None:
+            self._draw_empty_nzmap()
+            return
+        dies = nzb.wafer_plan_die_grid(plan)
+        self._nzmap_dies_by_rc = {(d["row"], d["col"]): d for d in dies}
+        self._nzmap_ax.clear()
+        self._nzmap_ax.set_aspect("equal")
+        patches = [Rectangle((d["col"] - 0.5, -d["row"] - 0.5), 1, 1) for d in dies]
+        colors = ["#8b0000" if d["status"] == "reference" else "#7aaec8" for d in dies]
+        coll = PatchCollection(patches, edgecolor="#1e293b", linewidths=0.4)
+        coll.set_facecolor(colors)
+        self._nzmap_ax.add_collection(coll)
+        max_col = max((d["col"] for d in dies), default=1)
+        max_row = max((d["row"] for d in dies), default=1)
+        self._nzmap_ax.set_xlim(0, max_col + 1)
+        self._nzmap_ax.set_ylim(-(max_row + 1), 0)
+        self._nzmap_ax.set_title(f"Probe Plan — {len(dies)} on-wafer die(s) — "
+                                 "click a die to see its serial", fontsize=9)
+        self._nzmap_canvas.draw_idle()
+
+    def _draw_accretech_nzmap(self):
+        rcs = sorted(self.wafer_map.dies.keys())
+        if not rcs:
+            self._draw_empty_nzmap(
+                "No Accretech wafer map yet — extract or auto-load one on the Run tab.")
+            return
+        self._nzmap_accr_dies_by_rc = {rc: {"row": rc[0], "col": rc[1]} for rc in rcs}
+        self._nzmap_ax.clear()
+        self._nzmap_ax.set_aspect("equal")
+        patches = [Rectangle((c - 0.5, -r - 0.5), 1, 1) for r, c in rcs]
+        coll = PatchCollection(patches, edgecolor="#1e293b", linewidths=0.4)
+        coll.set_facecolor("#7aaec8")
+        self._nzmap_ax.add_collection(coll)
+        cols = [c for _r, c in rcs]
+        rows = [r for r, _c in rcs]
+        self._nzmap_ax.set_xlim(min(cols) - 1, max(cols) + 1)
+        self._nzmap_ax.set_ylim(-(max(rows) + 1), -(min(rows) - 1))
+        self._nzmap_ax.set_title(f"Accretech — {len(rcs)} die(s) — click a die to see "
+                                 "its row/col", fontsize=9)
+        self._nzmap_canvas.draw_idle()
+
+    def _on_nzmap_click(self, event):
+        if event.xdata is None or event.ydata is None:
+            return
+        rc = (round(-event.ydata), round(event.xdata))
+        if self._nzmap_source_var.get() == "accretech":
+            d = self._nzmap_accr_dies_by_rc.get(rc)
+            if d is None:
+                return
+            self._nzmap_die_var.set(f"Row {d['row']}, Col {d['col']}")
+            return
+        d = self._nzmap_dies_by_rc.get(rc)
+        if d is None:
+            return
+        self._nzmap_die_var.set(
+            f"Row {d['row']}, Col {d['col']} — serial {d['serial']}  ({d['status']})")
 
     def _build_run_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -448,6 +705,20 @@ class NanoZPanel(ttk.Frame):
 
         ctrl_lf = ttk.LabelFrame(controls, text="Controls")
         ctrl_lf.grid(row=0, column=0, sticky="ew")
+
+        rrow = ttk.Frame(ctrl_lf)
+        rrow.pack(fill="x", padx=6, pady=(6, 2))
+        ttk.Label(rrow, text="Recipe:").pack(side="left")
+        self._run_recipe_name_cb = ttk.Combobox(
+            rrow, textvariable=self._recipe_name_var, state="readonly", width=26)
+        self._run_recipe_name_cb.pack(side="left", padx=(4, 4))
+        self._run_recipe_name_cb.bind(
+            "<<ComboboxSelected>>", lambda _e: self._load_named_recipe())
+        ttk.Button(rrow, text="📂 Load", command=lambda: self._load_named_recipe()).pack(
+            side="left", padx=2)
+        self._run_recipe_active_lbl = ttk.Label(rrow, text="(no recipe saved yet)",
+                                                foreground="#6b7280")
+        self._run_recipe_active_lbl.pack(side="left", padx=(12, 0))
 
         prow = ttk.Frame(ctrl_lf)
         prow.pack(fill="x", padx=6, pady=(6, 2))
@@ -1121,11 +1392,23 @@ class NanoZPanel(ttk.Frame):
             self._refresh_console_boards()
             self._refresh_active_boards_label()
 
-        self._shots = nzb.load_recipe(folder_path)
-        if self._shots:
-            self._log_main(f"Recipe loaded from '{os.path.basename(folder_path)}' "
-                           f"— {len(self._shots)} shot(s).")
+        migrated = nzb.migrate_legacy_recipe(folder_path)
+        if migrated:
+            self._log_main(f"Migrated the old unnamed NanoZ recipe into '{migrated}'.")
+        name, shots, wafer_plan_path = nzb.load_active_recipe(folder_path)
+        self._shots = shots
+        self._current_recipe_name = name
+        self._wafer_plan_path = wafer_plan_path
+        if shots:
+            self._log_main(f"Recipe '{name}' auto-loaded from "
+                           f"'{os.path.basename(folder_path)}' — {len(shots)} shot(s).")
+        self._refresh_recipe_name_cb()
         self._rebuild_recipe_columns()
+        if name:
+            self._autoload_wafer_plan_for_recipe(folder_path, name)
+        else:
+            self._wafer_plan = None
+            self._redraw_nanoz_wafer_map()
 
     def _refresh_console_boards(self):
         ports = sorted(self._boards.keys())

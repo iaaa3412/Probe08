@@ -314,14 +314,13 @@ def load_known_boards(folder) -> list[BoardIdentity]:
     ]
 
 
-RECIPE_FILENAME = "ata_nanoz_recipe.json"
-
+LEGACY_RECIPE_FILENAME = "ata_nanoz_recipe.json"
+RECIPES_FILENAME = "ata_nanoz_recipes.json"
 
 _RECIPE_SHOT_META_KEYS = ("die_column", "td_start_row", "td_end_row", "board_reasons")
 
 
-def save_recipe(folder, shots: list) -> None:
-    path = Path(folder) / RECIPE_FILENAME
+def _shots_to_rows(shots: list) -> list:
     rows = []
     for s in shots:
         row = {"label": s.get("label", ""), "excluded_boards": sorted(s.get("excluded_boards", ()))}
@@ -329,19 +328,12 @@ def save_recipe(folder, shots: list) -> None:
             if k in s:
                 row[k] = s[k]
         rows.append(row)
-    path.write_text(json.dumps({"shots": rows}, indent=2), encoding="utf-8")
+    return rows
 
 
-def load_recipe(folder) -> list[dict]:
-    path = Path(folder) / RECIPE_FILENAME
-    if not path.is_file():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+def _rows_to_shots(rows: list) -> list[dict]:
     shots = []
-    for s in data.get("shots", []):
+    for s in rows:
         if not isinstance(s, dict):
             continue
         shot = {"label": s.get("label", ""), "excluded_boards": set(s.get("excluded_boards", ()))}
@@ -350,6 +342,97 @@ def load_recipe(folder) -> list[dict]:
                 shot[k] = s[k]
         shots.append(shot)
     return shots
+
+
+def _load_recipes_file(folder) -> dict:
+    path = Path(folder) / RECIPES_FILENAME
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data.get("recipes"), dict):
+                data.setdefault("active", None)
+                return data
+        except (OSError, ValueError):
+            pass
+    return {"active": None, "recipes": {}}
+
+
+def _write_recipes_file(folder, data: dict) -> None:
+    path = Path(folder) / RECIPES_FILENAME
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def list_recipe_names(folder) -> list[str]:
+    return sorted(_load_recipes_file(folder)["recipes"].keys())
+
+
+def get_active_recipe_name(folder):
+    return _load_recipes_file(folder).get("active")
+
+
+def save_named_recipe(folder, name: str, shots: list, wafer_plan_path: str | None = None) -> None:
+    data = _load_recipes_file(folder)
+    data["recipes"][name] = _shots_to_rows(shots)
+    data["active"] = name
+    if wafer_plan_path:
+        data.setdefault("wafer_plan_paths", {})[name] = wafer_plan_path
+    _write_recipes_file(folder, data)
+
+
+def load_named_recipe(folder, name: str) -> list[dict]:
+    rows = _load_recipes_file(folder)["recipes"].get(name)
+    return _rows_to_shots(rows) if rows is not None else []
+
+
+def get_recipe_wafer_plan_path(folder, name: str) -> str | None:
+    """The source .xlsx path a named recipe's shots were generated from, if any
+    was recorded — lets the GUI auto-reload the wafer map alongside the recipe."""
+    return _load_recipes_file(folder).get("wafer_plan_paths", {}).get(name)
+
+
+def set_active_recipe(folder, name: str) -> None:
+    data = _load_recipes_file(folder)
+    if name in data["recipes"]:
+        data["active"] = name
+        _write_recipes_file(folder, data)
+
+
+def delete_named_recipe(folder, name: str) -> None:
+    data = _load_recipes_file(folder)
+    data["recipes"].pop(name, None)
+    data.get("wafer_plan_paths", {}).pop(name, None)
+    if data.get("active") == name:
+        data["active"] = None
+    _write_recipes_file(folder, data)
+
+
+def load_active_recipe(folder):
+    """Returns (name, shots, wafer_plan_path) for the last-saved/loaded recipe,
+    or (None, [], None)."""
+    data = _load_recipes_file(folder)
+    name = data.get("active")
+    if not name or name not in data["recipes"]:
+        return None, [], None
+    wafer_plan_path = data.get("wafer_plan_paths", {}).get(name)
+    return name, _rows_to_shots(data["recipes"][name]), wafer_plan_path
+
+
+def migrate_legacy_recipe(folder):
+    """One-time migration of the old single-recipe file (pre-naming) into the
+    named scheme, under the name 'Imported'. Returns the name if it migrated
+    something, else None. No-op if any named recipe already exists."""
+    legacy_path = Path(folder) / LEGACY_RECIPE_FILENAME
+    if not legacy_path.is_file() or _load_recipes_file(folder)["recipes"]:
+        return None
+    try:
+        legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    shots = _rows_to_shots(legacy.get("shots", []))
+    if not shots:
+        return None
+    save_named_recipe(folder, "Imported", shots)
+    return "Imported"
 
 
 # ── Wafer-plan (.xlsx) import ───────────────────────────────────────────────
@@ -461,29 +544,65 @@ def load_wafer_plan(path) -> WaferPlan:
                      columns=columns, reference_shots=reference_shots)
 
 
+def classify_die(plan: "WaferPlan", row: int, col: int) -> str:
+    """Returns 'product', 'reference', or 'off_wafer' for a given (row, col)."""
+    col_info = plan.columns.get(col)
+    if col_info is None or row < col_info.top_valid_row or row > col_info.bottom_valid_row:
+        return "off_wafer"
+    shot_row = (row - 1) // plan.dies_per_shot + 1
+    shot_col = (col - 1) // plan.dies_per_shot + 1
+    if (shot_row, shot_col) in plan.reference_shots:
+        local_row = (row - 1) % plan.dies_per_shot + 1
+        local_col = (col - 1) % plan.dies_per_shot + 1
+        if (local_row, local_col) in REFERENCE_LOCAL_POSITIONS:
+            return "reference"
+    return "product"
+
+
 def touchdown_slot_exclusions(die_col: int, start_row: int, end_row: int, plan: "WaferPlan") -> dict:
     """Slot (1..probe_height, top to bottom of this touchdown) -> exclusion reason,
     or None if that slot lands on a normal product die that should be run."""
-    col = plan.columns.get(die_col)
     result = {}
     for slot in range(1, plan.probe_height + 1):
         physical_row = start_row + slot - 1
-        if col is None or physical_row > end_row:
+        if physical_row > end_row:
             result[slot] = "past touchdown end"
             continue
-        if physical_row < col.top_valid_row or physical_row > col.bottom_valid_row:
-            result[slot] = "off wafer"
-            continue
-        shot_row = (physical_row - 1) // plan.dies_per_shot + 1
-        shot_col = (die_col - 1) // plan.dies_per_shot + 1
-        if (shot_row, shot_col) in plan.reference_shots:
-            local_row = (physical_row - 1) % plan.dies_per_shot + 1
-            local_col = (die_col - 1) % plan.dies_per_shot + 1
-            if (local_row, local_col) in REFERENCE_LOCAL_POSITIONS:
-                result[slot] = "reference die"
-                continue
-        result[slot] = None
+        status = classify_die(plan, physical_row, die_col)
+        result[slot] = {"off_wafer": "off wafer", "reference": "reference die",
+                        "product": None}[status]
     return result
+
+
+def wafer_plan_die_grid(plan: "WaferPlan") -> list[dict]:
+    """Every on-wafer die (product or reference) as {row, col, status, serial}."""
+    if not plan.columns:
+        return []
+    max_row = max(c.bottom_valid_row for c in plan.columns.values())
+    dies = []
+    for col in sorted(plan.columns):
+        for row in range(1, max_row + 1):
+            status = classify_die(plan, row, col)
+            if status != "off_wafer":
+                dies.append({"row": row, "col": col, "status": status,
+                            "serial": die_serial(row, col)})
+    return dies
+
+
+# Letters/numbers scheme for the Nautilus wafer plan's LL### die serials
+# (see the workbook's own "Serial Reference" sheet) - verified against two
+# real entries from "Reference Dies" (row=11,col=51 -> AL056; row=51,col=51
+# -> CE056).
+_SERIAL_LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ"  # 23 letters, I/O/Q excluded
+_SERIAL_VALID_NUMS = [n for n in range(1, 117) if n % 10 != 0]  # 105 values, 1..116
+
+
+def die_serial(row: int, col: int) -> str:
+    r_idx = row - 1
+    first, second = divmod(r_idx, len(_SERIAL_LETTERS))
+    letters = _SERIAL_LETTERS[first % len(_SERIAL_LETTERS)] + _SERIAL_LETTERS[second]
+    num = (_SERIAL_VALID_NUMS[col - 1] if 1 <= col <= len(_SERIAL_VALID_NUMS) else col)
+    return f"{letters}{num:03d}"
 
 
 def wafer_plan_stats(plan: "WaferPlan") -> dict:
