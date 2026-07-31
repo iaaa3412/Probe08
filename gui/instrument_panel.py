@@ -365,6 +365,7 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech":
             self._tab_instruments(debug_nb)
             self._tab_probe_routing(debug_nb)
+            self._tab_pma_wafer(debug_nb)
         else:
             self._tab_instruments_eg(debug_nb)
             self._tab_dmm_debug(debug_nb)
@@ -3457,7 +3458,8 @@ class MainLayout(ttk.Frame):
 
     def _on_results_map_click(self, event):
         wm = self._results_wafer_map
-        hit = wm.canvas.find_closest(event.x, event.y)
+        cx, cy = wm.canvas.canvasx(event.x), wm.canvas.canvasy(event.y)
+        hit = wm.canvas.find_closest(cx, cy)
         if not hit:
             return
         rc = next((k for k, v in wm.dies.items() if v == hit[0]), None)

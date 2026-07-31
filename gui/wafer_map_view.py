@@ -13,7 +13,8 @@ CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq"] + list(STEP_FIE
 def _bind_zoom_only(canvas):
     canvas.configure(scrollregion=(-20000, -20000, 20000, 20000))
 
-    def _zoom(cx, cy, factor):
+    def _zoom(screen_x, screen_y, factor):
+        cx, cy = canvas.canvasx(screen_x), canvas.canvasy(screen_y)
         canvas.scale("all", cx, cy, factor, factor)
         bb = canvas.bbox("all")
         if bb:
@@ -38,7 +39,9 @@ def _pz_bind(canvas, on_reset):
 ATA_KEY_FILES = {
     "ata_wafer_map_gds.csv":       ("Die map & coordinates (GDS-derived)", "shared"),
     "ata_wafer_map_accretech.csv": ("Die map & coordinates (real prober extraction)", "accretech"),
-    "ata_wafer_map_pma.csv":       ("Die/shot map (PMA workbook extraction)", "electroglas"),
+    "ata_wafer_map_pma.csv":       ("Die/shot map (Recipe Generator workbook)", "shared"),
+    "ata_wafer_map_pma_touchdowns.csv": ("Die/shot map (raw PMA touchdown extraction)", "electroglas"),
+    "ata_wafer_map_csv_import.csv": ("Plain CSV wafer map (manually imported die IDs)", "shared"),
     "ata_wafer_map_merged.csv":    ("Accretech + PMA merged map (multi-die-per-shot)", "electroglas"),
     "ata_wafer_map_selected.csv":  ("Manually selected test dies (Accretech Run tab)", "accretech"),
     "ata_wafer_map_electroglas.csv": ("Die/touchdown map (PMA Process extraction)", "electroglas"),
@@ -134,7 +137,8 @@ class WaferMapPanel(ttk.LabelFrame):
         dx, dy = e.x - press[0], e.y - press[1]
         if dx * dx + dy * dy > 16:
             return
-        hit = self.canvas.find_closest(e.x, e.y)
+        cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
+        hit = self.canvas.find_closest(cx, cy)
         if not hit:
             return
         rc = next((k for k, v in self.dies.items() if v == hit[0]), None)

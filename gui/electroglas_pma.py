@@ -266,7 +266,8 @@ def _pitch_index(values: list) -> dict:
 def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
     groups, order = _group_by_major(touchdowns)
     shots_by_major = {idx: {"x_um": groups[idx]["x"], "y_um": groups[idx]["y"],
-                            "dies": [groups[idx]["device_id_major"]], "included": True}
+                            "dies": split_quad_devices(groups[idx]["device_id_major"]),
+                            "included": True}
                       for idx in order}
 
     xs = sorted(set(shots_by_major[idx]["x_um"] for idx in order))
@@ -285,7 +286,8 @@ def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
     cols = (max(x_to_col.values()) + 1) if x_to_col else 0
 
     name = os.path.splitext(os.path.basename(pma_path))[0]
-    real_dies = sum(len(s["dies"]) for s in shots)
+    total_dies = sum(len(s["dies"]) for s in shots)
+    na_dies = sum(1 for s in shots for d in s["dies"] if d.strip().upper() == "NA")
     return {
         "path": pma_path,
         "recipe_name": name,
@@ -297,8 +299,8 @@ def to_shot_data(pma_path: str, fields: dict, touchdowns: list) -> dict:
         "cols": cols,
         "included_shot_count": len(shots),
         "excluded_shot_count": 0,
-        "real_die_count": real_dies,
-        "na_die_count": 0,
+        "real_die_count": total_dies - na_dies,
+        "na_die_count": na_dies,
         "shots": shots,
         "x_headers": xs,
         "y_headers": ys,

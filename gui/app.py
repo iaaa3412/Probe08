@@ -355,7 +355,7 @@ class AtomicaDashboard(tk.Tk):
                     raise Exception("No response")
             except Exception as e:
                 ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
-                self.log(f"[ERROR] {name}: {e}")
+                self.log(f"[ERROR] {name}: {e}") 
 
     def init_hardware(self):
         self.log("[SYSTEM] Pinging Accretech hardware connections...")
@@ -505,7 +505,7 @@ class AtomicaDashboard(tk.Tk):
         self.ui.draw_donut(self.ui.sidebar_canvas, 120, self.dies_passed, self.dies_failed, untested)
         if hasattr(self.ui, "results_canvas"):
             self.ui.draw_donut(self.ui.results_canvas, 300, self.dies_passed, self.dies_failed, untested)
-
+ 
     def on_exec_stats_change(self, tested, passed, failed, total):
         self.dies_tested  = tested
         self.dies_passed  = passed

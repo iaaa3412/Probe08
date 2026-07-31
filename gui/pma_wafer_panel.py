@@ -8,6 +8,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional
 
+import electroglas_pma as egpma
+
 try:
     import xlrd
     _XLRD = True
@@ -238,35 +240,40 @@ def parse_legacy_workbook(path: str) -> Dict[str, Any]:
     }
 
 
-ATA_PMA_FILENAME = "ata_wafer_map_pma.csv"
-_ATA_PMA_META_FIELDS = ("recipe_name", "die_size_x", "die_size_y",
-                        "x_move_first", "y_move_first", "align_die")
+# Each of the three wafer-map sources (PMA touchdowns, Recipe Generator
+# workbook, plain CSV import) is stored independently in the ATA folder under
+# its own filename and never combined with the others.
+ATA_XLS_FILENAME = "ata_wafer_map_pma.csv"
+ATA_PMA_TOUCHDOWN_FILENAME = "ata_wafer_map_pma_touchdowns.csv"
+ATA_CSV_MAP_FILENAME = "ata_wafer_map_csv_import.csv"
+_ATA_SHOT_META_FIELDS = ("recipe_name", "die_size_x", "die_size_y",
+                         "x_move_first", "y_move_first", "align_die")
 
 
-def save_workbook_to_ata(data: Dict[str, Any], folder: str) -> str:
-    path = os.path.join(folder, ATA_PMA_FILENAME)
+def save_shots_to_ata(data: Dict[str, Any], folder: str, filename: str) -> str:
+    path = os.path.join(folder, filename)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow([*_ATA_PMA_META_FIELDS, "row", "col", "x_um", "y_um",
+        w.writerow([*_ATA_SHOT_META_FIELDS, "row", "col", "x_um", "y_um",
                    "die1", "die2", "die3", "die4"])
         for s in data.get("shots", []):
             if not s["included"]:
                 continue
             dies = (s["dies"] + ["", "", "", ""])[:4]
-            w.writerow([data.get(k, "") for k in _ATA_PMA_META_FIELDS]
+            w.writerow([data.get(k, "") for k in _ATA_SHOT_META_FIELDS]
                       + [s["row"], s["col"], s["x_um"], s["y_um"], *dies])
     return path
 
 
-def load_workbook_from_ata(folder: str) -> Optional[Dict[str, Any]]:
-    path = os.path.join(folder, ATA_PMA_FILENAME)
+def load_shots_from_ata(folder: str, filename: str) -> Optional[Dict[str, Any]]:
+    path = os.path.join(folder, filename)
     if not os.path.exists(path):
         return None
     shots = []
-    meta = {k: "" for k in _ATA_PMA_META_FIELDS}
+    meta = {k: "" for k in _ATA_SHOT_META_FIELDS}
     with open(path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
-            for k in _ATA_PMA_META_FIELDS:
+            for k in _ATA_SHOT_META_FIELDS:
                 if row.get(k):
                     meta[k] = row[k]
             try:
@@ -296,6 +303,20 @@ def load_workbook_from_ata(folder: str) -> Optional[Dict[str, Any]]:
         "real_die_count": real_count,
         "na_die_count": na_count,
     }
+
+
+def save_csv_map_to_ata(data: Dict[str, Any], folder: str, filename: str) -> str:
+    path = os.path.join(folder, filename)
+    rows, cols = int(data.get("rows") or 0), int(data.get("cols") or 0)
+    grid = [["" for _ in range(cols)] for _ in range(rows)]
+    for s in data.get("shots", []):
+        r, c = s["row"], s["col"]
+        if 0 <= r < rows and 0 <= c < cols and s.get("dies"):
+            grid[r][c] = s["dies"][0]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerows(grid)
+    return path
 
 
 
@@ -366,13 +387,24 @@ def centroid_offset(pma_grid: List[Dict[str, Any]], accretech_rc) -> tuple:
     return round(acc_row_c - pma_row_c), round(acc_col_c - pma_col_c)
 
 
+def parse_plain_csv_wafer_map(path: str) -> Dict[str, Any]:
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    shots = []
+    for r, row_cells in enumerate(rows):
+        for c, cell in enumerate(row_cells):
+            die_id = (cell or "").strip()
+            if not die_id:
+                continue
+            shots.append({"row": r, "col": c, "dies": [die_id]})
+    return {"path": path, "shots": shots, "die_count": len(shots)}
+
 
 _COLOR_EXCLUDED = "#374151"
 _COLOR_FULL     = "#16a34a"
 _COLOR_PARTIAL  = "#d97706"
 _COLOR_EMPTY    = "#dc2626"
 _COLOR_SELECTED = "#38bdf8"
-_COLOR_SPECIAL  = "#a855f7"
 
 
 class PmaWaferPanel(ttk.Frame):
@@ -384,9 +416,10 @@ class PmaWaferPanel(ttk.Frame):
         self.workbook_data: Optional[Dict[str, Any]] = None
         self._xls_shot_data: Optional[Dict[str, Any]] = None
         self._pma_shot_data: Optional[Dict[str, Any]] = None
-        self._special_shots: List[Dict[str, Any]] = []
+        self._csv_shot_data: Optional[Dict[str, Any]] = None
         self._loaded_ata_folder: Optional[str] = None
         self._show_labels_var = tk.BooleanVar(value=True)
+        self._source_var = tk.StringVar(value="pma")
         self.path_var = tk.StringVar(value="No workbook loaded.")
         self.summary_var = tk.StringVar(value="")
         self.selected_var = tk.StringVar(value="Click a shot on the map to see its dies.")
@@ -414,8 +447,23 @@ class PmaWaferPanel(ttk.Frame):
     def _build_controls(self):
         ctl = ttk.Frame(self, padding=6)
         ctl.grid(row=0, column=0, sticky="ew")
-        ttk.Button(ctl, text="💾 Save to ATA Folder",
+        ttk.Button(ctl, text="💾 Save Current View to ATA Folder",
                    command=self._save_to_ata).pack(side="left", padx=(6, 0))
+        ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(ctl, text="📥  Load PMA File…",
+                  command=self._load_pma_dialog).pack(side="left", padx=(0, 2))
+        ttk.Button(ctl, text="📥  Open Recipe Generator (.xls)…",
+                  command=self.open_workbook_dialog).pack(side="left", padx=2)
+        ttk.Button(ctl, text="📥  Load CSV Wafer Map…",
+                  command=self._load_csv_dialog).pack(side="left", padx=2)
+        ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(ctl, text="View:").pack(side="left", padx=(0, 2))
+        ttk.Radiobutton(ctl, text="PMA Touchdowns", variable=self._source_var, value="pma",
+                        command=self._on_source_change).pack(side="left")
+        ttk.Radiobutton(ctl, text="Recipe Generator", variable=self._source_var, value="xls",
+                        command=self._on_source_change).pack(side="left")
+        ttk.Radiobutton(ctl, text="CSV Wafer Map", variable=self._source_var, value="csv",
+                        command=self._on_source_change).pack(side="left")
         if self._main_layout is not None:
             ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
             ttk.Button(ctl, text="📥  Import Legacy (.pma)…",
@@ -479,7 +527,6 @@ class PmaWaferPanel(ttk.Frame):
             ("partial", _COLOR_PARTIAL, "partial"),
             ("empty", _COLOR_EMPTY, "none"),
             ("excluded", _COLOR_EXCLUDED, "excluded"),
-            ("special", _COLOR_SPECIAL, "alignment/skip"),
         ]:
             sw = tk.Canvas(legend, width=12, height=12, highlightthickness=0)
             sw.create_rectangle(0, 0, 12, 12, fill=color, outline="")
@@ -524,6 +571,68 @@ class PmaWaferPanel(ttk.Frame):
             return
         self.load_workbook_path(path)
 
+    def _load_pma_dialog(self):
+        path = filedialog.askopenfilename(
+            title="Load PMA File",
+            filetypes=[("PMA recipe files", "*.PMA *.pma"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        self.load_pma_path(path)
+
+    def load_pma_path(self, path: str):
+        try:
+            fields = egpma.parse_pma_file(path)
+            touchdowns = egpma.load_touchdowns(path, fields)
+            shot_data = egpma.to_shot_data(path, fields, touchdowns)
+        except OSError as exc:
+            messagebox.showerror("Could not load PMA file", str(exc))
+            self._log(f"[PMA] Error reading {path}: {exc}")
+            return
+        self.show_touchdowns(shot_data)
+
+    def _load_csv_dialog(self):
+        path = filedialog.askopenfilename(
+            title="Load Plain CSV Wafer Map",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        self.load_csv_path(path)
+
+    def _normalize_csv_data(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        max_row = max((s["row"] for s in raw["shots"]), default=-1)
+        max_col = max((s["col"] for s in raw["shots"]), default=-1)
+        shots = [{"row": s["row"], "col": s["col"],
+                 "x_um": float(s["col"]), "y_um": float(s["row"]),
+                 "dies": s["dies"], "included": True} for s in raw["shots"]]
+        name = os.path.splitext(os.path.basename(raw["path"]))[0]
+        return {
+            "path": raw["path"], "recipe_name": name,
+            "die_size_x": 1.0, "die_size_y": 1.0,
+            "x_move_first": "", "y_move_first": "",
+            "x_headers": [float(c) for c in range(max_col + 1)],
+            "y_headers": [float(r) for r in range(max_row + 1)],
+            "rows": max_row + 1, "cols": max_col + 1,
+            "shots": shots,
+            "included_shot_count": len(shots), "excluded_shot_count": 0,
+            "real_die_count": len(shots), "na_die_count": 0,
+        }
+
+    def load_csv_path(self, path: str):
+        try:
+            raw = parse_plain_csv_wafer_map(path)
+        except OSError as exc:
+            messagebox.showerror("Could not load CSV wafer map", str(exc))
+            self._log(f"[PMA] Error reading {path}: {exc}")
+            return
+        data = self._normalize_csv_data(raw)
+        self._csv_shot_data = data
+        self._source_var.set("csv")
+        self._log(f"[PMA] CSV wafer map loaded: {raw['die_count']} die(s) from {path}")
+        self._save_source_to_ata("csv")
+        self._refresh_view()
+
     def load_workbook_path(self, path: str):
         self.path_var.set(f"Loading {os.path.basename(path)} …")
         self._log(f"[PMA] Opening legacy recipe workbook {path}")
@@ -532,7 +641,6 @@ class PmaWaferPanel(ttk.Frame):
     def _load_worker(self, path: str):
         try:
             data = parse_legacy_workbook(path)
-            self._loaded_ata_folder = None
             self.after(0, lambda: self._after_load(data))
         except Exception as exc:
             self.after(0, lambda e=exc: self._load_failed(e))
@@ -542,27 +650,41 @@ class PmaWaferPanel(ttk.Frame):
         messagebox.showerror("Could not load workbook", str(exc))
         self._log(f"[PMA] Load failed: {exc}")
 
-    def _save_to_ata(self):
-        if not self.workbook_data:
-            messagebox.showinfo("No Data", "Open a legacy recipe workbook first.")
-            return
+    def _data_for_source(self, source: str) -> Optional[Dict[str, Any]]:
+        return {"pma": self._pma_shot_data, "xls": self._xls_shot_data,
+               "csv": self._csv_shot_data}.get(source)
+
+    _SOURCE_LABELS = {"pma": "PMA touchdown data", "xls": "Recipe Generator workbook",
+                      "csv": "CSV wafer map"}
+    _SOURCE_FILENAMES = {"pma": ATA_PMA_TOUCHDOWN_FILENAME, "xls": ATA_XLS_FILENAME,
+                         "csv": ATA_CSV_MAP_FILENAME}
+
+    def _save_source_to_ata(self, source: str):
         folder = self._get_folder()
         if not folder:
+            return
+        data = self._data_for_source(source)
+        if not data:
+            return
+        filename = self._SOURCE_FILENAMES[source]
+        if source == "csv":
+            path = save_csv_map_to_ata(data, folder, filename)
+        else:
+            path = save_shots_to_ata(data, folder, filename)
+        self._log(f"[PMA] Saved {self._SOURCE_LABELS[source]} → {os.path.basename(path)}")
+
+    def _save_to_ata(self):
+        source = self._source_var.get()
+        if not self._data_for_source(source):
+            messagebox.showinfo("No Data", f"Load {self._SOURCE_LABELS[source]} first.")
+            return
+        if not self._get_folder():
             messagebox.showerror(
                 "No ATA Folder",
                 "No ATA folder is loaded — use 📁 Load ATA Folder on the\n"
                 "top toolbar first, then Save to ATA Folder here.")
             return
-        path = os.path.join(folder, ATA_PMA_FILENAME)
-        if os.path.exists(path) and not messagebox.askyesno(
-            "Overwrite Wafer Map",
-            f"{path}\nalready exists — overwrite it with the currently "
-            f"loaded workbook's {self.workbook_data['included_shot_count']} shot(s)?"
-        ):
-            return
-        save_workbook_to_ata(self.workbook_data, folder)
-        self._loaded_ata_folder = folder
-        self._log(f"[PMA] Saved {self.workbook_data['included_shot_count']} shot(s) → {path}")
+        self._save_source_to_ata(source)
 
     def _import_recipe_pma(self):
         recipe_panel = getattr(self._main_layout, "recipe_panel", None)
@@ -589,39 +711,54 @@ class PmaWaferPanel(ttk.Frame):
             return
         recipe_panel.import_legacy_workbook_from_path(path)
 
+    def reset_view(self):
+        self._pma_shot_data = None
+        self._xls_shot_data = None
+        self._csv_shot_data = None
+        self.workbook_data = None
+        self._loaded_ata_folder = None
+        self._refresh_view()
+
+    def _load_csv_ata_file(self, folder: str) -> Optional[Dict[str, Any]]:
+        path = os.path.join(folder, ATA_CSV_MAP_FILENAME)
+        if not os.path.exists(path):
+            return None
+        raw = parse_plain_csv_wafer_map(path)
+        if not raw["shots"]:
+            return None
+        return self._normalize_csv_data(raw)
+
     def load_from_ata(self, folder: str):
+        """Independently autoload each of the three sources from this ATA
+        folder's own saved files. Switching folders always starts clean —
+        nothing from the previous folder is left showing."""
         if not folder:
             return
-        data = load_workbook_from_ata(folder)
-        if data is None:
-            return
+        self.reset_view()
         self._loaded_ata_folder = folder
-        self._after_load(data)
-        self._log(f"[PMA] Restored '{data['recipe_name']}' from {ATA_PMA_FILENAME}")
+        self._xls_shot_data = load_shots_from_ata(folder, ATA_XLS_FILENAME)
+        self._pma_shot_data = load_shots_from_ata(folder, ATA_PMA_TOUCHDOWN_FILENAME)
+        self._csv_shot_data = self._load_csv_ata_file(folder)
+        loaded = [self._SOURCE_LABELS[s] for s in ("pma", "xls", "csv")
+                 if self._data_for_source(s)]
+        if not self._data_for_source(self._source_var.get()):
+            for s in ("pma", "xls", "csv"):
+                if self._data_for_source(s):
+                    self._source_var.set(s)
+                    break
+        self._refresh_view()
+        if loaded:
+            self._log(f"[PMA] Auto-loaded from ATA folder: {', '.join(loaded)}")
 
     def show_touchdowns(self, data: Dict[str, Any]):
-        self.workbook_data = data
         self._pma_shot_data = data
-        self.path_var.set(f"{data['path']}  (from PMA Process)")
-        align_line = self._align_summary_line(data)
-        self.summary_var.set(
-            f"Recipe: {data['recipe_name'] or '(unnamed)'}\n"
-            f"Die size: {data['die_size_x']} x {data['die_size_y']} um\n"
-            f"Align offset: ({data['x_move_first']}, {data['y_move_first']}) um\n"
-            f"{align_line}"
-            f"Grid: {data['rows']} rows x {data['cols']} cols\n"
-            f"Shots on map: {data['included_shot_count']}\n"
-            f"Real dies: {data['real_die_count']}"
-        )
-        self._populate_tree(data)
-        self._update_legend(data)
-        if _MPL:
-            self._draw_map(data)
+        self._source_var.set("pma")
         self._log(
-            f"[PMA] Wafer map merged from PMA Process: {data['included_shot_count']} "
-            f"shot(s), {data['real_die_count']} die(s) on the map."
+            f"[PMA] PMA touchdowns loaded: {data['included_shot_count']} shot(s), "
+            f"{data['real_die_count']} die(s) on the map."
         )
-        self._recombine()
+        self._save_source_to_ata("pma")
+        self._refresh_view()
 
     def _align_summary_line(self, data: Dict[str, Any]) -> str:
         ids = align_die_ids(data)
@@ -630,182 +767,48 @@ class PmaWaferPanel(ttk.Frame):
         return f"Align die: {'/'.join(ids)}  (marked ● on map)\n"
 
     def _after_load(self, data: Dict[str, Any]):
-        self.workbook_data = data
         self._xls_shot_data = data
-        self.path_var.set(data["path"])
-        align_line = self._align_summary_line(data)
-        self.summary_var.set(
-            f"Recipe: {data['recipe_name'] or '(unnamed)'}\n"
-            f"Die size: {data['die_size_x']} x {data['die_size_y']} um\n"
-            f"Align offset: ({data['x_move_first']}, {data['y_move_first']}) um\n"
-            f"{align_line}"
-            f"Grid: {data['rows']} rows x {data['cols']} cols\n"
-            f"Shots on map: {data['included_shot_count']} "
-            f"(excluded: {data['excluded_shot_count']})\n"
-            f"Real dies: {data['real_die_count']}  (NA slots skipped: {data['na_die_count']})"
-        )
-        self._populate_tree(data)
-        self._update_legend(data)
-        if _MPL:
-            self._draw_map(data)
+        self._source_var.set("xls")
         self._log(
-            f"[PMA] Loaded '{data['recipe_name']}': {data['included_shot_count']} shots, "
-            f"{data['real_die_count']} real dies on the map."
+            f"[PMA] Recipe Generator loaded '{data['recipe_name']}': "
+            f"{data['included_shot_count']} shots, {data['real_die_count']} real dies."
         )
-        self._recombine()
-
-    def _frame_offset(self, xls_data: Dict[str, Any],
-                      pma_data: Dict[str, Any]) -> Optional[tuple]:
-        try:
-            return (float(xls_data.get("x_move_first") or 0)
-                   - float(pma_data.get("x_move_first") or 0),
-                   float(xls_data.get("y_move_first") or 0)
-                   - float(pma_data.get("y_move_first") or 0))
-        except (TypeError, ValueError):
-            return None
-
-    def _compute_slot_offsets(self, xls_data: Dict[str, Any], pma_data: Dict[str, Any],
-                              off_x: float, off_y: float) -> Dict[int, tuple]:
-        pma_pos = {d: (s["x_um"], s["y_um"])
-                  for s in pma_data.get("shots", []) for d in s.get("dies", [])}
-        slot_offsets: Dict[int, tuple] = {}
-        for s in xls_data.get("shots", []):
-            if not s.get("included"):
-                continue
-            corner_x = s["x_um"] + off_x
-            corner_y = s["y_um"] + off_y
-            for idx, d in enumerate(s.get("dies", [])):
-                dd = d.strip()
-                if dd.upper() == "NA" or dd not in pma_pos:
-                    continue
-                px, py = pma_pos[dd]
-                slot_offsets.setdefault(
-                    idx, (round(px - corner_x), round(py - corner_y)))
-        return slot_offsets
-
-    def _quad_outline_rects(self, xls_data: Dict[str, Any],
-                            pma_data: Dict[str, Any]) -> List[tuple]:
-        offset = self._frame_offset(xls_data, pma_data)
-        if offset is None:
-            return []
-        off_x, off_y = offset
-        try:
-            pma_dx = float(pma_data.get("die_size_x") or 0)
-            pma_dy = float(pma_data.get("die_size_y") or 0)
-        except (TypeError, ValueError):
-            return []
-        if not pma_dx or not pma_dy:
-            return []
-        slot_offsets = self._compute_slot_offsets(xls_data, pma_data, off_x, off_y)
-        if not slot_offsets:
-            return []
-        xs_off = [o[0] for o in slot_offsets.values()]
-        ys_off = [o[1] for o in slot_offsets.values()]
-        min_ox, max_ox = min(xs_off), max(xs_off)
-        min_oy, max_oy = min(ys_off), max(ys_off)
-        width = (max_ox - min_ox) + pma_dx
-        height = (max_oy - min_oy) + pma_dy
-        rects = []
-        for s in xls_data.get("shots", []):
-            if not s.get("included"):
-                continue
-            rects.append((s["x_um"] + off_x + min_ox, s["y_um"] + off_y + min_oy,
-                         width, height))
-        return rects
-
-    def _grid_index(self, value: float, headers: List[float]) -> int:
-        uniq = sorted(set(headers))
-        if len(uniq) < 2:
-            return 0
-        pitch = min((uniq[i + 1] - uniq[i] for i in range(len(uniq) - 1)
-                    if uniq[i + 1] != uniq[i]), default=0)
-        if not pitch:
-            return 0
-        return round((value - uniq[0]) / pitch)
-
-    def _special_die_shots(self, xls_data: Dict[str, Any],
-                           pma_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        offset = self._frame_offset(xls_data, pma_data)
-        if offset is None:
-            return []
-        off_x, off_y = offset
-        slot_offsets = self._compute_slot_offsets(xls_data, pma_data, off_x, off_y)
-        pma_pos = {d for s in pma_data.get("shots", []) for d in s.get("dies", [])}
-
-        unmatched: List[tuple] = []
-        for s in xls_data.get("shots", []):
-            if not s.get("included"):
-                continue
-            corner_x = s["x_um"] + off_x
-            corner_y = s["y_um"] + off_y
-            for idx, d in enumerate(s.get("dies", [])):
-                dd = d.strip()
-                if dd.upper() == "NA" or dd in pma_pos:
-                    continue
-                unmatched.append((dd, idx, corner_x, corner_y))
-
-        x_headers = pma_data.get("x_headers", [])
-        y_headers = pma_data.get("y_headers", [])
-        specials = []
-        for dd, idx, corner_x, corner_y in unmatched:
-            if idx not in slot_offsets:
-                continue
-            ox, oy = slot_offsets[idx]
-            sx, sy = corner_x + ox, corner_y + oy
-            specials.append({
-                "x_um": sx, "y_um": sy, "dies": [dd], "included": True,
-                "special": True,
-                "row": self._grid_index(sy, y_headers),
-                "col": self._grid_index(sx, x_headers),
-            })
-        return specials
-
-    def _recombine(self):
-        pma_data = self._pma_shot_data
-        xls_data = self._xls_shot_data
-        if not (pma_data and xls_data):
-            return
-        if xls_data.get("align_die"):
-            pma_data["align_die"] = xls_data["align_die"]
-        self.workbook_data = pma_data
-        self._populate_tree(pma_data)
-        self._update_legend(pma_data)
-        special_shots = self._special_die_shots(xls_data, pma_data)
-        self._special_shots = special_shots
-        if _MPL:
-            self._draw_combined_map(pma_data, xls_data, special_shots)
-        self._log(
-            f"[PMA] Combined view: {pma_data['real_die_count']} die(s) from the "
-            f"PMA moveset, outlined by {xls_data['included_shot_count']} shot(s) "
-            f"from the recipe generator"
-            + (f", plus {len(special_shots)} alignment die(s) "
-               "(PCM/TARGET) the PMA moveset has no touchdown for."
-               if special_shots else ".")
-        )
+        self._save_source_to_ata("xls")
+        self._refresh_view()
 
     def clear_pma_source(self):
         self._pma_shot_data = None
-        self._refresh_after_clear()
+        self._refresh_view()
 
     def clear_xls_source(self):
         self._xls_shot_data = None
-        self._refresh_after_clear()
+        self._refresh_view()
 
-    def _refresh_after_clear(self):
-        if self._pma_shot_data and self._xls_shot_data:
-            self._recombine()
-            return
-        self._special_shots = []
-        data = self._pma_shot_data or self._xls_shot_data
+    def _on_source_change(self):
+        self._refresh_view()
+
+    def _refresh_view(self):
+        source = self._source_var.get()
+        data = self._data_for_source(source)
         self.workbook_data = data
         if data is None:
-            self.path_var.set("No workbook loaded.")
+            self.path_var.set(f"No {self._SOURCE_LABELS[source]} loaded.")
             self.summary_var.set("")
             self.tree.delete(*self.tree.get_children())
             if _MPL:
                 self._draw_empty()
             return
-        self.path_var.set(data["path"])
+        self.path_var.set(data.get("path", ""))
+        align_line = self._align_summary_line(data)
+        self.summary_var.set(
+            f"Recipe: {data.get('recipe_name') or '(unnamed)'}\n"
+            f"Die size: {data['die_size_x']} x {data['die_size_y']} um\n"
+            f"Align offset: ({data.get('x_move_first', '')}, {data.get('y_move_first', '')}) um\n"
+            f"{align_line}"
+            f"Grid: {data['rows']} rows x {data['cols']} cols\n"
+            f"Shots on map: {data['included_shot_count']}\n"
+            f"Real dies: {data['real_die_count']}"
+        )
         self._populate_tree(data)
         self._update_legend(data)
         if _MPL:
@@ -852,11 +855,10 @@ class PmaWaferPanel(ttk.Frame):
     def _redraw_current(self):
         if not _MPL:
             return
-        if self._pma_shot_data and self._xls_shot_data:
-            self._draw_combined_map(self._pma_shot_data, self._xls_shot_data,
-                                    self._special_shots)
-        elif self.workbook_data:
+        if self.workbook_data:
             self._draw_map(self.workbook_data)
+        else:
+            self._draw_empty()
 
     def _shot_label(self, shot: Dict[str, Any]) -> str:
         dies = [d for d in shot.get("dies", []) if d.strip().upper() != "NA"]
@@ -885,16 +887,12 @@ class PmaWaferPanel(ttk.Frame):
         self._label_artists = []
 
     def _current_die_size(self) -> tuple:
-        data = (self._pma_shot_data if (self._pma_shot_data and self._xls_shot_data)
-               else self.workbook_data)
-        if not data:
+        if not self.workbook_data:
             return 1.0, 1.0
-        return (float(data.get("die_size_x") or 1) or 1.0,
-                float(data.get("die_size_y") or 1) or 1.0)
+        return (float(self.workbook_data.get("die_size_x") or 1) or 1.0,
+                float(self.workbook_data.get("die_size_y") or 1) or 1.0)
 
     def _current_label_shots(self) -> List[Dict[str, Any]]:
-        if self._pma_shot_data and self._xls_shot_data:
-            return list(self._pma_shot_data["shots"]) + list(self._special_shots)
         if self.workbook_data:
             return [s for s in self.workbook_data["shots"] if s.get("included")]
         return []
@@ -930,14 +928,13 @@ class PmaWaferPanel(ttk.Frame):
         box_w_px = bbox.width * dx / span_x
         box_h_px = bbox.height * dy / span_y
         for s in visible:
-            label = s["dies"][0] if s.get("special") else self._shot_label(s)
+            label = self._shot_label(s)
             if not label:
                 continue
             fs = self._fit_fontsize(box_w_px, box_h_px, len(label))
             t = self.ax.text(s["x_um"] + dx / 2, s["y_um"] + dy / 2, label,
                             fontsize=fs, ha="center", va="center",
-                            color=("white" if s.get("special") else "black"),
-                            zorder=6, clip_on=True)
+                            color="black", zorder=6, clip_on=True)
             self._label_artists.append(t)
         self.canvas.draw_idle()
 
@@ -949,7 +946,7 @@ class PmaWaferPanel(ttk.Frame):
     def _populate_tree(self, data: Dict[str, Any]):
         self.tree.delete(*self.tree.get_children())
         for s in data["shots"]:
-            if not s["included"]:
+            if not s.get("included"):
                 continue
             iid = f"{s['row']}:{s['col']}"
             self.tree.insert("", tk.END, iid=iid, values=(
@@ -1010,59 +1007,6 @@ class PmaWaferPanel(ttk.Frame):
         self._update_visible_labels()
         self.canvas.draw_idle()
 
-    def _draw_combined_map(self, pma_data: Dict[str, Any], xls_data: Dict[str, Any],
-                           special_shots: Optional[List[Dict[str, Any]]] = None):
-        self.ax.clear()
-        self._selected_patch = None
-        self._current_artists = []
-        dx = float(pma_data["die_size_x"] or 1) or 1.0
-        dy = float(pma_data["die_size_y"] or 1) or 1.0
-        self._map_die_um = (dx, dy)
-        special_shots = special_shots or []
-        self._shots_by_rc = {(s["row"], s["col"]): s for s in pma_data["shots"]}
-        self._shots_by_rc.update({(s["row"], s["col"]): s for s in special_shots})
-
-        patches: List[Rectangle] = []
-        colors: List[str] = []
-        for s in pma_data["shots"]:
-            patches.append(Rectangle((s["x_um"], s["y_um"]), dx, dy))
-            colors.append(self._shot_color(s))
-        for s in special_shots:
-            patches.append(Rectangle((s["x_um"], s["y_um"]), dx, dy))
-            colors.append(_COLOR_SPECIAL)
-        if patches:
-            coll = PatchCollection(patches, edgecolor="#0f172a", linewidths=0.3)
-            coll.set_facecolor(colors)
-            self.ax.add_collection(coll)
-
-        outline_rects = self._quad_outline_rects(xls_data, pma_data)
-        if outline_rects:
-            outline_patches = [Rectangle((ox, oy), ow, oh)
-                               for ox, oy, ow, oh in outline_rects]
-            ocoll = PatchCollection(outline_patches, facecolor="none",
-                                    edgecolor="#93c5fd", linewidths=0.7, zorder=4)
-            self.ax.add_collection(ocoll)
-
-        for s in find_align_shots(pma_data):
-            cx, cy = s["x_um"] + dx / 2, s["y_um"] + dy / 2
-            self.ax.plot(cx, cy, marker="o", markersize=8, color="#facc15",
-                        markeredgecolor="#78350f", markeredgewidth=1.0, zorder=5)
-        x_headers, y_headers = pma_data["x_headers"], pma_data["y_headers"]
-        if x_headers and y_headers:
-            self.ax.set_xlim(min(x_headers) - dx, max(x_headers) + 2 * dx)
-            self.ax.set_ylim(min(y_headers) - dy, max(y_headers) + 2 * dy)
-        self.ax.invert_yaxis()
-        self.ax.set_title(
-            f"{pma_data['recipe_name']} — combined: {pma_data['real_die_count']} "
-            f"dies, {xls_data['included_shot_count']} shots outlined"
-            + (f", {len(special_shots)} alignment die(s)" if special_shots else ""))
-        self.ax.set_xlabel("X (µm)")
-        self.ax.set_ylabel("Y (µm)")
-        self.ax.set_aspect("equal")
-        self._connect_view_callbacks()
-        self._update_visible_labels()
-        self.canvas.draw_idle()
-
     def _on_scroll_zoom(self, event):
         if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
             return
@@ -1081,8 +1025,6 @@ class PmaWaferPanel(ttk.Frame):
         y_headers = self.workbook_data["y_headers"]
         col = bisect.bisect_right(x_headers, event.xdata) - 1
         row = bisect.bisect_right(y_headers, event.ydata) - 1
-        if not (0 <= row < len(y_headers) and 0 <= col < len(x_headers)):
-            return
         shot = self._shots_by_rc.get((row, col))
         if shot:
             self._select_shot(shot)
@@ -1114,8 +1056,6 @@ class PmaWaferPanel(ttk.Frame):
             align_ids = {i.upper() for i in align_die_ids(self.workbook_data or {})}
             is_align = bool(align_ids & {d.upper() for d in shot["dies"]})
             tag = "  ★ ALIGN DIE" if is_align else ""
-            if shot.get("special"):
-                tag += "  ⬤ ALIGNMENT DIE (recipe generator only — no PMA touchdown)"
             lines = [f"Row {shot['row']}, Col {shot['col']}  —  "
                     f"X={shot['x_um']:.0f} µm, Y={shot['y_um']:.0f} µm{tag}", ""]
             for i, d in enumerate(shot["dies"]):
