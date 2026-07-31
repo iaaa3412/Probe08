@@ -16,6 +16,8 @@ from instrument_connection_panel import build_address_panel
 from probe_routing_panel import scrollable_routing
 from prober_debug_panel import ProberDebugPanel
 from eg_prober_debug_panel import EgProberDebugPanel
+from eg_pma_run_panel import EgPmaRunPanel
+from hp3458a_debug_panel import HP3458ADebugPanel
 from accr_wafer_panel import AccrWaferPanel
 from cassette_panel import CassettePanel
 from recipe_panel import RecipePanel
@@ -365,6 +367,7 @@ class MainLayout(ttk.Frame):
             self._tab_probe_routing(debug_nb)
         else:
             self._tab_instruments_eg(debug_nb)
+            self._tab_dmm_debug(debug_nb)
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
         self._tab_cassette(debug_nb)
@@ -1773,6 +1776,14 @@ class MainLayout(ttk.Frame):
                                     if hasattr(self, "pin_wiring") else []))
         self.recipe_panel.grid(row=0, column=0, sticky="nsew")
 
+    def _tab_dmm_debug(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="3458A")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        self.dmm_debug = HP3458ADebugPanel(tab, controller=self.controller)
+        self.dmm_debug.grid(row=0, column=0, sticky="nsew")
+
     def _tab_switch_settings(self, nb):
         tab = ttk.Frame(nb)
         tab.rowconfigure(0, weight=1)
@@ -1938,6 +1949,14 @@ class MainLayout(ttk.Frame):
 
         body = ttk.PanedWindow(tab, orient="horizontal")
         body.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+
+        # Electroglas drives a .PMA as relative die steps anchored on a die the
+        # operator names, which has nothing in common with the Accretech flow
+        # above - so it gets its own pane rather than being woven into it.
+        if self._system == "electroglas":
+            self.eg_pma_run = EgPmaRunPanel(body, controller=self.controller,
+                                            main_layout=self)
+            body.add(self.eg_pma_run, weight=1)
 
         left_col = ttk.Frame(body)
         body.add(left_col, weight=1)

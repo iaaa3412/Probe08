@@ -394,6 +394,10 @@ class PmaWaferPanel(ttk.Frame):
         self._shots_by_rc: Dict[tuple, Dict[str, Any]] = {}
         self._label_artists: List[Any] = []
         self._view_debounce_id = None
+        # "You are here" overlay, driven by the Electroglas PMA run panel so the
+        # operator can match the map against what is under the scope.
+        self._current_artists: List[Any] = []
+        self._map_die_um = (1.0, 1.0)
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -807,6 +811,44 @@ class PmaWaferPanel(ttk.Frame):
         if _MPL:
             self._draw_map(data)
 
+    def clear_current_shot(self):
+        """Remove the 'you are here' overlay."""
+        for art in self._current_artists:
+            try:
+                art.remove()
+            except Exception:
+                pass
+        self._current_artists = []
+        if _MPL:
+            self.canvas.draw_idle()
+
+    def mark_current_shot(self, x_um: float, y_um: float, label: str = ""):
+        """Ring the shot the chuck is on, in the map's own micron frame.
+
+        Called after every move of a PMA run. The coordinates are the
+        touchdown's own x/y, which is the same frame the shot rectangles are
+        drawn in, so no conversion is needed.
+        """
+        if not _MPL:
+            return
+        self.clear_current_shot()
+        dx, dy = self._map_die_um
+        ring = Rectangle((x_um, y_um), dx, dy, facecolor="none",
+                         edgecolor="#dc2626", linewidth=2.5, zorder=7)
+        self.ax.add_patch(ring)
+        self._current_artists.append(ring)
+        cx, cy = x_um + dx / 2, y_um + dy / 2
+        dot, = self.ax.plot(cx, cy, marker="x", markersize=9, color="#dc2626",
+                            markeredgewidth=2.0, zorder=8)
+        self._current_artists.append(dot)
+        if label:
+            txt = self.ax.annotate(
+                label, (cx, y_um), textcoords="offset points", xytext=(0, -14),
+                ha="center", fontsize=7, color="#7f1d1d", zorder=8,
+                bbox=dict(boxstyle="round,pad=0.2", fc="#fee2e2", ec="#dc2626", lw=0.6))
+            self._current_artists.append(txt)
+        self.canvas.draw_idle()
+
     def _redraw_current(self):
         if not _MPL:
             return
@@ -939,8 +981,10 @@ class PmaWaferPanel(ttk.Frame):
     def _draw_map(self, data: Dict[str, Any]):
         self.ax.clear()
         self._selected_patch = None
+        self._current_artists = []
         dx = float(data["die_size_x"] or 1) or 1.0
         dy = float(data["die_size_y"] or 1) or 1.0
+        self._map_die_um = (dx, dy)
         shots = data["shots"]
         self._shots_by_rc = {(s["row"], s["col"]): s for s in shots}
         if shots:
@@ -970,8 +1014,10 @@ class PmaWaferPanel(ttk.Frame):
                            special_shots: Optional[List[Dict[str, Any]]] = None):
         self.ax.clear()
         self._selected_patch = None
+        self._current_artists = []
         dx = float(pma_data["die_size_x"] or 1) or 1.0
         dy = float(pma_data["die_size_y"] or 1) or 1.0
+        self._map_die_um = (dx, dy)
         special_shots = special_shots or []
         self._shots_by_rc = {(s["row"], s["col"]): s for s in pma_data["shots"]}
         self._shots_by_rc.update({(s["row"], s["col"]): s for s in special_shots})

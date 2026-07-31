@@ -17,6 +17,7 @@ from instruments.keithley2400 import Keithley2400
 from instruments.hp3458a import HP3458A
 from instruments.hp6634b import Agilent6634B
 from instruments.hp_switchbox import HPSwitchbox
+from instruments.hp_e1326b import HPE1326B
 import export_formats as xfmt
 
 ACCRETECH_INSTRUMENT_NAMES = ["UF200R Prober", "SMU (2636B)", "DMM (34461A)",
@@ -379,7 +380,17 @@ class AtomicaDashboard(tk.Tk):
         # one actually has.
         connections = [
             ("Electroglas 2001X", "prober",  Electroglas2001X),
+            # The 3458A is the measurement instrument for probe03. Its ohms
+            # functions source a known current and read the resulting voltage,
+            # which is the isolation test, and it ranges to 1.2 GOhm - against
+            # the E1326B's 1.048 MOhm. It needs wiring to the relay card's NO
+            # terminals; only its GPIB link exists so far.
             ("HP 3458A",          "dmm",     HP3458A),
+            # The E1326B at LADDR 56 has FAILED its self-test - the mainframe
+            # reports 'Config error 1, Failed device' and publishes no GPIB
+            # instrument for it. Kept in the sweep so a repaired or replacement
+            # module is picked up automatically; it is expected to fail today.
+            ("HP E1326B (VXI)",   "dmm_vxi", lambda: HPE1326B("dmm_vxi_eg")),
             ("HP Switchbox 1",    "relay1",  lambda: HPSwitchbox("relay1_eg")),
             ("HP Switchbox 2",    "relay2",  lambda: HPSwitchbox("relay2_eg")),
             ("HP Switchbox 3",    "relay3",  lambda: HPSwitchbox("relay3_eg")),
