@@ -9,6 +9,10 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from wafer_map_view import _pz_bind
+
+_DIE_PX = 20
+
 
 def _parse_q(raw: str):
     raw = (raw or "").strip()
@@ -30,6 +34,9 @@ class AccrWaferPanel(ttk.Frame):
         self._abort   = False
         self._dies    = []
         self._loaded_ata_folder = None
+        self._die_items: dict = {}
+        self._selected_xy = None
+        self._press_xy = None
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -106,7 +113,14 @@ class AccrWaferPanel(ttk.Frame):
 
         self._canvas = tk.Canvas(rf, bg="#0f172a", highlightthickness=0)
         self._canvas.grid(row=0, column=0, sticky="nsew")
-        self._canvas.bind("<Configure>", lambda _e: self._redraw())
+        _pz_bind(self._canvas, self._reset_view)
+        self._canvas.bind("<ButtonPress-1>", self._on_map_press, add="+")
+        self._canvas.bind("<ButtonRelease-1>", self._on_map_release, add="+")
+        self._canvas.bind("<Configure>", lambda _e: self._redraw() if not self._dies else None)
+
+        self._die_info_var = tk.StringVar(value="Click a die to see its X/Y/order.")
+        ttk.Label(rf, textvariable=self._die_info_var, font=("Consolas", 9),
+                 foreground="#334155").grid(row=1, column=0, sticky="w", padx=4, pady=(4, 0))
 
 
     def _start_extraction(self):
@@ -285,11 +299,15 @@ class AccrWaferPanel(ttk.Frame):
         self._status_lbl.config(foreground=color)
 
 
+    def _reset_view(self):
+        self._redraw()
+
     def _redraw(self):
         cv = self._canvas
         cv.delete("all")
+        self._die_items = {}
         if not self._dies:
-            cv.create_text(cv.winfo_width() // 2, cv.winfo_height() // 2,
+            cv.create_text(max(cv.winfo_width() // 2, 50), max(cv.winfo_height() // 2, 50),
                            text="No map data — run an extraction",
                            fill="#475569", font=("Segoe UI", 11))
             return
@@ -298,28 +316,63 @@ class AccrWaferPanel(ttk.Frame):
         ys = [d[1] for d in self._dies]
         xmin, xmax = min(xs), max(xs)
         ymin, ymax = min(ys), max(ys)
-        nx, ny = xmax - xmin + 1, ymax - ymin + 1
-
-        w = max(cv.winfo_width(), 50)
-        h = max(cv.winfo_height(), 50)
-        pad = 24
-        cell = max(2, min((w - 2 * pad) / nx, (h - 2 * pad) / ny))
-        ox = (w - cell * nx) / 2
-        oy = (h - cell * ny) / 2
 
         last = len(self._dies) - 1
         for i, (x, y, _raw) in enumerate(self._dies):
-            cx = ox + (x - xmin) * cell
-            cy = oy + (y - ymin) * cell
+            cx = (x - xmin) * _DIE_PX
+            cy = (y - ymin) * _DIE_PX
             color = ("#2563eb" if i == 0
                      else "#f97316" if i == last
                      else "#22c55e")
-            cv.create_rectangle(cx + 1, cy + 1, cx + cell - 1, cy + cell - 1,
-                                fill=color, outline="")
+            outline = "#f8fafc" if (x, y) == self._selected_xy else ""
+            width = 2 if (x, y) == self._selected_xy else 0
+            rect = cv.create_rectangle(cx + 1, cy + 1, cx + _DIE_PX - 1, cy + _DIE_PX - 1,
+                                       fill=color, outline=outline, width=width)
+            self._die_items[(x, y)] = rect
 
-        cv.create_text(pad, h - 10, anchor="w", fill="#94a3b8", font=("Consolas", 8),
+        cv.create_text(0, (ymax - ymin + 1) * _DIE_PX + 12, anchor="w",
+                       fill="#94a3b8", font=("Consolas", 8),
                        text=f"X {xmin}…{xmax}   Y {ymin}…{ymax}   {len(self._dies)} dies"
                             f"   ■ start  ■ latest")
+        cv.configure(scrollregion=(-20000, -20000, 20000, 20000))
+
+    def _on_map_press(self, e):
+        self._press_xy = (e.x, e.y)
+
+    def _on_map_release(self, e):
+        press = self._press_xy
+        self._press_xy = None
+        if press is None:
+            return
+        dx, dy = e.x - press[0], e.y - press[1]
+        if dx * dx + dy * dy > 16:
+            return
+        cx, cy = self._canvas.canvasx(e.x), self._canvas.canvasy(e.y)
+        hit = self._canvas.find_closest(cx, cy)
+        if not hit:
+            return
+        xy = next((k for k, v in self._die_items.items() if v == hit[0]), None)
+        if xy is None:
+            return
+        self._show_die_info(xy)
+
+    def _show_die_info(self, xy: tuple):
+        prev = self._selected_xy
+        self._selected_xy = xy
+        if prev is not None and prev in self._die_items:
+            try:
+                self._canvas.itemconfig(self._die_items[prev], outline="", width=0)
+            except tk.TclError:
+                pass
+        if xy in self._die_items:
+            try:
+                self._canvas.itemconfig(self._die_items[xy], outline="#f8fafc", width=2)
+            except tk.TclError:
+                pass
+        x, y = xy
+        idx = next((i for i, d in enumerate(self._dies, 1) if (d[0], d[1]) == xy), None)
+        raw = next((d[2] for d in self._dies if (d[0], d[1]) == xy), "")
+        self._die_info_var.set(f"Die #{idx}  X={x:+d}  Y={y:+d}  —  {raw}")
 
 
     def _save_csv(self):

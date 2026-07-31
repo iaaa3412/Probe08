@@ -599,6 +599,7 @@ class NanoZPanel(ttk.Frame):
             toolbar.update()
             toolbar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
             self._nzmap_canvas.mpl_connect("button_press_event", self._on_nzmap_click)
+            self._nzmap_canvas.mpl_connect("scroll_event", self._on_nzmap_scroll_zoom)
 
             info_lf = ttk.LabelFrame(tab, text="Selected Die")
             info_lf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -689,6 +690,17 @@ class NanoZPanel(ttk.Frame):
             return
         self._nzmap_die_var.set(
             f"Row {d['row']}, Col {d['col']} — serial {d['serial']}  ({d['status']})")
+
+    def _on_nzmap_scroll_zoom(self, event):
+        if event.inaxes != self._nzmap_ax or event.xdata is None or event.ydata is None:
+            return
+        factor = 0.85 if event.button == "up" else (1 / 0.85)
+        xlim = self._nzmap_ax.get_xlim()
+        ylim = self._nzmap_ax.get_ylim()
+        xd, yd = event.xdata, event.ydata
+        self._nzmap_ax.set_xlim(xd - (xd - xlim[0]) * factor, xd + (xlim[1] - xd) * factor)
+        self._nzmap_ax.set_ylim(yd - (yd - ylim[0]) * factor, yd + (ylim[1] - yd) * factor)
+        self._nzmap_canvas.draw_idle()
 
     def _build_run_tab(self, nb):
         tab = ttk.Frame(nb)
