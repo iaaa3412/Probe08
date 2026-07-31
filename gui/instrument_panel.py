@@ -236,7 +236,10 @@ class MainLayout(ttk.Frame):
         self._instrument_names = instrument_names or [
             "UF200R Prober", "SMU (2636B)", "DMM (34461A)", "SW_MATRIX", "Wave Gen (33512B)"]
         self._init_hardware_fn = init_hardware_fn or controller.init_hardware
-        self.export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser('~'), 'Downloads'))
+        self._downloads_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
+        default_export_dir = (r"\\prober\NewData\ETL\RAWDATA\PROBE08"
+                              if self._system == "accretech" else self._downloads_dir)
+        self.export_path_var = tk.StringVar(value=default_export_dir)
         self.working_dir_var = (getattr(controller, "working_dir_var", None)
                                 or tk.StringVar(value="C:/automationproject"))
         self.lot_id = tk.StringVar()
@@ -1896,6 +1899,12 @@ class MainLayout(ttk.Frame):
         self._exec2_pma_col_offset = 0
         self._exec2_pma_offset_confirmed = False
         self._exec2_current_pma_shot = None
+        self._exec2_overlay_row_offset = 0
+        self._exec2_overlay_col_offset = 0
+        self._exec2_overlay_offset_confirmed = False
+        self._exec2_overlay_items: list = []
+        self._exec2_overlay_result_items: list = []
+        self._exec2_overlay_die_ids: dict = {}
 
         ctrl = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
         ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
@@ -1988,7 +1997,7 @@ class MainLayout(ttk.Frame):
         ttk.Separator(pos_lf, orient="horizontal").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=3)
 
-        ttk.Button(pos_lf, text="🦶 Touchdown/Measure",
+        ttk.Button(pos_lf, text="Touchdown/Measure",
                    command=self._exec2_touchdown_measure).grid(
                    row=4, column=0, columnspan=2, sticky="ew", pady=1)
         ttk.Button(pos_lf, text="⬆ Z Up", command=self._exec2_manual_z_up).grid(
@@ -2003,6 +2012,8 @@ class MainLayout(ttk.Frame):
                    row=7, column=0, sticky="ew", padx=(0, 1), pady=(4, 0))
         ttk.Button(pos_lf, text="Reset Counts", command=self._exec2_reset_counts).grid(
                    row=7, column=1, sticky="ew", padx=(1, 0), pady=(4, 0))
+        ttk.Button(pos_lf, text="Randomize 5", command=self._exec2_randomize_sites).grid(
+                   row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         steps_lf = ttk.LabelFrame(left_col, text="Recipe Steps", padding=(6, 4))
         steps_lf.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
@@ -2050,9 +2061,6 @@ class MainLayout(ttk.Frame):
                   foreground="#6b7280", font=("Segoe UI", 8)).pack(
                   side="left", padx=8)
 
-        ttk.Separator(map_bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(map_bar, text="🎲 Randomize 5",
-                   command=self._exec2_randomize_sites).pack(side="left")
         self._exec2_sites_var = tk.StringVar(value="Test sites: 0 picked (click dies to add/remove)")
         ttk.Label(map_bar, textvariable=self._exec2_sites_var,
                   foreground="#6b7280", font=("Segoe UI", 8)).pack(
@@ -2060,8 +2068,10 @@ class MainLayout(ttk.Frame):
 
         ttk.Separator(map_bar, orient="vertical").pack(side="left", fill="y", padx=8)
         if self._system == "accretech":
+            ttk.Button(map_bar, text="Overlay…",
+                       command=self._exec2_open_overlay_dialog).pack(side="left")
             ttk.Button(map_bar, text="💾 Save Selected Map",
-                       command=self._exec2_save_selected_map).pack(side="left")
+                       command=self._exec2_save_selected_map).pack(side="left", padx=(6, 0))
             ttk.Button(map_bar, text="📥 Load Selected Map",
                        command=lambda: self._exec2_load_selected_map(
                            quiet_if_missing=False)).pack(side="left", padx=(6, 0))
@@ -2146,6 +2156,10 @@ class MainLayout(ttk.Frame):
             rwm.canvas.delete("all")
             rwm.dies.clear()
             rwm.canvas.create_text(150, 100, text="No wafer map loaded yet.", fill="gray")
+        self._exec2_overlay_result_items = []
+        if self._exec2_overlay_die_ids:
+            self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
+                rwm, self._exec2_overlay_die_ids)
 
     def _exec2_set_state(self, text: str, color: str):
         self._exec2_state_lbl.config(text=text, fg=color)
@@ -2444,8 +2458,10 @@ class MainLayout(ttk.Frame):
             wr = csv.writer(f)
             wr.writerow(["row", "col", "label"])
             for r, c in picks:
-                wr.writerow([r, c, ""])
-        self._exec2_log(f"[RUN] Saved {len(picks)} selected die(s) → {path}")
+                wr.writerow([r, c, self._exec2_overlay_die_ids.get((r, c), "")])
+        n_labeled = sum(1 for rc in picks if rc in self._exec2_overlay_die_ids)
+        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
+        self._exec2_log(f"[RUN] Saved {len(picks)} selected die(s){note} → {path}")
 
     def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
         import csv
@@ -2456,17 +2472,33 @@ class MainLayout(ttk.Frame):
                                 "click dies on the map, then 💾 Save Selected Map.")
             return []
         picks = []
+        die_ids_by_rc = {}
         with open(path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 try:
-                    picks.append((int(row["row"]), int(row["col"])))
+                    rc = (int(row["row"]), int(row["col"]))
                 except (KeyError, ValueError, TypeError):
                     continue
+                picks.append(rc)
+                label = (row.get("label") or "").strip()
+                if label:
+                    die_ids_by_rc[rc] = label
         self._exec2_wafer_map.set_picked(picks)
         self._exec2_on_sites_changed(picks)
+        self._exec2_clear_overlay()
+        if die_ids_by_rc:
+            self._exec2_overlay_die_ids = die_ids_by_rc
+            self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
+                self._exec2_wafer_map, die_ids_by_rc)
+            rwm = getattr(self, "_results_wafer_map", None)
+            if rwm is not None:
+                self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
+                    rwm, die_ids_by_rc)
+        n_labeled = len(die_ids_by_rc)
+        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
         if picks:
-            self._exec2_log(f"[RUN] Loaded {len(picks)} selected die(s) from {path}")
+            self._exec2_log(f"[RUN] Loaded {len(picks)} selected die(s){note} from {path}")
         elif not quiet_if_missing:
             self._exec2_log(f"[RUN] {path} has no valid rows.")
         return picks
@@ -2647,6 +2679,178 @@ class MainLayout(ttk.Frame):
         ttk.Button(btns, text="▶ Use for Test PMA", command=use_for_test).pack(side="left")
         ttk.Button(btns, text="Close", command=lambda: (use_offsets(), dlg.destroy())).pack(
             side="right")
+
+        dlg.update_idletasks()
+        dlg.grab_set()
+
+    _OVERLAY_SOURCE_LABELS = {"pma": "PMA touchdown", "xls": "Recipe Generator",
+                             "csv": "CSV wafer map"}
+
+    def _exec2_overlay_source_data(self, source: str):
+        pma_wafer = getattr(self, "pma_wafer", None)
+        if pma_wafer is None:
+            return None
+        return {"pma": pma_wafer._pma_shot_data, "xls": pma_wafer._xls_shot_data,
+               "csv": pma_wafer._csv_shot_data}.get(source)
+
+    def _exec2_overlay_accretech_rc(self):
+        return set(self._exec2_wafer_map.dies.keys())
+
+    def _exec2_clear_overlay_labels(self, wm, items: list):
+        for item in items:
+            try:
+                wm.canvas.delete(item)
+            except tk.TclError:
+                pass
+        items.clear()
+
+    def _exec2_clear_overlay(self):
+        self._exec2_clear_overlay_labels(self._exec2_wafer_map, self._exec2_overlay_items)
+        rwm = getattr(self, "_results_wafer_map", None)
+        if rwm is not None:
+            self._exec2_clear_overlay_labels(rwm, self._exec2_overlay_result_items)
+        self._exec2_overlay_die_ids = {}
+
+    def _exec2_draw_overlay_labels_on(self, wm, die_ids_by_rc: dict) -> list:
+        items = []
+        for rc, label_text in die_ids_by_rc.items():
+            item = wm.dies.get(rc)
+            if item is None:
+                continue
+            coords = wm.canvas.coords(item)
+            if len(coords) < 4:
+                continue
+            cx, cy = (coords[0] + coords[2]) / 2, (coords[1] + coords[3]) / 2
+            items.append(wm.canvas.create_text(
+                cx, cy, text=label_text, font=("Consolas", 7), fill="#1e293b"))
+        return items
+
+    def _exec2_draw_overlay(self, matched: list):
+        self._exec2_clear_overlay()
+        self._exec2_overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"])
+                                       for d in matched}
+        self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
+            self._exec2_wafer_map, self._exec2_overlay_die_ids)
+        rwm = getattr(self, "_results_wafer_map", None)
+        if rwm is not None:
+            self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
+                rwm, self._exec2_overlay_die_ids)
+        picks = [(d["row"], d["col"]) for d in matched]
+        self._exec2_wafer_map.set_picked(picks)
+        self._exec2_on_sites_changed(picks)
+
+    def _exec2_open_overlay_dialog(self):
+        pma_wafer = getattr(self, "pma_wafer", None)
+        if pma_wafer is None:
+            self._exec2_log("[RUN] Overlay: PMA Wafer tab is not available.")
+            return
+        accretech_rc = self._exec2_overlay_accretech_rc()
+        if not accretech_rc:
+            self._exec2_log("[RUN] Overlay: no wafer map loaded on this Run tab yet — "
+                            "📂 Load Wafer Map first.")
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Overlay Wafer Map")
+        dlg.transient(self.winfo_toplevel())
+        dlg.resizable(False, False)
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Source:").grid(row=0, column=0, sticky="w")
+        source_var = tk.StringVar(value="pma")
+        src_row = ttk.Frame(frm)
+        src_row.grid(row=0, column=1, columnspan=4, sticky="w")
+        for value, text in (("pma", "PMA Touchdowns"), ("xls", "Recipe Generator"),
+                           ("csv", "CSV Wafer Map")):
+            ttk.Radiobutton(src_row, text=text, variable=source_var, value=value,
+                           command=lambda: center_overlay()).pack(side="left")
+
+        summary_var = tk.StringVar()
+        ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
+                 justify="left").grid(row=1, column=0, columnspan=5, sticky="w",
+                                      pady=(8, 4))
+        ttk.Label(frm, text="Centered by matching the two maps' centers (🎯 Center "
+                 "Overlay) — a die counts as \"on the map\" when its (row, col), "
+                 "shifted by the offset below, lands on a die the Accretech prober "
+                 "actually walked. Nudge the offset if dies land on the wrong "
+                 "physical die, then Overlay on Map.",
+                 font=("Segoe UI", 8), foreground="#6b7280", wraplength=340,
+                 justify="left").grid(row=2, column=0, columnspan=5, sticky="w",
+                                      pady=(0, 10))
+
+        ttk.Label(frm, text="Row offset:").grid(row=3, column=0, sticky="e")
+        row_var = tk.IntVar(value=0)
+        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
+            row=3, column=1, sticky="w", padx=(4, 16))
+        ttk.Label(frm, text="Col offset:").grid(row=3, column=2, sticky="e")
+        col_var = tk.IntVar(value=0)
+        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
+            row=3, column=3, sticky="w", padx=(4, 0))
+
+        state = {"grid": [], "matched": []}
+
+        def recompute(*_a):
+            data = self._exec2_overlay_source_data(source_var.get())
+            if not data:
+                state["grid"], state["matched"] = [], []
+                summary_var.set(
+                    f"No {self._OVERLAY_SOURCE_LABELS[source_var.get()]} data loaded — "
+                    "load it on the PMA Wafer tab first.")
+                return
+            try:
+                ro, co = row_var.get(), col_var.get()
+            except tk.TclError:
+                return
+            grid = pma_shots_to_grid(data)
+            state["grid"] = grid
+            state["matched"] = merge_with_accretech(grid, accretech_rc, ro, co)
+            summary_var.set(
+                f"Accretech dies on map:   {len(accretech_rc)}\n"
+                f"{self._OVERLAY_SOURCE_LABELS[source_var.get()]} dies (real ID): "
+                f"{len(grid)}\n"
+                f"Overlaid (on both maps): {len(state['matched'])}"
+            )
+
+        row_var.trace_add("write", recompute)
+        col_var.trace_add("write", recompute)
+
+        def center_overlay():
+            data = self._exec2_overlay_source_data(source_var.get())
+            if not data:
+                recompute()
+                return
+            ro, co = centroid_offset(pma_shots_to_grid(data), accretech_rc)
+            row_var.set(ro)
+            col_var.set(co)
+
+        center_overlay()
+
+        def do_overlay():
+            self._exec2_overlay_row_offset = row_var.get()
+            self._exec2_overlay_col_offset = col_var.get()
+            self._exec2_overlay_offset_confirmed = True
+            self._exec2_draw_overlay(state["matched"])
+            self._exec2_log(f"[RUN] Overlaid {len(state['matched'])} die(s) from the "
+                            f"{self._OVERLAY_SOURCE_LABELS[source_var.get()]} source "
+                            "onto the wafer map.")
+
+        def do_clear():
+            self._exec2_clear_overlay()
+            self._exec2_wafer_map.clear_picks()
+            self._exec2_on_sites_changed([])
+            self._exec2_log("[RUN] Overlay cleared.")
+
+        ttk.Button(frm, text="🎯 Center Overlay", command=center_overlay).grid(
+            row=3, column=4, sticky="w", padx=(10, 0))
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=4, column=0, columnspan=5, sticky="ew", pady=(12, 0))
+        ttk.Button(btns, text="🖌 Overlay on Map", command=do_overlay).pack(side="left")
+        ttk.Button(btns, text="✕ Clear Overlay", command=do_clear).pack(
+            side="left", padx=6)
+        ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
 
         dlg.update_idletasks()
         dlg.grab_set()
@@ -3352,6 +3556,20 @@ class MainLayout(ttk.Frame):
         ttk.Button(
             path_row, text="Browse...", command=self.controller.cmd_browse_export
         ).pack(side="left", padx=4)
+        if self._system == "accretech":
+            self._export_dir_choices = {
+                "PROBE08 (network)": r"\\prober\NewData\ETL\RAWDATA\PROBE08",
+                "Downloads": self._downloads_dir,
+            }
+            export_dir_var = tk.StringVar(value="PROBE08 (network)")
+            export_dir_cb = ttk.Combobox(
+                path_row, textvariable=export_dir_var, state="readonly",
+                width=16, values=list(self._export_dir_choices.keys()))
+            export_dir_cb.pack(side="left", padx=(4, 0))
+            export_dir_cb.bind(
+                "<<ComboboxSelected>>",
+                lambda _e: self.export_path_var.set(
+                    self._export_dir_choices[export_dir_var.get()]))
         ttk.Button(
             path_row, text="Save to CSV", command=self.controller.cmd_save_csv
         ).pack(side="left", padx=10)
