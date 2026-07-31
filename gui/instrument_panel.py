@@ -2084,6 +2084,7 @@ class MainLayout(ttk.Frame):
         self._exec2_wafer_map = WaferMapPanel(map_lf)
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
+        self._exec2_wafer_map.on_redraw = self._exec2_redraw_overlay_on_run_map
 
         stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
         body.add(stat_lf, weight=1)
@@ -2151,15 +2152,12 @@ class MainLayout(ttk.Frame):
         dies = self._exec2_wafer_map._last_dies
         if dies:
             rwm._last_dies = dies
-            rwm._draw_from_die_list(dies)
+            rwm._draw_from_die_list(dies)  # triggers on_redraw -> overlay labels
         else:
             rwm.canvas.delete("all")
             rwm.dies.clear()
             rwm.canvas.create_text(150, 100, text="No wafer map loaded yet.", fill="gray")
-        self._exec2_overlay_result_items = []
-        if self._exec2_overlay_die_ids:
-            self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
-                rwm, self._exec2_overlay_die_ids)
+            rwm._run_on_redraw()
 
     def _exec2_set_state(self, text: str, color: str):
         self._exec2_state_lbl.config(text=text, fg=color)
@@ -2695,6 +2693,20 @@ class MainLayout(ttk.Frame):
 
     def _exec2_overlay_accretech_rc(self):
         return set(self._exec2_wafer_map.dies.keys())
+
+    def _exec2_redraw_overlay_on_run_map(self):
+        if not self._exec2_overlay_die_ids:
+            self._exec2_overlay_items = []
+            return
+        self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
+            self._exec2_wafer_map, self._exec2_overlay_die_ids)
+
+    def _exec2_redraw_overlay_on_results_map(self):
+        if not self._exec2_overlay_die_ids:
+            self._exec2_overlay_result_items = []
+            return
+        self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
+            self._results_wafer_map, self._exec2_overlay_die_ids)
 
     def _exec2_clear_overlay_labels(self, wm, items: list):
         for item in items:
@@ -3529,9 +3541,39 @@ class MainLayout(ttk.Frame):
         self._exec2_pct_var.set(f"Yield:  {pct:.1f}%  ({p}/{total})")
 
 
+    def _make_vscroll_frame(self, parent) -> ttk.Frame:
+        """Wrap tab content in a vertically scrollable canvas+frame so a tab
+        taller than the window isn't cut off with no way to reach the rest."""
+        outer = ttk.Frame(parent)
+        outer.pack(fill="both", expand=True)
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        vsb.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=vsb.set)
+
+        inner = ttk.Frame(canvas)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        inner.bind("<Configure>",
+                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                   lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        def _on_wheel(e):
+            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+
+        return inner
+
     def _tab_results(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Results")
+        page = ttk.Frame(nb)
+        nb.add(page, text="Results")
+        tab = self._make_vscroll_frame(page)
 
         export_frame = ttk.LabelFrame(tab, text="Data Export")
         export_frame.pack(fill="x", padx=15, pady=15)
@@ -3649,6 +3691,7 @@ class MainLayout(ttk.Frame):
         self._results_wafer_map = WaferMapPanel(map_frame)
         self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
         self._results_wafer_map.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
+        self._results_wafer_map.on_redraw = self._exec2_redraw_overlay_on_results_map
 
         detail_lf = ttk.LabelFrame(map_frame, text="Selected Die")
         detail_lf.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
@@ -3677,10 +3720,7 @@ class MainLayout(ttk.Frame):
     def _on_results_map_click(self, event):
         wm = self._results_wafer_map
         cx, cy = wm.canvas.canvasx(event.x), wm.canvas.canvasy(event.y)
-        hit = wm.canvas.find_closest(cx, cy)
-        if not hit:
-            return
-        rc = next((k for k, v in wm.dies.items() if v == hit[0]), None)
+        rc = wm._hit_die(cx, cy)
         if rc is None:
             return
         self._results_show_die(rc)

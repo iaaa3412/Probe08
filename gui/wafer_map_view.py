@@ -76,6 +76,7 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
         self.dies = {}
         self._last_dies = None
+        self.on_redraw = None  # optional callback() run after any full redraw
         self.canvas.create_text(150, 100, text="Waiting for Wafer Map...", fill="gray")
         _pz_bind(self.canvas, self._reset_view)
 
@@ -138,10 +139,7 @@ class WaferMapPanel(ttk.LabelFrame):
         if dx * dx + dy * dy > 16:
             return
         cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
-        hit = self.canvas.find_closest(cx, cy)
-        if not hit:
-            return
-        rc = next((k for k, v in self.dies.items() if v == hit[0]), None)
+        rc = self._hit_die(cx, cy)
         if rc is None:
             return
         if self._click_handler is not None:
@@ -166,6 +164,30 @@ class WaferMapPanel(ttk.LabelFrame):
             self._draw_from_die_list(self._last_dies)
         else:
             self.draw_map()
+
+    def _hit_die(self, cx, cy):
+        """Which (row, col) die's rectangle contains this canvas-space point.
+
+        Checks each die's own bounding box directly instead of
+        canvas.find_closest(), which returns whichever item is topmost at
+        that point - wrong once something else (e.g. an overlay die-ID
+        label) is drawn on top of a die rectangle.
+        """
+        for rc, item in self.dies.items():
+            coords = self.canvas.coords(item)
+            if len(coords) < 4:
+                continue
+            x1, y1, x2, y2 = coords
+            if min(x1, x2) <= cx <= max(x1, x2) and min(y1, y2) <= cy <= max(y1, y2):
+                return rc
+        return None
+
+    def _run_on_redraw(self):
+        if self.on_redraw:
+            try:
+                self.on_redraw()
+            except Exception:
+                pass
 
     def draw_map(self):
         self.canvas.delete("all")
@@ -194,6 +216,7 @@ class WaferMapPanel(ttk.LabelFrame):
                         fill="#e0e0e0", outline="gray"
                     )
                     self.dies[(row, col)] = rect
+        self._run_on_redraw()
 
     def load_from_ata(self, folder_path, filename="ata_wafer_map_gds.csv"):
         map_file = os.path.join(folder_path, filename)
@@ -205,6 +228,7 @@ class WaferMapPanel(ttk.LabelFrame):
                 fill="red", justify="center"
             )
             self.config(text="Wafer Map")
+            self._run_on_redraw()
             return 0
 
         raw = []
@@ -278,6 +302,7 @@ class WaferMapPanel(ttk.LabelFrame):
 
         if not dies:
             self.canvas.create_text(150, 100, text="No dies found in wafer map.", fill="red")
+            self._run_on_redraw()
             return
 
         self.update_idletasks()
@@ -349,6 +374,7 @@ class WaferMapPanel(ttk.LabelFrame):
             )
             self.dies[(d["row"], d["col"])] = rect
         self._recolor_picks()
+        self._run_on_redraw()
 
     def update_die(self, row, col, status):
         colors = {
