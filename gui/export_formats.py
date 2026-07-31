@@ -127,8 +127,17 @@ def load_formats(folder: str, system: str = "accretech") -> List[Dict[str, Any]]
 
 def save_formats(folder: str, formats: List[Dict[str, Any]], system: str = "accretech"):
     path = os.path.join(folder, _formats_filename(system))
+    default = None
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                default = json.load(f).get("default")
+        except (OSError, ValueError):
+            pass
+    if default is not None and default not in {f["name"] for f in formats}:
+        default = None  # the format that was default got removed
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"formats": formats}, f, indent=2)
+        json.dump({"formats": formats, "default": default}, f, indent=2)
 
 
 def add_format(folder: str, fmt: Dict[str, Any], system: str = "accretech") -> List[Dict[str, Any]]:
@@ -138,8 +147,34 @@ def add_format(folder: str, fmt: Dict[str, Any], system: str = "accretech") -> L
     return formats
 
 
+def delete_format(folder: str, name: str, system: str = "accretech") -> List[Dict[str, Any]]:
+    formats = [f for f in load_formats(folder, system) if f["name"] != name]
+    save_formats(folder, formats, system)
+    return formats
+
+
 def find_format(folder: str, name: str, system: str = "accretech") -> Optional[Dict[str, Any]]:
     return next((f for f in load_formats(folder, system) if f["name"] == name), None)
+
+
+def get_default_format_name(folder: str, system: str = "accretech") -> Optional[str]:
+    path = os.path.join(folder, _formats_filename(system))
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f).get("default")
+        except (OSError, ValueError):
+            pass
+    return None
+
+
+def set_default_format_name(folder: str, name: Optional[str], system: str = "accretech") -> None:
+    formats = load_formats(folder, system)
+    if name is not None and name not in {f["name"] for f in formats}:
+        return
+    path = os.path.join(folder, _formats_filename(system))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"formats": formats, "default": name}, f, indent=2)
 
 
 def resolve_source(source: str, row: Dict[str, Any], context: Dict[str, Any]):

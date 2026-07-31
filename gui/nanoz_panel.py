@@ -80,6 +80,10 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_dies_by_rc: dict[tuple[int, int], dict] = {}
         self._nzmap_accr_dies_by_rc: dict[tuple[int, int], dict] = {}
         self._nzmap_source_var = tk.StringVar(value="probe_plan")
+        self._show_nzmap_labels_var = tk.BooleanVar(value=True)
+        self._nzmap_label_artists: list = []
+        self._nzmap_view_debounce_id = None
+        self._nzmap_current_labels: list = []
 
         self._build_ui()
         self.after(50, self._check_queue)
@@ -587,6 +591,8 @@ class NanoZPanel(ttk.Frame):
                         value="probe_plan", command=self._redraw_nanoz_wafer_map).pack(side="left")
         ttk.Radiobutton(src_row, text="Accretech", variable=self._nzmap_source_var,
                         value="accretech", command=self._redraw_nanoz_wafer_map).pack(side="left")
+        ttk.Checkbutton(src_row, text="🏷 Die Labels", variable=self._show_nzmap_labels_var,
+                       command=self._update_visible_nzmap_labels).pack(side="left", padx=(12, 0))
 
         if _MPL:
             self._nzmap_fig = Figure(figsize=(8, 8), dpi=100)
@@ -614,6 +620,8 @@ class NanoZPanel(ttk.Frame):
     def _draw_empty_nzmap(self, message: str | None = None):
         if not _MPL:
             return
+        self._nzmap_current_labels = []
+        self._nzmap_label_artists = []
         self._nzmap_ax.clear()
         self._nzmap_ax.set_aspect("equal")
         self._nzmap_ax.text(
@@ -652,6 +660,13 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_ax.set_ylim(-(max_row + 1), 0)
         self._nzmap_ax.set_title(f"Probe Plan — {len(dies)} on-wafer die(s) — "
                                  "click a die to see its serial", fontsize=9)
+        self._nzmap_current_labels = [
+            {"x": d["col"], "y": -d["row"],
+             "label": d["serial"], "color": "white" if d["status"] == "reference" else "black"}
+            for d in dies
+        ]
+        self._connect_nzmap_view_callbacks()
+        self._update_visible_nzmap_labels()
         self._nzmap_canvas.draw_idle()
 
     def _draw_accretech_nzmap(self):
@@ -673,6 +688,69 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_ax.set_ylim(-(max(rows) + 1), -(min(rows) - 1))
         self._nzmap_ax.set_title(f"Accretech — {len(rcs)} die(s) — click a die to see "
                                  "its row/col", fontsize=9)
+        self._nzmap_current_labels = [
+            {"x": c, "y": -r, "label": f"R{r}C{c}", "color": "black"} for r, c in rcs
+        ]
+        self._connect_nzmap_view_callbacks()
+        self._update_visible_nzmap_labels()
+        self._nzmap_canvas.draw_idle()
+
+    _NZMAP_MAX_VISIBLE_LABELS = 900
+
+    def _connect_nzmap_view_callbacks(self):
+        self._nzmap_ax.callbacks.connect("xlim_changed", self._on_nzmap_view_changed)
+        self._nzmap_ax.callbacks.connect("ylim_changed", self._on_nzmap_view_changed)
+
+    def _on_nzmap_view_changed(self, _ax=None):
+        if self._nzmap_view_debounce_id is not None:
+            try:
+                self.after_cancel(self._nzmap_view_debounce_id)
+            except Exception:
+                pass
+        self._nzmap_view_debounce_id = self.after(120, self._update_visible_nzmap_labels)
+
+    def _clear_nzmap_labels(self):
+        for t in self._nzmap_label_artists:
+            try:
+                t.remove()
+            except Exception:
+                pass
+        self._nzmap_label_artists = []
+
+    def _fit_nzmap_fontsize(self, box_w_px: float, box_h_px: float, text_len: int) -> float:
+        text_len = max(text_len, 1)
+        dpi = self._nzmap_fig.dpi
+        by_width = box_w_px * 72.0 / dpi / (0.62 * text_len)
+        by_height = box_h_px * 72.0 / dpi * 0.75
+        return max(3.0, min(by_width, by_height, 24.0))
+
+    def _update_visible_nzmap_labels(self):
+        self._nzmap_view_debounce_id = None
+        self._clear_nzmap_labels()
+        if not (_MPL and self._show_nzmap_labels_var.get()):
+            self._nzmap_canvas.draw_idle()
+            return
+        labels = self._nzmap_current_labels
+        if not labels:
+            return
+        xlim = sorted(self._nzmap_ax.get_xlim())
+        ylim = sorted(self._nzmap_ax.get_ylim())
+        visible = [d for d in labels
+                  if xlim[0] <= d["x"] <= xlim[1] and ylim[0] <= d["y"] <= ylim[1]]
+        if not visible or len(visible) > self._NZMAP_MAX_VISIBLE_LABELS:
+            self._nzmap_canvas.draw_idle()
+            return
+        bbox = self._nzmap_ax.get_window_extent()
+        span_x = (xlim[1] - xlim[0]) or 1.0
+        span_y = (ylim[1] - ylim[0]) or 1.0
+        box_w_px = bbox.width / span_x
+        box_h_px = bbox.height / span_y
+        for d in visible:
+            fs = self._fit_nzmap_fontsize(box_w_px, box_h_px, len(d["label"]))
+            t = self._nzmap_ax.text(d["x"], d["y"], d["label"], fontsize=fs,
+                                    ha="center", va="center", color=d["color"],
+                                    zorder=6, clip_on=True)
+            self._nzmap_label_artists.append(t)
         self._nzmap_canvas.draw_idle()
 
     def _on_nzmap_click(self, event):

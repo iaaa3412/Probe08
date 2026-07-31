@@ -350,12 +350,11 @@ class MainLayout(ttk.Frame):
         self._tab_recipe(main_nb)
         self._tab_execution2(main_nb)
         self._tab_results(main_nb)
-        self._tab_gds_parser(main_nb)
         self._tab_probe_card(main_nb)
+        self._tab_pma_wafer(main_nb)
         if self._system == "accretech":
             self._tab_accr_wafer(main_nb)
         if self._system == "electroglas":
-            self._tab_pma_wafer(main_nb)
             self._tab_pma_process(main_nb)
             self._tab_recipe_gen(main_nb)
 
@@ -368,10 +367,10 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech":
             self._tab_instruments(debug_nb)
             self._tab_probe_routing(debug_nb)
-            self._tab_pma_wafer(debug_nb)
         else:
             self._tab_instruments_eg(debug_nb)
             self._tab_dmm_debug(debug_nb)
+        self._tab_gds_parser(debug_nb)
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
         self._tab_cassette(debug_nb)
@@ -1847,7 +1846,7 @@ class MainLayout(ttk.Frame):
 
     def _tab_pma_wafer(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="PMA Wafer")
+        nb.add(tab, text="Wafer Map")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
         self.pma_wafer = PmaWaferPanel(
@@ -3575,6 +3574,9 @@ class MainLayout(ttk.Frame):
         nb.add(page, text="Results")
         tab = self._make_vscroll_frame(page)
 
+        if self._system == "accretech":
+            self._build_results_wafer_map(tab)
+
         export_frame = ttk.LabelFrame(tab, text="Data Export")
         export_frame.pack(fill="x", padx=15, pady=15)
 
@@ -3632,7 +3634,17 @@ class MainLayout(ttk.Frame):
         ttk.Button(
             sql_row, text="✏ Edit Selected…", command=self._open_edit_format_dialog
         ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            sql_row, text="⭐ Set Default", command=self._set_default_export_format
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            sql_row, text="🗑 Delete", command=self._delete_export_format
+        ).pack(side="left", padx=(6, 0))
         self._export_formats: list = []
+        self._export_default_lbl_var = tk.StringVar(value="")
+        ttk.Label(export_frame, textvariable=self._export_default_lbl_var,
+                 foreground="#6b7280", font=("Segoe UI", 8)).pack(
+                 anchor="w", padx=10, pady=(0, 8))
 
         results_lf = ttk.LabelFrame(tab, text="Measurement Results")
         results_lf.pack(fill="both", expand=True, padx=15, pady=(0, 8))
@@ -3658,9 +3670,7 @@ class MainLayout(ttk.Frame):
         ttk.Button(results_lf, text="Clear Results", command=self.clear_results).grid(
             row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 6))
 
-        if self._system == "accretech":
-            self._build_results_wafer_map(tab)
-        else:
+        if self._system != "accretech":
             stats_frame = ttk.LabelFrame(tab, text="Run Statistics")
             stats_frame.pack(fill="x", padx=15, pady=(0, 15))
 
@@ -3759,14 +3769,54 @@ class MainLayout(ttk.Frame):
             self._export_formats = []
             self._export_format_cb.config(values=[])
             self.export_format_var.set("")
+            self._update_default_format_label(None)
             return
         self._export_formats = xfmt.load_formats(self._ata_folder, system=self._system)
         names = [f["name"] for f in self._export_formats]
         self._export_format_cb.config(values=names)
+        default_name = xfmt.get_default_format_name(self._ata_folder, system=self._system)
         if select_name in names:
             self.export_format_var.set(select_name)
         elif self.export_format_var.get() not in names:
-            self.export_format_var.set(names[0] if names else "")
+            self.export_format_var.set(default_name if default_name in names
+                                       else (names[0] if names else ""))
+        self._update_default_format_label(default_name)
+
+    def _update_default_format_label(self, default_name):
+        var = getattr(self, "_export_default_lbl_var", None)
+        if var is None:
+            return
+        var.set(f"Default: {default_name}" if default_name else "No default format set.")
+
+    def _set_default_export_format(self):
+        from tkinter import messagebox
+        if not self._ata_folder:
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+        fmt = self.get_selected_export_format()
+        if not fmt:
+            messagebox.showerror("No Format Selected",
+                                 "Pick a format from the Export Format dropdown first.")
+            return
+        xfmt.set_default_format_name(self._ata_folder, fmt["name"], system=self._system)
+        self._update_default_format_label(fmt["name"])
+        self.controller.log(f"[RESULTS] '{fmt['name']}' set as the default export format.")
+
+    def _delete_export_format(self):
+        from tkinter import messagebox
+        fmt = self.get_selected_export_format()
+        if not fmt:
+            messagebox.showerror("No Format Selected",
+                                 "Pick a format from the Export Format dropdown first.")
+            return
+        if not messagebox.askyesno(
+            "Delete Export Format",
+            f"Delete export format '{fmt['name']}'? This cannot be undone."
+        ):
+            return
+        xfmt.delete_format(self._ata_folder, fmt["name"], system=self._system)
+        self.controller.log(f"[RESULTS] Deleted export format '{fmt['name']}'.")
+        self._refresh_export_formats()
 
     def get_selected_export_format(self):
         name = self.export_format_var.get()
