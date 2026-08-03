@@ -68,6 +68,7 @@ class NanoZPanel(ttk.Frame):
         self._env_path: str | None = None
         self._latest_spl: dict[tuple[str, str], dict] = {}
         self._latest_env: dict[str, dict] = {}
+        self._latest_eep: dict[str, dict] = {}
         self._spl_history: dict[tuple[str, str], "collections.deque"] = {}
         self._env_history: dict[str, "collections.deque"] = {}
         self._cycle_start_time: "dt.datetime | None" = None
@@ -992,6 +993,23 @@ class NanoZPanel(ttk.Frame):
         ttk.Entry(crow2, textvariable=self.console_raw_var, width=16).pack(side="left", padx=(4, 4))
         ttk.Button(crow2, text="Send", command=self._console_send_raw).pack(side="left", padx=2)
 
+        crow3 = ttk.Frame(cmds)
+        crow3.pack(fill="x", padx=6, pady=(0, 6))
+        ttk.Label(crow3, text="Read EEPROM — addr:").pack(side="left")
+        self.console_eep_addr_var = tk.StringVar(value="0")
+        ttk.Entry(crow3, textvariable=self.console_eep_addr_var, width=8).pack(
+            side="left", padx=(4, 8))
+        ttk.Label(crow3, text="len:").pack(side="left")
+        self.console_eep_len_var = tk.StringVar(value="64")
+        ttk.Entry(crow3, textvariable=self.console_eep_len_var, width=6).pack(
+            side="left", padx=(4, 8))
+        ttk.Button(crow3, text="Read", command=self._console_read_eeprom).pack(side="left", padx=2)
+        ttk.Label(crow3, text="Read-only — rdeep does not run or change anything on the "
+                             "board. No known map of what cycle/sequence data lives at "
+                             "which address yet.",
+                 foreground="#6b7280", font=("Segoe UI", 8), wraplength=420,
+                 justify="left").pack(side="left", padx=(10, 0))
+
         reading_lf = ttk.LabelFrame(split, text="Latest Reading")
         split.add(reading_lf, weight=2)
         reading_lf.rowconfigure(0, weight=1)
@@ -1025,6 +1043,19 @@ class NanoZPanel(ttk.Frame):
         env_sb = ttk.Scrollbar(env_frame, orient="vertical", command=self.console_env_text.yview)
         env_sb.grid(row=1, column=1, sticky="ns")
         self.console_env_text.configure(yscrollcommand=env_sb.set)
+
+        eep_frame = ttk.Frame(reading_split)
+        reading_split.add(eep_frame, weight=1)
+        eep_frame.rowconfigure(1, weight=1)
+        eep_frame.columnconfigure(0, weight=1)
+        ttk.Label(eep_frame, text="EEPROM (hex)", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w")
+        self.console_eep_text = tk.Text(eep_frame, wrap="word", state="disabled",
+                                        height=14, font=("Consolas", 9))
+        self.console_eep_text.grid(row=1, column=0, sticky="nsew")
+        eep_sb = ttk.Scrollbar(eep_frame, orient="vertical", command=self.console_eep_text.yview)
+        eep_sb.grid(row=1, column=1, sticky="ns")
+        self.console_eep_text.configure(yscrollcommand=eep_sb.set)
 
     def _build_charts_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -1554,11 +1585,39 @@ class NanoZPanel(ttk.Frame):
             return
         self._console_send("cleep")
 
+    def _console_read_eeprom(self):
+        board = self._console_selected_board()
+        if not board or not board.is_running:
+            messagebox.showerror("No Board Selected",
+                                 "Pick a connected board first (Setup tab -> Connect All).")
+            return
+        try:
+            addr = int(self.console_eep_addr_var.get())
+            length = int(self.console_eep_len_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Address and length must be whole numbers.")
+            return
+        board.request_eeprom(addr, length)
+        self._log(f"{board.port}: >> rdeep {addr} {length}")
+
     @staticmethod
     def _format_reading_lines(item: "dict | None"):
         if not item:
             return ["(none yet)"]
         return [f"{k}: {v}" for k, v in item.items() if k not in ("kind", "port")]
+
+    @staticmethod
+    def _format_eep_lines(item: "dict | None"):
+        if not item:
+            return ["(none yet)"]
+        data_hex = item.get("data_hex", "")
+        rows = [f"{k}: {v}" for k, v in item.items() if k not in ("kind", "port", "data_hex")]
+        rows.append("")
+        rows.append("data:")
+        for i in range(0, len(data_hex), 32):
+            offset = i // 2
+            rows.append(f"  +{offset:04d}  {data_hex[i:i + 32]}")
+        return rows
 
     def _refresh_console_reading(self):
         port = self.console_board_var.get()
@@ -1571,6 +1630,15 @@ class NanoZPanel(ttk.Frame):
             widget.delete("1.0", "end")
             widget.insert("1.0", "\n".join(lines))
             widget.configure(state="disabled")
+        self._refresh_console_eep_display()
+
+    def _refresh_console_eep_display(self):
+        port = self.console_board_var.get()
+        lines = self._format_eep_lines(self._latest_eep.get(port))
+        self.console_eep_text.configure(state="normal")
+        self.console_eep_text.delete("1.0", "end")
+        self.console_eep_text.insert("1.0", "\n".join(lines))
+        self.console_eep_text.configure(state="disabled")
 
     def _new_csv_paths(self):
         folder = (getattr(self._main_layout, "_ata_folder", None)
@@ -1640,6 +1708,12 @@ class NanoZPanel(ttk.Frame):
             self._log(f"{port}: {item.get('text', '')}")
         elif kind == "unrecognized":
             self._log(f"{port}: UNRECOGNIZED HEADER: {item.get('raw')!r}")
+        elif kind == "eep":
+            self._latest_eep[port] = item
+            status = "OK" if item.get("checksum_ok") else "CHECKSUM MISMATCH"
+            self._log(f"{port}: EEPROM read addr={item['addr']} len={item['len']} ({status})")
+            if port == self.console_board_var.get():
+                self._refresh_console_eep_display()
 
     def _start_lot(self):
         if self._running:

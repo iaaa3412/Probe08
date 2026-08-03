@@ -22,6 +22,7 @@ WHOAMI_RE = re.compile(r"Iam\s+([0-9A-Fa-f]+)", re.I)
 ENV_HEADER_RE = re.compile(rb"#env(\d)!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s*$", re.I)
 SPL_HEADER_RE = re.compile(rb"#spl!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$", re.I)
 SEQ_HEADER_RE = re.compile(rb"#seq!\s+(-?\d+)\s+(-?\d+)\s*$", re.I)
+EEP_HEADER_RE = re.compile(rb"#eep!\s+(\d+)\s+([0-9A-Fa-f]+)\s+(\d+)\s*$", re.I)
 
 
 class NanoZError(RuntimeError):
@@ -710,6 +711,14 @@ class NanoZBoard:
         if self.ser:
             send_ascii(self.ser, "pause")
 
+    def request_eeprom(self, addr: int, length: int):
+        """Read-only: request a raw non-volatile-memory block (rdeep). The
+        response arrives asynchronously as a "kind": "eep" item on
+        out_queue, decoded by _handle_eep. Does not actuate anything on the
+        board - safe to call at any time, including mid-cycle."""
+        if self.ser:
+            send_ascii(self.ser, f"rdeep {addr} {length}")
+
     def send_raw(self, cmd: str):
         if self.ser:
             send_ascii(self.ser, cmd)
@@ -752,6 +761,10 @@ class NanoZBoard:
             em = ENV_HEADER_RE.match(line)
             if em:
                 self._handle_env(em)
+                continue
+            eepm = EEP_HEADER_RE.match(line)
+            if eepm:
+                self._handle_eep(eepm)
                 continue
             if SEQ_HEADER_RE.match(line):
                 self._emit_text(line)
@@ -817,4 +830,25 @@ class NanoZBoard:
             "env_x": env_x, "header_time_ms": header_time, "header_bfr": header_bfr,
             "len": length, "checksum_expected": expected_cs,
             **parsed,
+        })
+
+    def _handle_eep(self, m):
+        length_s, cs_s, addr_s = m.groups()
+        length, addr = int(length_s), int(addr_s)
+        expected_cs = int(cs_s, 16)
+        try:
+            data = read_exact_from_buffer(self.ser, self._buffer, length, timeout_s=2.0)
+        except NanoZError as e:
+            self.last_error = str(e)
+            return
+        actual_cs = 0
+        for b in data:
+            actual_cs ^= b
+        self.out_queue.put({
+            "kind": "eep", "host_timestamp": now_stamp(),
+            "board_sn": self.identity.serial_number, "port": self.port,
+            "addr": addr, "len": length,
+            "checksum_expected": expected_cs, "checksum_actual": actual_cs,
+            "checksum_ok": actual_cs == expected_cs,
+            "data_hex": data.hex(),
         })
