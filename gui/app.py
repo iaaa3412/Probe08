@@ -104,6 +104,8 @@ class AtomicaDashboard(tk.Tk):
             if system == self.active_system:
                 self._ata_lbl.config(text=f"ATA: {folder_name}  ({n_dies} dies)",
                                      foreground="#1d4ed8")
+                self._refresh_ata_picker()
+                self._ata_picker_var.set(folder_name)
                 ui.exec_panel.set_wafer_map(ui.wafer_map, wafer_id=folder_name)
                 ui.wafer_id_var.set(folder_name)
             ui.exec_panel.log(
@@ -173,6 +175,18 @@ class AtomicaDashboard(tk.Tk):
                 self._do_load_ata_folder(default_folder)
         elif carry_over_folder and self.ui._ata_folder != carry_over_folder:
             self._do_load_ata_folder(carry_over_folder)
+        # _do_load_ata_folder (above) already syncs the label/picker when it
+        # runs - but if this system's folder was already correctly loaded
+        # (e.g. pre-loaded at startup), neither branch above fires, so do it
+        # unconditionally here too.
+        if self.ui._ata_folder:
+            folder_name = os.path.basename(self.ui._ata_folder)
+            self._ata_lbl.config(text=f"ATA: {folder_name}", foreground="#1d4ed8")
+            self._refresh_ata_picker()
+            self._ata_picker_var.set(folder_name)
+        else:
+            self._ata_lbl.config(text="No ATA loaded", foreground="gray")
+            self._ata_picker_var.set("")
         self.update_statistics_visuals()
         self.check_system_ready()
         self.log(f"[SYSTEM] Switched active system to {system.capitalize()}.")
@@ -553,6 +567,8 @@ class AtomicaDashboard(tk.Tk):
         folder_name = os.path.basename(folder)
         self._ata_lbl.config(text=f"ATA: {folder_name}  ({n_dies} dies)",
                              foreground="#1d4ed8")
+        self._refresh_ata_picker()
+        self._ata_picker_var.set(folder_name)
         self.ui.exec_panel.log(f"[SYSTEM] ATA folder '{folder_name}' loaded — {n_dies} dies found.")
         self.ui.exec_panel.set_wafer_map(self.ui.wafer_map, wafer_id=folder_name)
         self.ui.wafer_id_var.set(folder_name)
