@@ -250,6 +250,21 @@ def _parse_die_rc(die_label: str):
     return int(m.group(1)), int(m.group(2))
 
 
+_ID_ROW_COL_RE = re.compile(r"^(\d+)([A-Za-z]+)$")
+
+
+def _parse_id_row_col(die_id: str):
+    """Split a real die ID like "02E" (2-digit row + column letter, the
+    format WaferMapPanel.die_ids/export "ChipID" values already use) into
+    its own (row_str, col_letter) — so exported Row/Column always agree with
+    ChipID exactly, instead of being independently (and differently)
+    computed from the internal, arbitrary row/col grid indices."""
+    m = _ID_ROW_COL_RE.match(die_id or "")
+    if not m:
+        return None, None
+    return m.group(1), m.group(2)
+
+
 def _col_letter(col: int) -> str:
     n = col + 1
     letters = ""
@@ -287,6 +302,7 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
         # reads) over the synthesized row/col label, so CSV exports' ChipID
         # matches what the wafer map overlay actually shows for this die.
         overlay_die_id = next((r.get("die_id") for r in rows if r.get("die_id")), "")
+        id_row, id_col_letter = _parse_id_row_col(overlay_die_id) if overlay_die_id else (None, None)
         current_row = next((r for r in rows if r.get("type") == "current"), None)
         smu_voltage_row = next(
             (r for r in rows if r.get("type") == "voltage" and r.get("mode") == "measure"
@@ -319,8 +335,10 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
                        (f"{row_num:02d}{_col_letter(col_num)}"
                         if row_num is not None and col_num is not None else die)),
             "die_id": overlay_die_id,
-            "row_num": f"{row_num:02d}" if row_num is not None else "",
-            "column_letter": _col_letter(col_num) if col_num is not None else "",
+            "row_num": (id_row if id_row is not None
+                       else (f"{row_num:02d}" if row_num is not None else "")),
+            "column_letter": (id_col_letter if id_col_letter is not None
+                              else (_col_letter(col_num) if col_num is not None else "")),
             "connection": connection,
             "current": current_val,
             "voltage": voltage_val,
