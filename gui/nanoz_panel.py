@@ -1104,6 +1104,9 @@ class NanoZPanel(ttk.Frame):
         self._chart_chip_cb.bind("<<ComboboxSelected>>", lambda _e: self._redraw_charts())
         ttk.Label(pick, text="SPL is per-chip (0=right, 1=left); ENV is board-wide",
                  foreground="#6b7280", wraplength=480, justify="left").pack(side="left")
+        self._chart_live_btn = ttk.Button(pick, text="▶ Jump to Live",
+                                          command=self._chart_resume_live)
+        self._chart_live_btn.pack(side="left", padx=(12, 0))
 
         if _MPL:
             self._chart_fig = Figure(figsize=(8, 7), dpi=100)
@@ -1116,6 +1119,14 @@ class NanoZPanel(ttk.Frame):
             toolbar = NavigationToolbar2Tk(self._chart_canvas, tab, pack_toolbar=False)
             toolbar.update()
             toolbar.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+            # Default view auto-scrolls to the last _CHART_WINDOW_S seconds.
+            # Panning/zooming via the toolbar above (or scroll-back) drops
+            # into "browsing history" mode and stops auto-scrolling until
+            # ▶ Jump to Live is pressed - otherwise the 300ms redraw loop
+            # would fight any manual pan attempt.
+            self._chart_follow_live = True
+            self._chart_programmatic_xlim = False
+            self._chart_ax_v.callbacks.connect("xlim_changed", self._on_chart_xlim_changed)
             self._draw_empty_charts()
         else:
             ttk.Label(tab, text="matplotlib not installed — install it to view live charts.",
@@ -1250,6 +1261,17 @@ class NanoZPanel(ttk.Frame):
         gx, gy = self._break_gaps(xs, ys)
         ax.plot(gx, gy, label=label)
 
+    def _on_chart_xlim_changed(self, _ax):
+        if self._chart_programmatic_xlim:
+            return
+        # A real user pan/zoom (toolbar) moved the view - stop auto-scrolling
+        # so _redraw_charts doesn't yank it back to the live edge every cycle.
+        self._chart_follow_live = False
+
+    def _chart_resume_live(self):
+        self._chart_follow_live = True
+        self._redraw_charts()
+
     def _redraw_charts(self):
         if not _MPL:
             return
@@ -1258,6 +1280,7 @@ class NanoZPanel(ttk.Frame):
         spl_hist = list(self._spl_history.get((port, chip), ()))
         env_hist = list(self._env_history.get(port, ()))
 
+        prev_xlim = self._chart_ax_v.get_xlim()
         self._chart_ax_v.clear()
         self._chart_ax_i.clear()
         self._chart_ax_t.clear()
@@ -1265,9 +1288,11 @@ class NanoZPanel(ttk.Frame):
         candidates = [self._pkt_time(h[0]) for h in (spl_hist, env_hist) if h]
         candidates = [t for t in candidates if t is not None]
         t0 = min(candidates) if candidates else dt.datetime.now()
+        t_max = 0.0
 
         if spl_hist:
             xs = self._elapsed_seconds(spl_hist, t0)
+            t_max = max(t_max, max(xs, default=0.0))
             self._plot_series(self._chart_ax_v, xs, spl_hist, "heater1_voltage_mv", "heater1")
             self._plot_series(self._chart_ax_v, xs, spl_hist, "heater2_voltage_mv", "heater2")
             self._chart_ax_v.legend(fontsize=7, loc="upper left")
@@ -1281,6 +1306,7 @@ class NanoZPanel(ttk.Frame):
 
         if env_hist:
             xs2 = self._elapsed_seconds(env_hist, t0)
+            t_max = max(t_max, max(xs2, default=0.0))
             self._plot_series(self._chart_ax_t, xs2, env_hist, "temp_h_c", "temp_h_c")
             self._plot_series(self._chart_ax_t, xs2, env_hist, "mcu_temperature_c", "mcu_temp")
             self._chart_ax_t.legend(fontsize=7, loc="upper left")
@@ -1291,7 +1317,18 @@ class NanoZPanel(ttk.Frame):
         self._chart_ax_v.set_title("Heater Voltage (mV) — SPL", fontsize=9)
         self._chart_ax_i.set_title("Sensor Current (mA) — SPL", fontsize=9)
         self._chart_ax_t.set_title("Temperature (°C) — ENV", fontsize=9)
-        self._chart_ax_t.set_xlabel(f"time (s, board {port or '—'} chip {chip or '—'})")
+        live_note = "" if self._chart_follow_live else "  [PAUSED — ▶ Jump to Live to resume auto-scroll]"
+        self._chart_ax_t.set_xlabel(
+            f"time (s, board {port or '—'} chip {chip or '—'}){live_note}")
+
+        self._chart_programmatic_xlim = True
+        try:
+            if self._chart_follow_live:
+                self._chart_ax_v.set_xlim(max(0.0, t_max - self._CHART_WINDOW_S), max(t_max, self._CHART_WINDOW_S))
+            else:
+                self._chart_ax_v.set_xlim(prev_xlim)
+        finally:
+            self._chart_programmatic_xlim = False
         self._chart_canvas.draw_idle()
 
     _LOCKABLE_WIDGETS = ("_cycle_entry", "_duration_entry", "_btn_discover",
@@ -1308,6 +1345,7 @@ class NanoZPanel(ttk.Frame):
 
     _CHART_HISTORY_LEN = 300
     _CHART_GAP_THRESHOLD_S = 3.0
+    _CHART_WINDOW_S = 15.0
 
     def _set_locked(self, locked: bool):
         state = "disabled" if locked else "normal"
