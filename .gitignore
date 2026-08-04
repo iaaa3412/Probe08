@@ -5,3 +5,4 @@ gui/dist/
 gui/build/
 *.spec
 .idea/
+gui/app_settings.json
