@@ -52,12 +52,14 @@ class NanoZPanel(ttk.Frame):
 
         self._boards: dict[str, nzb.NanoZBoard] = {}
         self._board_rows: dict[str, str] = {}
+        self._board_label_to_port: dict[str, str] = {}
         self._queue: "queue.Queue" = queue.Queue()
 
         self._running = False
         self._run_mode: str | None = None
         self._lot_thread: threading.Thread | None = None
         self._current_rc = (None, None)
+        self._current_touchdown = None  # (start_row, die_col) during a Recipe run only
         self._touchdown_errors = 0
         self._touchdown_packets = 0
         self._spl_total = 0
@@ -152,19 +154,22 @@ class NanoZPanel(ttk.Frame):
         self.env_interval_var = tk.StringVar(value="1.0")
         ttk.Entry(brow, textvariable=self.env_interval_var, width=6).pack(side="left", padx=(4, 0))
 
-        cols = ("port", "sn", "fw", "sig", "slot", "status", "spl", "env")
+        cols = ("port", "sn", "fw", "sig", "slot0", "slot1", "status", "spl", "env")
         self._board_tree = ttk.Treeview(boards_lf, columns=cols, show="headings", height=6)
         heads = [("port", "Port", 70), ("sn", "S/N", 100), ("fw", "Firmware", 80),
-                 ("sig", "Signature", 70), ("slot", "Slot", 50), ("status", "Status", 280),
+                 ("sig", "Signature", 70), ("slot0", "Slot (chip 0)", 90),
+                 ("slot1", "Slot (chip 1)", 90), ("status", "Status", 280),
                  ("spl", "SPL#", 55), ("env", "ENV#", 55)]
         for cid, text, width in heads:
             self._board_tree.heading(cid, text=text)
             self._board_tree.column(cid, width=width, anchor="center" if cid != "sn" else "w")
         self._board_tree.pack(fill="x", padx=6, pady=6)
         ttk.Label(boards_lf,
-                  text="Double-click a board's Slot cell to assign its physical position "
-                       "(1-20, top to bottom) on the probe card — this is what lets the "
-                       "Recipe tab's wafer-plan import know which board sits where.",
+                  text="Each of the 10 NanoZ boards has two independent chips (0 and 1), each "
+                       "wired to its own die position on the probe head — double-click a "
+                       "board's Slot (chip 0) / Slot (chip 1) cell to assign that chip's "
+                       "physical position (1-20, top to bottom). This is what lets the Recipe "
+                       "tab's wafer-plan import know which board+chip sits where.",
                   foreground="#6b7280", wraplength=760, justify="left").pack(
                   anchor="w", padx=6, pady=(0, 6))
         self._board_tree.bind("<Double-1>", self._on_board_tree_double_click)
@@ -258,10 +263,19 @@ class NanoZPanel(ttk.Frame):
     def _recipe_ports(self) -> list:
         return sorted(self._boards.keys())
 
-    def _port_header(self, port: str) -> str:
+    def _board_label(self, port: str) -> str:
         board = self._boards.get(port)
-        slot = board.identity.slot if board else None
-        return f"{port} (slot {slot})" if slot else f"{port} (no slot)"
+        ident = board.identity if board else None
+        sn = ident.serial_number if ident and ident.serial_number else ""
+        label = f"SN {sn} ({port})" if sn else port
+        if ident and (ident.slot0 or ident.slot1):
+            s0 = ident.slot0 if ident.slot0 else "—"
+            s1 = ident.slot1 if ident.slot1 else "—"
+            label += f" · slots {s0}/{s1}"
+        return label
+
+    def _port_header(self, port: str) -> str:
+        return self._board_label(port)
 
     def _rebuild_recipe_columns(self):
         ports = self._recipe_ports()
@@ -544,10 +558,10 @@ class NanoZPanel(ttk.Frame):
             self.after(0, lambda e=e: messagebox.showerror("Import Failed", str(e)))
             return
         ports = self._recipe_ports()
-        slot_by_port = {p: self._boards[p].identity.slot for p in ports
-                        if self._boards[p].identity.slot}
-        unassigned = [p for p in ports if p not in slot_by_port]
-        shots = nzb.build_shots_from_wafer_plan(plan, ports, slot_by_port)
+        slots_by_port = {p: self._boards[p].identity.chip_slots() for p in ports}
+        unassigned = [p for p in ports
+                     if not (slots_by_port[p].get("0") or slots_by_port[p].get("1"))]
+        shots = nzb.build_shots_from_wafer_plan(plan, ports, slots_by_port)
         stats = nzb.wafer_plan_stats(plan)
 
         def _finish():
@@ -898,9 +912,9 @@ class NanoZPanel(ttk.Frame):
         self.recipe_shot_var = tk.StringVar(value="No recipe run active — see the Recipe tab.")
         ttk.Label(shot_lf, textvariable=self.recipe_shot_var, wraplength=520,
                  justify="left").pack(anchor="w", padx=6, pady=(6, 2))
-        sd_cols = ("port", "slot", "decision", "reason")
+        sd_cols = ("port", "slots", "decision", "reason")
         self._shot_decision_tree = ttk.Treeview(shot_lf, columns=sd_cols, show="headings", height=5)
-        sd_heads = [("port", "Board", 80), ("slot", "Slot", 50),
+        sd_heads = [("port", "Board", 80), ("slots", "Slots (chip0/chip1)", 110),
                    ("decision", "Decision", 80), ("reason", "Reason", 260)]
         for cid, text, width in sd_heads:
             self._shot_decision_tree.heading(cid, text=text)
@@ -947,19 +961,21 @@ class NanoZPanel(ttk.Frame):
         pick.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         ttk.Label(pick, text="Board:").pack(side="left")
         self.console_board_var = tk.StringVar(value="")
+        self._console_board_label_var = tk.StringVar(value="")
         self._console_board_cb = ttk.Combobox(
-            pick, textvariable=self.console_board_var, state="readonly", width=14)
+            pick, textvariable=self._console_board_label_var, state="readonly", width=26)
         self._console_board_cb.pack(side="left", padx=(4, 12))
-        self._console_board_cb.bind("<<ComboboxSelected>>",
-                                    lambda _e: self._refresh_console_reading())
+        self._console_board_cb.bind("<<ComboboxSelected>>", self._on_console_board_picked)
         ttk.Label(pick, text="Chip:").pack(side="left")
         self.console_chip_var = tk.StringVar(value="0")
         self._console_chip_cb = ttk.Combobox(
             pick, textvariable=self.console_chip_var, state="readonly", width=3,
             values=("0", "1"))
-        self._console_chip_cb.pack(side="left", padx=(4, 12))
+        self._console_chip_cb.pack(side="left", padx=(4, 2))
         self._console_chip_cb.bind("<<ComboboxSelected>>",
                                    lambda _e: self._refresh_console_reading())
+        ttk.Label(pick, text="(0=right, 1=left, per board's NANOZ-logo-up orientation)",
+                 foreground="#6b7280").pack(side="left", padx=(0, 12))
 
         cmds = ttk.LabelFrame(
             top, text="Commands")
@@ -1068,16 +1084,18 @@ class NanoZPanel(ttk.Frame):
         pick.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         ttk.Label(pick, text="Board:").pack(side="left")
         self._chart_board_cb = ttk.Combobox(
-            pick, textvariable=self.console_board_var, state="readonly", width=14)
+            pick, textvariable=self._console_board_label_var, state="readonly", width=26)
         self._chart_board_cb.pack(side="left", padx=(4, 12))
-        self._chart_board_cb.bind("<<ComboboxSelected>>", lambda _e: self._redraw_charts())
+        self._chart_board_cb.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: (self._on_console_board_picked(_e), self._redraw_charts()))
         ttk.Label(pick, text="Chip:").pack(side="left")
         self._chart_chip_cb = ttk.Combobox(
             pick, textvariable=self.console_chip_var, state="readonly", width=3,
             values=("0", "1"))
         self._chart_chip_cb.pack(side="left", padx=(4, 12))
         self._chart_chip_cb.bind("<<ComboboxSelected>>", lambda _e: self._redraw_charts())
-        ttk.Label(pick, text="SPL is per-chip; ENV is board-wide",
+        ttk.Label(pick, text="SPL is per-chip (0=right, 1=left); ENV is board-wide",
                  foreground="#6b7280", wraplength=480, justify="left").pack(side="left")
 
         if _MPL:
@@ -1115,13 +1133,16 @@ class NanoZPanel(ttk.Frame):
 
         top = ttk.Frame(tab)
         top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        ttk.Label(top, text="Latest current/voltage per board, chip and sensor. "
-                            "Avg is over readings since the last Reset Counts / run start.",
+        ttk.Label(top, text="Latest current/voltage per board, chip, sensor (S1-S4) and heater "
+                            "(H1-H2). Avg is over readings since the last Reset Counts / run "
+                            "start. Every raw reading (not just this average) is logged to the "
+                            "SPL CSV, tagged with the die it was taken on.",
                  foreground="#6b7280", wraplength=700, justify="left").pack(side="left")
 
-        cols = ("port", "chip", "sensor", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
+        cols = ("port", "chip", "die", "channel", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
         self._results_tree = ttk.Treeview(tab, columns=cols, show="headings", height=16)
-        heads = [("port", "Port", 70), ("chip", "Chip", 50), ("sensor", "Sensor", 60),
+        heads = [("port", "Port", 70), ("chip", "Chip", 50), ("die", "Die (row,col)", 90),
+                 ("channel", "Channel", 60),
                  ("v_now", "V now (mV)", 100), ("i_now", "I now (mA)", 100),
                  ("v_avg", "V avg (mV)", 100), ("i_avg", "I avg (mA)", 100),
                  ("n", "N", 50), ("updated", "Updated", 140)]
@@ -1155,15 +1176,19 @@ class NanoZPanel(ttk.Frame):
                 windowed = hist
             updated = latest.get("host_timestamp", "")
             updated = updated.split("T")[-1] if "T" in updated else updated
-            for s in (1, 2, 3, 4):
-                v_field, i_field = f"dac_mv_s{s}", f"adc_current_ma_s{s}"
+            die_row, die_col = latest.get("die_row"), latest.get("die_col")
+            die = f"{die_row},{die_col}" if die_row is not None and die_col is not None else "—"
+            channels = ([(f"s{s}", f"dac_mv_s{s}", f"adc_current_ma_s{s}") for s in (1, 2, 3, 4)]
+                       + [(f"h{h}", f"heater{h}_voltage_mv", f"heater{h}_current_ma")
+                          for h in (1, 2)])
+            for label, v_field, i_field in channels:
                 v_now, i_now = latest.get(v_field), latest.get(i_field)
                 v_vals = [h[v_field] for h in windowed if v_field in h]
                 i_vals = [h[i_field] for h in windowed if i_field in h]
                 v_avg = sum(v_vals) / len(v_vals) if v_vals else None
                 i_avg = sum(i_vals) / len(i_vals) if i_vals else None
                 self._results_tree.insert("", "end", values=(
-                    port, chip, f"s{s}",
+                    port, chip, die, label,
                     f"{v_now:.2f}" if v_now is not None else "—",
                     f"{i_now:.5f}" if i_now is not None else "—",
                     f"{v_avg:.2f}" if v_avg is not None else "—",
@@ -1310,12 +1335,15 @@ class NanoZPanel(ttk.Frame):
             env_interval_s = float(self.env_interval_var.get())
         except ValueError:
             env_interval_s = 1.0
-        board = nzb.NanoZBoard(ident, self._queue, die_provider=lambda: self._current_rc,
-                               env_interval_s=env_interval_s)
+        board = nzb.NanoZBoard(
+            ident, self._queue,
+            die_provider=lambda chip, p=ident.port: self._die_provider(p, chip),
+            env_interval_s=env_interval_s)
         self._boards[ident.port] = board
         iid = self._board_tree.insert("", "end", values=(
             ident.port, ident.serial_number, ident.firmware, ident.signature,
-            ident.slot if ident.slot else "—",
+            ident.slot0 if ident.slot0 else "—",
+            ident.slot1 if ident.slot1 else "—",
             self._board_status_text(board), 0, 0))
         self._board_rows[ident.port] = iid
         return board
@@ -1387,7 +1415,7 @@ class NanoZPanel(ttk.Frame):
         if not iid:
             return
         vals = list(self._board_tree.item(iid, "values"))
-        vals[5] = status
+        vals[6] = status
         self._board_tree.item(iid, values=vals)
 
     def _set_board_counts(self, port: str, spl: int, env: int):
@@ -1395,7 +1423,7 @@ class NanoZPanel(ttk.Frame):
         if not iid:
             return
         vals = list(self._board_tree.item(iid, "values"))
-        vals[6], vals[7] = spl, env
+        vals[7], vals[8] = spl, env
         self._board_tree.item(iid, values=vals)
 
     def _on_board_tree_double_click(self, event):
@@ -1407,25 +1435,32 @@ class NanoZPanel(ttk.Frame):
             return
         cols = self._board_tree["columns"]
         col_idx = int(col_id[1:]) - 1
-        if not (0 <= col_idx < len(cols)) or cols[col_idx] != "slot":
+        if not (0 <= col_idx < len(cols)) or cols[col_idx] not in ("slot0", "slot1"):
             return
+        chip = "0" if cols[col_idx] == "slot0" else "1"
+        vals_idx = 4 if chip == "0" else 5
         port = self._board_tree.item(row_iid, "values")[0]
         board = self._boards.get(port)
         if not board:
             return
+        current = board.identity.slot0 if chip == "0" else board.identity.slot1
         new_slot = simpledialog.askinteger(
             "Assign Probe-Card Slot",
-            f"Physical slot for {port} (1-20, top to bottom of the probe head):",
-            initialvalue=board.identity.slot or 1, minvalue=1, maxvalue=99, parent=self)
+            f"Physical slot for {port}'s chip {chip} (1-20, top to bottom of the probe head):",
+            initialvalue=current or 1, minvalue=1, maxvalue=99, parent=self)
         if new_slot is None:
             return
-        board.identity.slot = new_slot
+        if chip == "0":
+            board.identity.slot0 = new_slot
+        else:
+            board.identity.slot1 = new_slot
         vals = list(self._board_tree.item(row_iid, "values"))
-        vals[4] = str(new_slot)
+        vals[vals_idx] = str(new_slot)
         self._board_tree.item(row_iid, values=vals)
         self._persist_boards()
         self._rebuild_recipe_columns()
-        self._log_main(f"{port} assigned to probe-card slot {new_slot}.")
+        self._refresh_console_boards()
+        self._log_main(f"{port} chip {chip} assigned to probe-card slot {new_slot}.")
 
     @staticmethod
     def _error_status_text(err) -> str:
@@ -1533,10 +1568,21 @@ class NanoZPanel(ttk.Frame):
 
     def _refresh_console_boards(self):
         ports = sorted(self._boards.keys())
-        self._console_board_cb.config(values=ports)
-        self._chart_board_cb.config(values=ports)
+        labels = [self._board_label(p) for p in ports]
+        self._board_label_to_port = dict(zip(labels, ports))
+        self._console_board_cb.config(values=labels)
+        self._chart_board_cb.config(values=labels)
         if self.console_board_var.get() not in ports and ports:
             self.console_board_var.set(ports[0])
+        current = self.console_board_var.get()
+        if current in self._boards:
+            self._console_board_label_var.set(self._board_label(current))
+        self._refresh_console_reading()
+
+    def _on_console_board_picked(self, _event=None):
+        port = self._board_label_to_port.get(self._console_board_label_var.get())
+        if port:
+            self.console_board_var.set(port)
         self._refresh_console_reading()
 
     def _console_selected_board(self):
@@ -2081,6 +2127,26 @@ class NanoZPanel(ttk.Frame):
             self._run_mode = None
             self.after(0, lambda: self._finish_lot("TEST DIE COMPLETE"))
 
+    def _die_provider(self, port: str, chip: "str | None"):
+        """(row, col) to tag a reading with. During a Recipe run, each board's
+        two chips sit at different physical probe-head slots on the same
+        touchdown — use that board's slot0/slot1 offset from the touchdown's
+        top row so SPL readings get the die that chip actually contacted,
+        not just the touchdown's anchor die. Falls back to the single
+        manually-tracked _current_rc for Test Die / Full Die / manual modes,
+        which probe one die at a time and have no per-chip slot concept."""
+        anchor = self._current_touchdown
+        if not anchor:
+            return self._current_rc
+        start_row, die_col = anchor
+        board = self._boards.get(port)
+        slot = None
+        if board and chip in ("0", "1"):
+            slot = board.identity.slot0 if chip == "0" else board.identity.slot1
+        if slot:
+            return (start_row + slot - 1, die_col)
+        return (start_row, die_col)
+
     def _shot_active_boards(self, shot: dict) -> list:
         excluded = shot.get("excluded_boards", set())
         return [b for p, b in self._boards.items() if p not in excluded and b.state == "connected"]
@@ -2092,9 +2158,14 @@ class NanoZPanel(ttk.Frame):
             self._shot_decision_tree.delete(iid)
         excluded = shot.get("excluded_boards", set())
         reasons = shot.get("board_reasons") or {}
+        chip_reasons = shot.get("chip_reasons") or {}
         for port in self._recipe_ports():
             board = self._boards.get(port)
-            slot = board.identity.slot if board and board.identity.slot else "—"
+            ident = board.identity if board else None
+            s0 = ident.slot0 if ident and ident.slot0 else "—"
+            s1 = ident.slot1 if ident and ident.slot1 else "—"
+            slots = f"{s0}/{s1}"
+            per_chip = chip_reasons.get(port)
             if port in excluded:
                 decision = "SKIP"
                 reason = reasons.get(port) or "excluded (manual)"
@@ -2103,8 +2174,12 @@ class NanoZPanel(ttk.Frame):
                 reason = "not connected"
             else:
                 decision = "RUN"
-                reason = "—"
-            self._shot_decision_tree.insert("", "end", values=(port, slot, decision, reason))
+                if per_chip:
+                    reason = "; ".join(
+                        f"chip{c}: {r or 'product'}" for c, r in per_chip.items())
+                else:
+                    reason = "—"
+            self._shot_decision_tree.insert("", "end", values=(port, slots, decision, reason))
 
     def _start_recipe_run(self):
         if self._running:
@@ -2173,6 +2248,7 @@ class NanoZPanel(ttk.Frame):
                     continue
 
                 self._current_rc = (row, die_col)
+                self._current_touchdown = (row, die_col)
                 die_label = f"R{row}C{die_col}"
                 self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
                 self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
@@ -2211,6 +2287,7 @@ class NanoZPanel(ttk.Frame):
                     pass
             self._running = False
             self._run_mode = None
+            self._current_touchdown = None
             self.after(0, lambda: self._finish_lot("RECIPE RUN COMPLETE"))
 
     _WAFER_READY_TIMEOUT_S = 60.0

@@ -48,7 +48,11 @@ class BoardIdentity:
     raw_ver: str
     raw_whoami: str
     usb_id: str
-    slot: Optional[int] = None
+    slot0: Optional[int] = None  # physical probe-head slot (1..N) wired to chip 0
+    slot1: Optional[int] = None  # physical probe-head slot (1..N) wired to chip 1
+
+    def chip_slots(self) -> dict:
+        return {"0": self.slot0, "1": self.slot1}
 
 
 def now_stamp() -> str:
@@ -290,7 +294,7 @@ def save_known_boards(folder, identities: list) -> None:
     path = Path(folder) / BOARDS_MEMORY_FILENAME
     rows = [
         {"port": i.port, "serial_number": i.serial_number, "firmware": i.firmware,
-         "signature": i.signature, "usb_id": i.usb_id, "slot": i.slot}
+         "signature": i.signature, "usb_id": i.usb_id, "slot0": i.slot0, "slot1": i.slot1}
         for i in identities
     ]
     path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -309,7 +313,9 @@ def load_known_boards(folder) -> list[BoardIdentity]:
             port=row.get("port", ""), serial_number=row.get("serial_number", ""),
             firmware=row.get("firmware", ""), signature=row.get("signature", ""),
             raw_ver="", raw_whoami="", usb_id=row.get("usb_id", ""),
-            slot=row.get("slot"),
+            # Legacy single-slot files (pre-two-chip-per-board) had "slot" -> migrate to slot0.
+            slot0=row.get("slot0", row.get("slot")),
+            slot1=row.get("slot1"),
         )
         for row in rows
     ]
@@ -318,7 +324,8 @@ def load_known_boards(folder) -> list[BoardIdentity]:
 LEGACY_RECIPE_FILENAME = "ata_nanoz_recipe.json"
 RECIPES_FILENAME = "ata_nanoz_recipes.json"
 
-_RECIPE_SHOT_META_KEYS = ("die_column", "td_start_row", "td_end_row", "board_reasons")
+_RECIPE_SHOT_META_KEYS = ("die_column", "td_start_row", "td_end_row", "board_reasons",
+                          "chip_reasons")
 
 
 def _shots_to_rows(shots: list) -> list:
@@ -620,13 +627,20 @@ def wafer_plan_stats(plan: "WaferPlan") -> dict:
     return counts
 
 
-def build_shots_from_wafer_plan(plan: "WaferPlan", ports: list, slot_by_port: dict) -> list[dict]:
+def build_shots_from_wafer_plan(plan: "WaferPlan", ports: list, slots_by_port: dict) -> list[dict]:
     """One shot per touchdown, ordered by die column then touchdown index.
-    A port is excluded from a shot unless it has an assigned slot that lands
-    on a normal product die for that specific touchdown. Each shot also
-    records "board_reasons" (port -> reason string, or None if it runs) so
-    the decision can be explained/displayed later, independent of whatever
-    the manual excluded_boards toggle grid does to it afterwards."""
+
+    Each NanoZ board has two independent chips (0 and 1), each wired to its
+    own physical probe-head slot — `slots_by_port[port]` is a {"0": slot_or_None,
+    "1": slot_or_None} dict (see BoardIdentity.chip_slots()). A `run <nn>`
+    always actuates both chips together (confirmed in the vendor manual, no
+    per-chip run command exists), so a board is only excluded from a shot if
+    BOTH of its chips land off a normal product die for that touchdown —
+    if at least one chip has a real die there, the board still needs to run.
+    "chip_reasons" (port -> {"0": reason_or_None, "1": reason_or_None}) records
+    the per-chip detail for display/filtering; "board_reasons" (port -> reason
+    string, or None if it runs) is the board-level summary, independent of
+    whatever the manual excluded_boards toggle grid does to it afterwards."""
     shots = []
     for die_col in sorted(plan.columns):
         col = plan.columns[die_col]
@@ -634,19 +648,28 @@ def build_shots_from_wafer_plan(plan: "WaferPlan", ports: list, slot_by_port: di
             exclusions = touchdown_slot_exclusions(die_col, start, end, plan)
             excluded_boards = set()
             board_reasons = {}
+            chip_reasons = {}
             for port in ports:
-                slot = slot_by_port.get(port)
-                if slot is None:
-                    reason = "no slot assigned"
-                else:
-                    reason = exclusions.get(slot, "slot beyond probe head height")
-                board_reasons[port] = reason
-                if reason is not None:
+                chip_slots = slots_by_port.get(port) or {}
+                per_chip = {}
+                for chip in ("0", "1"):
+                    slot = chip_slots.get(chip)
+                    if slot is None:
+                        per_chip[chip] = "no slot assigned"
+                    else:
+                        per_chip[chip] = exclusions.get(slot, "slot beyond probe head height")
+                chip_reasons[port] = per_chip
+                if all(r is not None for r in per_chip.values()):
                     excluded_boards.add(port)
+                    board_reasons[port] = "; ".join(
+                        f"chip{c}: {r}" for c, r in per_chip.items())
+                else:
+                    board_reasons[port] = None
             shots.append({
                 "label": f"Col {die_col} · TD{td_i} (rows {start}-{end})",
                 "excluded_boards": excluded_boards,
                 "board_reasons": board_reasons,
+                "chip_reasons": chip_reasons,
                 "die_column": die_col, "td_start_row": start, "td_end_row": end,
             })
     return shots
@@ -655,12 +678,14 @@ def build_shots_from_wafer_plan(plan: "WaferPlan", ports: list, slot_by_port: di
 class NanoZBoard:
 
     def __init__(self, identity: BoardIdentity, out_queue,
-                die_provider: Optional[Callable[[], tuple]] = None,
+                die_provider: Optional[Callable[[Optional[str]], tuple]] = None,
                 env_interval_s: float = 1.0):
         self.identity = identity
         self.port = identity.port
         self.out_queue = out_queue
-        self._die_provider = die_provider or (lambda: (None, None))
+        # die_provider(chip) -> (row, col); chip is "0"/"1" for a per-chip SPL
+        # reading, or None for a board-wide ENV reading.
+        self._die_provider = die_provider or (lambda chip: (None, None))
         self.env_interval_s = env_interval_s
         self.ser: Optional[serial.Serial] = None
         self._buffer = bytearray()
@@ -795,7 +820,7 @@ class NanoZBoard:
             parsed = parse_spl_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col = self._die_provider()
+        row, col = self._die_provider(str(header_chip))
         self.spl_count += 1
         self.out_queue.put({
             "kind": "spl", "host_timestamp": now_stamp(),
@@ -821,7 +846,7 @@ class NanoZBoard:
             parsed = parse_env_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col = self._die_provider()
+        row, col = self._die_provider(None)
         self.env_count += 1
         self.out_queue.put({
             "kind": "env", "host_timestamp": now_stamp(),
