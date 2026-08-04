@@ -165,6 +165,27 @@ class WaferMapPanel(ttk.LabelFrame):
         else:
             self.draw_map()
 
+    def zoom(self, factor: float):
+        """Zoom around the canvas's own center — for a Zoom In/Out button,
+        as opposed to _bind_zoom_only's scroll-at-cursor binding."""
+        w = self.canvas.winfo_width() or 1
+        h = self.canvas.winfo_height() or 1
+        cx, cy = self.canvas.canvasx(w / 2), self.canvas.canvasy(h / 2)
+        self.canvas.scale("all", cx, cy, factor, factor)
+        bb = self.canvas.bbox("all")
+        if bb:
+            pad = 500
+            self.canvas.configure(scrollregion=(
+                min(bb[0] - pad, -20000), min(bb[1] - pad, -20000),
+                max(bb[2] + pad,  20000), max(bb[3] + pad,  20000),
+            ))
+
+    def zoom_in(self):
+        self.zoom(1.25)
+
+    def zoom_out(self):
+        self.zoom(1 / 1.25)
+
     def _hit_die(self, cx, cy):
         """Which (row, col) die's rectangle contains this canvas-space point.
 

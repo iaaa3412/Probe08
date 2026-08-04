@@ -1892,6 +1892,13 @@ class MainLayout(ttk.Frame):
         self._exec2_run_mode = None
         self._exec2_die_num  = 0
         self._exec2_total_dies = 0
+        # Bumped on every start/abort. A run thread captures its own token and
+        # re-checks it at every loop step/finish — if a new run (or an abort)
+        # bumps the token out from under it, the stale thread stops touching
+        # shared state/hardware instead of racing the new run and silently
+        # "resuming" its own old loop.
+        self._exec2_run_token = 0
+        self._exec2_lot_thread: threading.Thread | None = None
         self._exec2_steps    = []
         self._exec2_current_rc = None
         self._exec2_pma_row_offset = 0
@@ -2074,8 +2081,9 @@ class MainLayout(ttk.Frame):
             ttk.Button(map_bar, text="📥 Load Selected Map",
                        command=lambda: self._exec2_load_selected_map(
                            quiet_if_missing=False)).pack(side="left", padx=(6, 0))
-            ttk.Button(map_bar, text="☑ Select All",
-                       command=self._exec2_select_all_sites).pack(side="left", padx=(6, 0))
+            self._exec2_select_all_btn = ttk.Button(
+                map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
+            self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
         else:
             ttk.Button(map_bar, text="🔀 Compare/Merge PMA…",
                        command=self._exec2_open_pma_compare_dialog).pack(side="left")
@@ -2164,6 +2172,7 @@ class MainLayout(ttk.Frame):
     def _exec2_abort(self):
         self._exec2_running = False
         self._exec2_aborted = True
+        self._exec2_run_token += 1
         self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
         self.after(0, lambda: self._exec2_test_btn.config(state="normal"))
         self.after(0, lambda: self.recipe_panel.set_locked(False))
@@ -2185,7 +2194,12 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[RUN] es error: {e}")
             threading.Thread(target=_stop_and_clear, daemon=True).start()
 
-    def _exec2_finish_run(self, msg: str, color: str):
+    def _exec2_finish_run(self, token: int, msg: str, color: str):
+        if token != self._exec2_run_token:
+            # Superseded by a newer run (or an abort) while this thread was
+            # blocked on a hardware call — it's no longer "the" run, so don't
+            # stomp on whatever state that newer run/abort has already set.
+            return
         self._exec2_running  = False
         self._exec2_run_mode = None
         self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
@@ -2296,6 +2310,11 @@ class MainLayout(ttk.Frame):
 
     def _exec2_can_start(self) -> bool:
         ok = True
+        if self._exec2_lot_thread and self._exec2_lot_thread.is_alive():
+            self._exec2_log("[RUN] Cannot start — the previous run is still finishing "
+                            "its last hardware command (probably waiting on the prober). "
+                            "Wait a moment and try again.")
+            ok = False
         if not self._exec2_steps:
             self._exec2_log("[RUN] Cannot start — no recipe loaded "
                             "(pick one and ⟳ Load Recipe first).")
@@ -2330,6 +2349,8 @@ class MainLayout(ttk.Frame):
         self._exec2_running  = True
         self._exec2_aborted  = False
         self._exec2_run_mode = "full"
+        self._exec2_run_token += 1
+        my_token = self._exec2_run_token
         self._exec2_full_btn.config(state="disabled")
         self._exec2_test_btn.config(state="disabled")
         self.recipe_panel.set_locked(True)
@@ -2337,12 +2358,15 @@ class MainLayout(ttk.Frame):
         self.after(0, lambda: self._exec2_set_state("RUNNING (Full Die)", "#2563eb"))
         self._exec2_log("[RUN] ▶ Full Die — walking the entire wafer (G/J), "
                         "measuring the loaded recipe at every die.")
-        threading.Thread(target=self._exec2_full_die_thread, daemon=True).start()
+        self._exec2_lot_thread = threading.Thread(
+            target=self._exec2_full_die_thread, args=(my_token,), daemon=True)
+        self._exec2_lot_thread.start()
 
-    def _exec2_full_die_thread(self):
+    def _exec2_full_die_thread(self, my_token: int):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         self._exec2_current_pma_shot = None
+        error_msg = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
             if sim:
@@ -2355,12 +2379,17 @@ class MainLayout(ttk.Frame):
                 stb = 70
                 time.sleep(0.2)
             else:
+                # move_to_start_die() raises if the prober answers with a GPIB
+                # error (STB=76) instead of 67/70 — e.g. it wasn't sitting on
+                # the probing menu when G was sent. Caught below so the GUI
+                # reflects the real outcome instead of claiming a clean finish.
                 stb = prober.move_to_start_die()
             self._exec2_log(f"[RUN] << STB={stb}")
             self._exec2_ensure_separated(prober, stb, sim)
 
             sim_dies_remaining = 12
-            while self._exec2_running and not self._exec2_aborted:
+            while (self._exec2_running and not self._exec2_aborted
+                   and self._exec2_run_token == my_token):
                 if sim:
                     x, y = float(self._exec2_die_num % 5), float(self._exec2_die_num // 5)
                 else:
@@ -2378,7 +2407,8 @@ class MainLayout(ttk.Frame):
                 self._exec2_update_die_color(int(y), int(x), ok)
                 self.after(0, self._exec2_add_pass if ok else self._exec2_add_fail)
 
-                if not self._exec2_running or self._exec2_aborted:
+                if (not self._exec2_running or self._exec2_aborted
+                        or self._exec2_run_token != my_token):
                     break
 
                 self._exec2_log("[RUN] >> J  (Next die)")
@@ -2397,14 +2427,24 @@ class MainLayout(ttk.Frame):
                 self._exec2_log(f"[RUN] << STB={stb}")
                 self._exec2_ensure_separated(prober, stb, sim)
         except Exception as e:
+            error_msg = str(e)
             self._exec2_log(f"[RUN] ERROR: {e}")
         finally:
-            self._exec2_finish_run("DONE (Full Die)", "#16a34a")
+            if error_msg:
+                self._exec2_finish_run(my_token, f"ERROR: {error_msg[:60]}", "#dc2626")
+            else:
+                self._exec2_finish_run(my_token, "DONE (Full Die)", "#16a34a")
 
 
     def _exec2_on_sites_changed(self, picks):
         self._exec2_sites_var.set(
             f"Test sites: {len(picks)} picked (click dies to add/remove)")
+        btn = getattr(self, "_exec2_select_all_btn", None)
+        dies = self._exec2_wafer_map._last_dies
+        if btn and dies:
+            all_rc = {(d["row"], d["col"]) for d in dies}
+            is_all = bool(all_rc) and set(picks) == all_rc
+            btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
 
     def _exec2_randomize_sites(self):
         dies = self._exec2_wafer_map._last_dies
@@ -2419,16 +2459,22 @@ class MainLayout(ttk.Frame):
         self._exec2_log("[RUN] Randomized test sites: "
                         + ", ".join(f"R{r}C{c}" for r, c in picks))
 
-    def _exec2_select_all_sites(self):
+    def _exec2_toggle_select_all(self):
         dies = self._exec2_wafer_map._last_dies
         if not dies:
             self._exec2_log("[RUN] No wafer map loaded — load one before selecting dies.")
             return
-        picks = [(d["row"], d["col"]) for d in dies]
-        self._exec2_wafer_map.set_picked(picks)
-        self._exec2_on_sites_changed(picks)
-        self._exec2_log(f"[RUN] Selected all {len(picks)} die(s) — "
-                        "click any die to deselect it.")
+        all_rc = [(d["row"], d["col"]) for d in dies]
+        already_all = set(self._exec2_wafer_map.get_picked()) == set(all_rc)
+        if already_all:
+            self._exec2_wafer_map.set_picked([])
+            self._exec2_on_sites_changed([])
+            self._exec2_log("[RUN] Deselected all dies.")
+        else:
+            self._exec2_wafer_map.set_picked(all_rc)
+            self._exec2_on_sites_changed(all_rc)
+            self._exec2_log(f"[RUN] Selected all {len(all_rc)} die(s) — "
+                            "click any die to deselect it, or press again to deselect all.")
 
     _SELECTED_MAP_FILENAME = "ata_wafer_map_selected.csv"
 
@@ -2919,6 +2965,8 @@ class MainLayout(ttk.Frame):
         self._exec2_running  = True
         self._exec2_aborted  = False
         self._exec2_run_mode = "test"
+        self._exec2_run_token += 1
+        my_token = self._exec2_run_token
         self._exec2_full_btn.config(state="disabled")
         self._exec2_test_btn.config(state="disabled")
         self.recipe_panel.set_locked(True)
@@ -2926,13 +2974,16 @@ class MainLayout(ttk.Frame):
         self.after(0, lambda: self._exec2_set_state("RUNNING (Test Die)", "#2563eb"))
         self._exec2_log(f"[RUN] ▶ Test Die — {len(sites)} site(s): "
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
-        threading.Thread(target=self._exec2_test_die_thread,
-                         args=(sites, die_shots_by_rc), daemon=True).start()
+        self._exec2_lot_thread = threading.Thread(
+            target=self._exec2_test_die_thread,
+            args=(sites, die_shots_by_rc, my_token), daemon=True)
+        self._exec2_lot_thread.start()
 
-    def _exec2_test_die_thread(self, sites, die_shots_by_rc=None):
+    def _exec2_test_die_thread(self, sites, die_shots_by_rc, my_token: int):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         die_shots_by_rc = die_shots_by_rc or {}
+        error_msg = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
             if sim:
@@ -2957,7 +3008,8 @@ class MainLayout(ttk.Frame):
             self._exec2_ensure_separated(prober, stb, sim)
 
             idx = 0
-            while self._exec2_running and not self._exec2_aborted and idx < len(sites):
+            while (self._exec2_running and not self._exec2_aborted
+                   and self._exec2_run_token == my_token and idx < len(sites)):
                 row, col = sites[idx]
                 die_label = f"R{row}C{col}  (X{col} Y{row})"
                 self.after(0, lambda d=die_label: self._exec2_die_var.set(f"Die: {d}"))
@@ -2973,7 +3025,8 @@ class MainLayout(ttk.Frame):
                 self.after(0, self._exec2_add_pass if ok else self._exec2_add_fail)
 
                 idx += 1
-                if not self._exec2_running or self._exec2_aborted or idx >= len(sites):
+                if (not self._exec2_running or self._exec2_aborted
+                        or self._exec2_run_token != my_token or idx >= len(sites)):
                     break
 
                 row, col = sites[idx]
@@ -2992,9 +3045,13 @@ class MainLayout(ttk.Frame):
                 self._exec2_log(f"[RUN] << STB={stb}")
                 self._exec2_ensure_separated(prober, stb, sim)
         except Exception as e:
+            error_msg = str(e)
             self._exec2_log(f"[RUN] ERROR: {e}")
         finally:
-            self._exec2_finish_run("DONE (Test Die)", "#16a34a")
+            if error_msg:
+                self._exec2_finish_run(my_token, f"ERROR: {error_msg[:60]}", "#dc2626")
+            else:
+                self._exec2_finish_run(my_token, "DONE (Test Die)", "#16a34a")
 
 
     def _exec2_load_recipe(self):
@@ -3128,6 +3185,14 @@ class MainLayout(ttk.Frame):
         pma_shot = getattr(self, "_exec2_current_pma_shot", None)
         pma_die_id = (pma_shot or {}).get("raw_text") or ""
         cur_row, cur_col = self._exec2_current_rc or (None, None)
+        # The Overlay dialog's die IDs (self._exec2_overlay_die_ids, keyed by
+        # (row, col)) are the ones shown on the wafer map — prefer them so the
+        # exported die_id always matches what the overlay displays. Only fall
+        # back to the PMA-compare flow's own die ID (Test PMA path) when no
+        # overlay is loaded for this die.
+        overlay_die_id = (self._exec2_overlay_die_ids.get((cur_row, cur_col), "")
+                          if cur_row is not None else "")
+        die_id = overlay_die_id or pma_die_id
         last_set_voltage_by_ch = {}
 
         overall_ok = True
@@ -3236,7 +3301,8 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    R = {r:.4g} Ω  (via {instrument}){avg_txt}")
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{r:.6g}",
-                                       unit="ohm", connection=conn_str, instrument=instrument,
+                                       unit="ohm", die_id=die_id or None,
+                                       connection=conn_str, instrument=instrument,
                                        die_row=cur_row, die_col=cur_col)
                     last_reading = (name, r, "ohm")
                     readings_by_name[name] = (r, "ohm")
@@ -3257,7 +3323,8 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    V = {v:.4g} V  (via {instrument}){avg_txt}")
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{v:.6g}",
-                                       unit="V", connection=conn_str, instrument=instrument,
+                                       unit="V", die_id=die_id or None,
+                                       connection=conn_str, instrument=instrument,
                                        die_row=cur_row, die_col=cur_col)
                     last_reading = (name, v, "V")
                     readings_by_name[name] = (v, "V")
@@ -3300,7 +3367,7 @@ class MainLayout(ttk.Frame):
                                     "(output ON until an open step)" + readback_txt)
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{actual_current:.6g}",
-                                       unit="A", voltage=actual_voltage,
+                                       unit="A", voltage=actual_voltage, die_id=die_id or None,
                                        connection=conn_str, instrument=instrument,
                                        die_row=cur_row, die_col=cur_col)
                     last_reading = (name, actual_current, "A")
@@ -3342,7 +3409,7 @@ class MainLayout(ttk.Frame):
                     self.record_result(
                         timestamp=ts, recipe=recipe_name, die=die_label,
                         step=name, type=t, mode=mode, value=f"{i_a:.6g}", unit="A",
-                        die_id=pma_die_id or None,
+                        die_id=die_id or None,
                         switch=int(die_slot_m.group(1)) if die_slot_m else None,
                         die_row=cur_row, die_col=cur_col,
                         set_voltage=set_voltage, voltage=actual_voltage,
@@ -3692,11 +3759,21 @@ class MainLayout(ttk.Frame):
         map_frame.columnconfigure(0, weight=2)
         map_frame.columnconfigure(1, weight=1)
 
+        top_row = ttk.Frame(map_frame)
+        top_row.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4))
         self.lbl_results_large = ttk.Label(
-            map_frame, text="Total Passed: 0     |     Total Failed: 0     |     Untested: 0",
+            top_row, text="Total Passed: 0     |     Total Failed: 0     |     Untested: 0",
             font=("Arial", 11, "bold"))
-        self.lbl_results_large.grid(row=0, column=0, columnspan=2, sticky="w",
-                                    padx=8, pady=(8, 4))
+        self.lbl_results_large.pack(side="left")
+        zoom_bar = ttk.Frame(top_row)
+        zoom_bar.pack(side="right")
+        ttk.Button(zoom_bar, text="🔍+", width=3,
+                  command=lambda: self._results_wafer_map.zoom_in()).pack(side="left")
+        ttk.Button(zoom_bar, text="🔍-", width=3,
+                  command=lambda: self._results_wafer_map.zoom_out()).pack(side="left", padx=(2, 0))
+        ttk.Button(zoom_bar, text="Reset View",
+                  command=lambda: self._results_wafer_map._reset_view()).pack(
+                  side="left", padx=(6, 0))
 
         self._results_wafer_map = WaferMapPanel(map_frame)
         self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
@@ -3754,9 +3831,13 @@ class MainLayout(ttk.Frame):
         row, col = rc
         matches = [r for r in self.controller.results_data
                   if r.get("row") == row and r.get("col") == col]
+        die_id = self._exec2_overlay_die_ids.get(rc, "")
+        if not die_id:
+            die_id = next((r.get("die_id") for r in matches if r.get("die_id")), "")
+        die_desc = f"{die_id} (R{row}C{col})" if die_id else f"R{row}C{col}"
         self._results_die_var.set(
-            f"Die R{row}C{col} — {len(matches)} reading(s)" if matches
-            else f"Die R{row}C{col} — no measurements recorded yet.")
+            f"Die {die_desc} — {len(matches)} reading(s)" if matches
+            else f"Die {die_desc} — no measurements recorded yet.")
         for iid in self._results_die_tree.get_children():
             self._results_die_tree.delete(iid)
         for r in matches:
