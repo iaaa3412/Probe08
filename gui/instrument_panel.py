@@ -3671,45 +3671,25 @@ class MainLayout(ttk.Frame):
         self._exec2_pct_var.set(f"Yield:  {pct:.1f}%  ({p}/{total})")
 
 
-    def _make_vscroll_frame(self, parent) -> ttk.Frame:
-        """Wrap tab content in a vertically scrollable canvas+frame so a tab
-        taller than the window isn't cut off with no way to reach the rest."""
-        outer = ttk.Frame(parent)
-        outer.pack(fill="both", expand=True)
-        outer.rowconfigure(0, weight=1)
-        outer.columnconfigure(0, weight=1)
-
-        canvas = tk.Canvas(outer, highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=vsb.set)
-
-        inner = ttk.Frame(canvas)
-        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        inner.bind("<Configure>",
-                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>",
-                   lambda e: canvas.itemconfig(inner_id, width=e.width))
-
-        def _on_wheel(e):
-            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
-        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-
-        return inner
-
     def _tab_results(self, nb):
         page = ttk.Frame(nb)
         nb.add(page, text="Results")
-        tab = self._make_vscroll_frame(page)
+        page.rowconfigure(0, weight=1)
+        page.columnconfigure(0, weight=1)
+
+        # Vertical PanedWindow instead of a plain scroll wrapper - drag the
+        # sashes between sections to give more room to whichever one you
+        # need (wafer map, export controls, results table, ...).
+        split = ttk.PanedWindow(page, orient="vertical")
+        split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         if self._system == "accretech":
-            self._build_results_wafer_map(tab)
+            wafer_pane = ttk.Frame(split)
+            split.add(wafer_pane, weight=3)
+            self._build_results_wafer_map(wafer_pane)
 
-        export_frame = ttk.LabelFrame(tab, text="Data Export")
-        export_frame.pack(fill="x", padx=15, pady=15)
+        export_frame = ttk.LabelFrame(split, text="Data Export")
+        split.add(export_frame, weight=0)
 
         ttk.Label(
             export_frame,
@@ -3777,8 +3757,8 @@ class MainLayout(ttk.Frame):
                  foreground="#6b7280", font=("Segoe UI", 8)).pack(
                  anchor="w", padx=10, pady=(0, 8))
 
-        results_lf = ttk.LabelFrame(tab, text="Measurement Results")
-        results_lf.pack(fill="both", expand=True, padx=15, pady=(0, 8))
+        results_lf = ttk.LabelFrame(split, text="Measurement Results")
+        split.add(results_lf, weight=2)
         results_lf.rowconfigure(0, weight=1)
         results_lf.columnconfigure(0, weight=1)
 
@@ -3802,8 +3782,8 @@ class MainLayout(ttk.Frame):
             row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 6))
 
         if self._system != "accretech":
-            stats_frame = ttk.LabelFrame(tab, text="Run Statistics")
-            stats_frame.pack(fill="x", padx=15, pady=(0, 15))
+            stats_frame = ttk.LabelFrame(split, text="Run Statistics")
+            split.add(stats_frame, weight=1)
 
             self.results_canvas = tk.Canvas(
                 stats_frame, width=300, height=300, bg="#f0f0f0", highlightthickness=0
