@@ -20,7 +20,7 @@ from eg_pma_run_panel import EgPmaRunPanel
 from hp3458a_debug_panel import HP3458ADebugPanel
 from accr_wafer_panel import AccrWaferPanel
 from cassette_panel import CassettePanel
-from recipe_panel import RecipePanel
+from recipe_panel import RecipePanel, load_default_recipe
 from pma_wafer_panel import (PmaWaferPanel, pma_shots_to_grid, merge_with_accretech,
                              centroid_offset)
 from nanoz_panel import NanoZPanel
@@ -1286,6 +1286,7 @@ class MainLayout(ttk.Frame):
         self._pad_custom_loaded = False
 
         self.pin_wiring.load_from_ata(folder_path)
+        self._exec2_autoload_default_recipe(folder_path)
 
         all_files = {f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))}
 
@@ -1776,7 +1777,8 @@ class MainLayout(ttk.Frame):
             switch_card=lambda name: (self.pin_wiring.switch_to_card(name)
                                       if hasattr(self, "pin_wiring") else None),
             get_card_names=lambda: (self.pin_wiring.get_card_names()
-                                    if hasattr(self, "pin_wiring") else []))
+                                    if hasattr(self, "pin_wiring") else []),
+            get_ata_folder=lambda: self._ata_folder)
         self.recipe_panel.grid(row=0, column=0, sticky="nsew")
 
     def _tab_dmm_debug(self, nb):
@@ -3054,6 +3056,30 @@ class MainLayout(ttk.Frame):
                 self._exec2_finish_run(my_token, "DONE (Test Die)", "#16a34a")
 
 
+    def _exec2_autoload_default_recipe(self, folder_path):
+        """If this ATA folder has a default recipe marked (Recipe tab's ⭐ Set
+        as Default), switch to its probe card if needed and load it straight
+        into the Run tab — same effect as manually picking it and pressing
+        ⟳ Load Recipe, just automatic on ATA folder open."""
+        card, name = load_default_recipe(folder_path)
+        if not card or not name:
+            return
+        if not hasattr(self, "recipe_panel") or not hasattr(self, "_exec2_recipe_var"):
+            return
+        if self.pin_wiring.get_active_card() != card:
+            if card not in self.pin_wiring.get_card_names():
+                self._exec2_log(f"[RUN] Default recipe '{name}' wants probe card "
+                                f"'{card}', which no longer exists — skipping autoload.")
+                return
+            self.pin_wiring.switch_to_card(card)
+        if name not in self.recipe_panel.get_recipe_names():
+            self._exec2_log(f"[RUN] Default recipe '{name}' not found on probe card "
+                            f"'{card}' — skipping autoload.")
+            return
+        self._exec2_recipe_var.set(name)
+        self._exec2_load_recipe()
+        self._exec2_log(f"[RUN] Auto-loaded default recipe '{name}' (probe card '{card}').")
+
     def _exec2_load_recipe(self):
         name = self._exec2_recipe_var.get()
         if not name:
@@ -3185,14 +3211,22 @@ class MainLayout(ttk.Frame):
         pma_shot = getattr(self, "_exec2_current_pma_shot", None)
         pma_die_id = (pma_shot or {}).get("raw_text") or ""
         cur_row, cur_col = self._exec2_current_rc or (None, None)
-        # The Overlay dialog's die IDs (self._exec2_overlay_die_ids, keyed by
-        # (row, col)) are the ones shown on the wafer map — prefer them so the
-        # exported die_id always matches what the overlay displays. Only fall
-        # back to the PMA-compare flow's own die ID (Test PMA path) when no
-        # overlay is loaded for this die.
+        # Three possible die-ID sources, in priority order:
+        #   1. The Overlay dialog's manual die IDs (self._exec2_overlay_die_ids)
+        #      — an explicit user action, so it wins if set.
+        #   2. The currently-loaded wafer map's own ID column (e.g.
+        #      Electroglas's "device_id"), captured by WaferMapPanel into
+        #      .die_ids at load time — this is the map's real, authoritative
+        #      ID and should be used automatically without any extra step.
+        #   3. The Test PMA compare/merge flow's shot ID, only present when
+        #      that flow was used to pick sites.
+        # Whichever wins, it's the same "die_id" every export format reads,
+        # so the export always matches what the map/overlay actually shows.
+        map_die_id = (self._exec2_wafer_map.die_ids.get((cur_row, cur_col), "")
+                      if cur_row is not None else "")
         overlay_die_id = (self._exec2_overlay_die_ids.get((cur_row, cur_col), "")
                           if cur_row is not None else "")
-        die_id = overlay_die_id or pma_die_id
+        die_id = overlay_die_id or map_die_id or pma_die_id
         last_set_voltage_by_ch = {}
 
         overall_ok = True
@@ -3831,7 +3865,8 @@ class MainLayout(ttk.Frame):
         row, col = rc
         matches = [r for r in self.controller.results_data
                   if r.get("row") == row and r.get("col") == col]
-        die_id = self._exec2_overlay_die_ids.get(rc, "")
+        die_id = (self._exec2_overlay_die_ids.get(rc, "")
+                 or wm.die_ids.get(rc, ""))
         if not die_id:
             die_id = next((r.get("die_id") for r in matches if r.get("die_id")), "")
         die_desc = f"{die_id} (R{row}C{col})" if die_id else f"R{row}C{col}"

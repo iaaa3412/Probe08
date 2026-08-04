@@ -29,7 +29,8 @@ SQL_SOURCE_FIELDS = {
 CSV_SOURCE_FIELDS = {
     "lot_id":         "Lot ID entered on the Results tab",
     "wafer_id":       "Wafer ID entered on the Results tab",
-    "chip_id":        "Row+Column die label (e.g. 02I)",
+    "chip_id":        "Overlay die ID if available, else a row+column label (e.g. 02I)",
+    "die_id":         "Overlay die ID for this die, if one is loaded (blank otherwise)",
     "row_num":        "Die row number",
     "column_letter":  "Die column letter",
     "connection":     "All switch-matrix channels used for this die, merged",
@@ -282,6 +283,10 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
     for die in order:
         rows = rows_by_die[die]
         row_num, col_num = _parse_die_rc(die)
+        # Prefer the real overlay die ID (same field the SQL "die_id" source
+        # reads) over the synthesized row/col label, so CSV exports' ChipID
+        # matches what the wafer map overlay actually shows for this die.
+        overlay_die_id = next((r.get("die_id") for r in rows if r.get("die_id")), "")
         current_row = next((r for r in rows if r.get("type") == "current"), None)
         smu_voltage_row = next(
             (r for r in rows if r.get("type") == "voltage" and r.get("mode") == "measure"
@@ -310,8 +315,10 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
 
         out.append({
             "die": die,
-            "chip_id": (f"{row_num:02d}{_col_letter(col_num)}"
-                       if row_num is not None and col_num is not None else die),
+            "chip_id": (overlay_die_id or
+                       (f"{row_num:02d}{_col_letter(col_num)}"
+                        if row_num is not None and col_num is not None else die)),
+            "die_id": overlay_die_id,
             "row_num": f"{row_num:02d}" if row_num is not None else "",
             "column_letter": _col_letter(col_num) if col_num is not None else "",
             "connection": connection,

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import tkinter as tk
@@ -25,6 +26,33 @@ _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", 
                   "avg_count", "avg_delay", "nplc")
 
 STEP_FIELDS = _STEP_FIELDS
+
+DEFAULT_RECIPE_FILENAME = "ata_default_recipe.json"
+
+
+def load_default_recipe(folder: str):
+    """(card, recipe) last marked default for this ATA folder, or (None, None)."""
+    if not folder:
+        return None, None
+    path = os.path.join(folder, DEFAULT_RECIPE_FILENAME)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("card"), data.get("recipe")
+    except (OSError, ValueError):
+        return None, None
+
+
+def save_default_recipe(folder: str, card: str, recipe: str) -> bool:
+    if not folder:
+        return False
+    path = os.path.join(folder, DEFAULT_RECIPE_FILENAME)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"card": card, "recipe": recipe}, f, indent=2)
+        return True
+    except OSError:
+        return False
 
 
 def _normalize_numeric_field(text: str) -> str:
@@ -416,7 +444,7 @@ def rows_to_recipes(rows: list) -> dict:
 class RecipePanel(ttk.Frame):
     def __init__(self, parent, controller, get_pins=None, get_wiring=None,
                  get_active_card=None, save_recipes=None, system: str = "accretech",
-                 switch_card=None, get_card_names=None):
+                 switch_card=None, get_card_names=None, get_ata_folder=None):
         super().__init__(parent)
         self.controller = controller
         self._get_pins = get_pins or (lambda: [])
@@ -425,6 +453,7 @@ class RecipePanel(ttk.Frame):
         self._save_recipes = save_recipes or (lambda _card, _recipes: False)
         self._switch_card_cb = switch_card or (lambda _name: None)
         self._get_card_names = get_card_names or (lambda: [])
+        self._get_ata_folder = get_ata_folder or (lambda: None)
         self._conn_viewer = None
         self._system = system
         if system == "electroglas":
@@ -468,6 +497,10 @@ class RecipePanel(ttk.Frame):
         self._validity_lbl = tk.Label(bar, text="", bg="#e2e8f0",
                                       font=("Segoe UI", 9, "bold"))
         self._validity_lbl.pack(side="left", padx=(0, 8), pady=4)
+
+        self._btn_set_default = ttk.Button(bar, text="⭐ Set as Default", width=15,
+                                           command=self._set_default_recipe)
+        self._btn_set_default.pack(side="left", padx=2, pady=4)
 
         self._btn_new = ttk.Button(bar, text="＋ New", width=7,
                                    command=self._new_recipe)
@@ -513,6 +546,10 @@ class RecipePanel(ttk.Frame):
                                   bg="#e2e8f0", fg="#6b7280",
                                   font=("Segoe UI", 8), anchor="w")
         self._file_lbl.pack(side="left", padx=8)
+
+        self._default_lbl = tk.Label(bar, text="", bg="#e2e8f0", fg="#374151",
+                                     font=("Segoe UI", 8, "italic"))
+        self._default_lbl.pack(side="left", padx=(0, 8))
 
 
     def _build_body(self):
@@ -1434,6 +1471,7 @@ class RecipePanel(ttk.Frame):
         self._store_form()
         self._load_form(name)
         self.controller.log(f"[RECIPE] Active recipe: {name}")
+        self._update_default_label()
 
     def _refresh_picker(self):
         names = list(self._recipes.keys())
@@ -1442,6 +1480,42 @@ class RecipePanel(ttk.Frame):
             self._load_form(names[0])
         else:
             self._picker_var.set(self._current)
+        self._update_default_label()
+
+    def _set_default_recipe(self):
+        folder = self._get_ata_folder()
+        if not folder:
+            messagebox.showerror("No ATA Folder",
+                                 "Load an ATA folder first — the default recipe is "
+                                 "remembered per ATA folder.")
+            return
+        card = self._active_card
+        if not card:
+            messagebox.showerror("No Probe Card", "Select a probe card first.")
+            return
+        name = self._current
+        if name == "(unsaved)":
+            messagebox.showerror("Unsaved Recipe",
+                                 "Save this recipe (💾 Save) before setting it as default.")
+            return
+        if save_default_recipe(folder, card, name):
+            self.controller.log(
+                f"[RECIPE] '{name}' (probe card '{card}') set as default — will "
+                "auto-load on the Run tab whenever this ATA folder is opened.")
+            self._update_default_label()
+        else:
+            messagebox.showerror("Save Failed", "Could not write ata_default_recipe.json.")
+
+    def _update_default_label(self):
+        folder = self._get_ata_folder()
+        card, name = load_default_recipe(folder) if folder else (None, None)
+        if card and name:
+            is_current = (card == self._active_card and name == self._current)
+            self._default_lbl.config(
+                text=("⭐ default: this recipe" if is_current
+                      else f"⭐ default: '{name}' ({card})"))
+        else:
+            self._default_lbl.config(text="")
 
     def _new_recipe(self):
         card = self._get_active_card()

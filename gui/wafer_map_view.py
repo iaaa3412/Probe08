@@ -75,6 +75,7 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas = tk.Canvas(self, bg="white")
         self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
         self.dies = {}
+        self.die_ids = {}  # (row, col) -> real die-ID/label from the loaded map file, if any
         self._last_dies = None
         self.on_redraw = None  # optional callback() run after any full redraw
         self.canvas.create_text(150, 100, text="Waiting for Wafer Map...", fill="gray")
@@ -213,6 +214,7 @@ class WaferMapPanel(ttk.LabelFrame):
     def draw_map(self):
         self.canvas.delete("all")
         self.dies.clear()
+        self.die_ids.clear()
         self.update_idletasks()
         width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
         if width < 50:
@@ -274,6 +276,11 @@ class WaferMapPanel(ttk.LabelFrame):
         x_key   = next((k for k in ("x_um", "x_mm", "x", "die_x", "center_x", "origin_x") if k in sample), None)
         y_key   = next((k for k in ("y_um", "y_mm", "y", "die_y", "center_y", "origin_y") if k in sample), None)
         en_key  = next((k for k in ("enabled", "active", "include", "in_spec", "test_enabled") if k in sample), None)
+        # Whatever real die-ID/label column this map file carries (e.g.
+        # Electroglas's own "device_id") - kept per die so overlay/export can
+        # show the map's actual ID instead of a synthesized row/col label.
+        id_key  = next((k for k in ("device_id", "die_id", "label", "die_label",
+                                    "serial", "die_serial", "id") if k in sample), None)
 
         dies = []
         for r in raw:
@@ -299,7 +306,8 @@ class WaferMapPanel(ttk.LabelFrame):
                     pass
             if x_um is None and row is None:
                 continue
-            dies.append({"x_um": x_um, "y_um": y_um, "row": row, "col": col})
+            dies.append({"x_um": x_um, "y_um": y_um, "row": row, "col": col,
+                        "die_id": (r.get(id_key, "").strip() if id_key else "")})
 
         if dies and dies[0]["row"] is None:
             xs = sorted(set(round(d["x_um"]) for d in dies))
@@ -320,6 +328,10 @@ class WaferMapPanel(ttk.LabelFrame):
     def _draw_from_die_list(self, dies):
         self.canvas.delete("all")
         self.dies.clear()
+        self.die_ids.clear()
+        for d in dies:
+            if d.get("die_id"):
+                self.die_ids[(d["row"], d["col"])] = d["die_id"]
 
         if not dies:
             self.canvas.create_text(150, 100, text="No dies found in wafer map.", fill="red")
