@@ -655,7 +655,11 @@ class AtomicaDashboard(tk.Tk):
             return
         wafer_id = self.ui.wafer_id_var.get().strip()
         fmt_type = fmt.get("type", "sql")
-        if not xfmt.has_data_for_format(fmt, self.results_data):
+        # Export formats (unlike "Save as CSV", which dumps the whole
+        # session's history) only ever cover the most recently started run —
+        # re-running shouldn't silently pile old runs' rows into a new export.
+        last_run_results = self.ui.get_last_run_results()
+        if not xfmt.has_data_for_format(fmt, last_run_results):
             if fmt_type == "csv":
                 reason = "at least one current or resistance reading from a die touchdown"
             else:
@@ -663,8 +667,8 @@ class AtomicaDashboard(tk.Tk):
                          "shot's device-ID string; Full Die/Test Die readings don't)"
                          if fmt.get("requires_die_id", True) else "measurement results")
             self.ui.exec_panel.log(
-                f"[ERROR] No matching results yet for '{fmt['name']}' — this format needs "
-                f"{reason}.")
+                f"[ERROR] No matching results yet from the last run for '{fmt['name']}' — "
+                f"this format needs {reason}.")
             return
         ext = "csv" if fmt_type == "csv" else "sql"
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + [
@@ -673,7 +677,7 @@ class AtomicaDashboard(tk.Tk):
 
         try:
             if fmt_type == "csv":
-                rows = xfmt.build_csv_rows(fmt, self.results_data, current_lot, wafer_id)
+                rows = xfmt.build_csv_rows(fmt, last_run_results, current_lot, wafer_id)
                 fieldnames = [c["field"] for c in fmt["columns"]]
                 with open(filepath, "w", newline="") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -682,7 +686,7 @@ class AtomicaDashboard(tk.Tk):
                 self.ui.exec_panel.log(
                     f"[SYSTEM] Success! {len(rows)} '{fmt['name']}' row(s) saved to -> {filepath}")
             else:
-                statements = xfmt.build_insert_statements(fmt, self.results_data, current_lot, wafer_id)
+                statements = xfmt.build_insert_statements(fmt, last_run_results, current_lot, wafer_id)
                 with open(filepath, "w", newline="") as f:
                     f.write("\n".join(statements) + "\n")
                 self.ui.exec_panel.log(

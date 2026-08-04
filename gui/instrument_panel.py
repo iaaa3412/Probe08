@@ -1901,6 +1901,11 @@ class MainLayout(ttk.Frame):
         # "resuming" its own old loop.
         self._exec2_run_token = 0
         self._exec2_lot_thread: threading.Thread | None = None
+        # Index into controller.results_data where the most recently started
+        # run began — export formats (unlike "Save as CSV") only export from
+        # here onward, so re-running doesn't pile old runs' rows into a new
+        # export.
+        self._exec2_last_run_start_idx = 0
         self._exec2_steps    = []
         self._exec2_current_rc = None
         self._exec2_pma_row_offset = 0
@@ -3493,8 +3498,16 @@ class MainLayout(ttk.Frame):
 
     def clear_results(self):
         self.controller.results_data.clear()
+        self._exec2_last_run_start_idx = 0
         if hasattr(self, "_results_tree"):
             self._results_tree.delete(*self._results_tree.get_children())
+
+    def get_last_run_results(self) -> list:
+        """Results from the most recently started run only (Full Die/Test
+        Die/Test Selected/Test PMA) — what export formats other than plain
+        "Save as CSV" should write, so re-running doesn't accumulate old
+        runs' rows into a new export."""
+        return self.controller.results_data[self._exec2_last_run_start_idx:]
 
 
     def _exec2_manual_z_up(self):
@@ -3616,6 +3629,7 @@ class MainLayout(ttk.Frame):
         self._exec2_push_stats()
 
     def _exec2_reset_counts(self, total_dies=None):
+        self._exec2_last_run_start_idx = len(self.controller.results_data)
         self._exec2_pass_var.set(0)
         self._exec2_fail_var.set(0)
         self._exec2_die_num = 0
