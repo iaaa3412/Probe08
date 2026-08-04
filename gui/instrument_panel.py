@@ -27,6 +27,7 @@ from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
 from recipe_gen_panel import RecipeGenPanel
 import export_formats as xfmt
+import app_settings
 from engineering_units import parse_engineering, format_engineering
 
 
@@ -1216,7 +1217,9 @@ class MainLayout(ttk.Frame):
                   font=("Consolas", 9)).pack(side="left", padx=4)
 
     def _wafer_map_source_choices(self) -> list:
-        return [k for k in WAFER_MAP_SOURCES if k == "GDS" or k.lower() == self._system]
+        # GDS-derived wafer maps are GDS Parser tab territory only now —
+        # not offered as a general map source elsewhere.
+        return [k for k in WAFER_MAP_SOURCES if k.lower() == self._system]
 
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
@@ -1231,6 +1234,8 @@ class MainLayout(ttk.Frame):
                   command=self.controller.cmd_import_map).pack(side="left", padx=(0, 10))
         ttk.Button(ctrl, text="＋ New ATA Folder…",
                   command=self.controller.cmd_new_ata_folder).pack(side="left", padx=(0, 10))
+        ttk.Button(ctrl, text="⭐ Set as Default",
+                  command=self._set_default_ata_folder).pack(side="left", padx=(0, 10))
 
         ttk.Label(ctrl, text="Working Directory:").pack(side="left", padx=(0, 4))
         ttk.Entry(ctrl, textvariable=self.working_dir_var, width=26).pack(
@@ -1242,8 +1247,14 @@ class MainLayout(ttk.Frame):
         self._ata_path_lbl = ttk.Label(ctrl, text="No folder selected", foreground="gray")
         self._ata_path_lbl.pack(side="left", padx=10)
 
+        self._default_ata_lbl = ttk.Label(ctrl, text="", foreground="#374151",
+                                          font=("Segoe UI", 8, "italic"))
+        self._default_ata_lbl.pack(side="left", padx=(0, 10))
+        self._update_default_ata_label()
+
         ttk.Label(ctrl, text="Map source:").pack(side="right", padx=(4, 2))
-        self._map_source_var = tk.StringVar(value="GDS")
+        self._map_source_var = tk.StringVar(
+            value="Accretech" if self._system == "accretech" else "Electroglas")
         map_source_cb = ttk.Combobox(ctrl, textvariable=self._map_source_var,
                                      values=self._wafer_map_source_choices(), state="readonly",
                                      width=10)
@@ -1340,16 +1351,9 @@ class MainLayout(ttk.Frame):
         if pma_wafer is not None:
             pma_wafer.load_from_ata(folder_path)
         self._exec2_map_folder = folder_path
-        self._exec2_map_source_var.set("Accretech" if self._system == "accretech" else "GDS")
+        self._exec2_map_source_var.set("Accretech" if self._system == "accretech" else "Electroglas")
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._refresh_export_formats()
-
-        nanoz = getattr(self, "nanoz_panel", None)
-        if nanoz is not None:
-            try:
-                nanoz.on_ata_folder_loaded(folder_path)
-            except Exception:
-                pass
 
         pma_process = getattr(self, "pma_process", None)
         if pma_process is not None:
@@ -1358,7 +1362,30 @@ class MainLayout(ttk.Frame):
             except Exception:
                 pass
 
+        self._update_default_ata_label()
         return n_dies
+
+    def _set_default_ata_folder(self):
+        from tkinter import messagebox
+        if not self._ata_folder:
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+        app_settings.set_default_ata_folder(self._system, self._ata_folder)
+        self._update_default_ata_label()
+        self.controller.log(
+            f"[SYSTEM] '{os.path.basename(self._ata_folder)}' set as the default "
+            f"ATA folder for {self._system.capitalize()} — auto-loads on startup "
+            "and when switching to this system.")
+
+    def _update_default_ata_label(self):
+        default_folder = app_settings.get_default_ata_folder(self._system)
+        if default_folder:
+            is_current = (default_folder == self._ata_folder)
+            self._default_ata_lbl.config(
+                text=("⭐ default: this folder" if is_current
+                      else f"⭐ default: {os.path.basename(default_folder)}"))
+        else:
+            self._default_ata_lbl.config(text="")
 
     def _reload_wafer_map_source(self):
         if not self._ata_folder:
@@ -2059,10 +2086,9 @@ class MainLayout(ttk.Frame):
 
         map_bar = ttk.Frame(map_lf)
         map_bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        ttk.Button(map_bar, text="📂 Load Wafer Map",
-                   command=self._exec2_load_wafer_map).pack(side="left")
         self._exec2_map_folder = None
-        self._exec2_map_source_var = tk.StringVar(value="GDS")
+        self._exec2_map_source_var = tk.StringVar(
+            value="Accretech" if self._system == "accretech" else "Electroglas")
         exec2_source_cb = ttk.Combobox(map_bar, textvariable=self._exec2_map_source_var,
                                        values=self._wafer_map_source_choices(), state="readonly",
                                        width=10)
@@ -2130,16 +2156,6 @@ class MainLayout(ttk.Frame):
     def _exec2_log(self, msg: str):
         ts = time.strftime("%H:%M:%S")
         self.controller.log(f"{ts}  {msg}")
-
-    def _exec2_load_wafer_map(self):
-        from tkinter import filedialog
-        folder = filedialog.askdirectory(
-            title="Select ATA Output Folder (Wafer Map)",
-            initialdir=self._ata_folder or os.getcwd())
-        if not folder:
-            return
-        self._exec2_map_folder = folder
-        self._exec2_draw_wafer_map()
 
     def _exec2_reload_wafer_map_source(self):
         if self._exec2_map_folder:
@@ -2330,12 +2346,12 @@ class MainLayout(ttk.Frame):
             if (self._exec2_map_source_var.get() != "Accretech"
                     or not self._exec2_wafer_map._last_dies):
                 self._exec2_log("[RUN] Cannot start — no Accretech wafer map loaded "
-                                "(📂 Load Wafer Map, set source to 'Accretech'; extract "
-                                "one on the Accr Wafer tab first if you haven't).")
+                                "(load an ATA folder with source set to 'Accretech'; "
+                                "extract one on the Accr Wafer tab first if you haven't).")
                 ok = False
         elif not self._exec2_wafer_map._last_dies:
             self._exec2_log("[RUN] Cannot start — no wafer map loaded "
-                            "(📂 Load Wafer Map; set source to 'Electroglas' or 'GDS').")
+                            "(load an ATA folder with source set to 'Electroglas').")
             ok = False
         required_instruments = ("prober", "smu", "dmm", "switch", "wave_gen")
         missing_instruments = [k for k in required_instruments if k not in self.controller.drivers]
@@ -2811,7 +2827,7 @@ class MainLayout(ttk.Frame):
         accretech_rc = self._exec2_overlay_accretech_rc()
         if not accretech_rc:
             self._exec2_log("[RUN] Overlay: no wafer map loaded on this Run tab yet — "
-                            "📂 Load Wafer Map first.")
+                            "load an ATA folder first.")
             return
 
         dlg = tk.Toplevel(self)

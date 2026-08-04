@@ -19,6 +19,7 @@ from instruments.hp6634b import Agilent6634B
 from instruments.hp_switchbox import HPSwitchbox
 from instruments.hp_e1326b import HPE1326B
 import export_formats as xfmt
+import app_settings
 
 ACCRETECH_INSTRUMENT_NAMES = ["UF200R Prober", "SMU (2636B)", "DMM (34461A)",
                               "SW_MATRIX", "Wave Gen (33512B)"]
@@ -77,11 +78,37 @@ class AtomicaDashboard(tk.Tk):
         self._by_system["electroglas"]["ui"] = self.instrument_panel_eg
 
         self._build_bottom_routing()
+        self._autoload_default_ata_folders()
         self.after(500, self.init_hardware)
         self.update_statistics_visuals()
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
         self.after(1500, self._poll_prober_ready)
+
+    def _autoload_default_ata_folders(self):
+        """Each system (Accretech/Electroglas) can have its own default ATA
+        folder, set via the ⭐ Set as Default button on the ATA Folder tab —
+        load them both now so switching system doesn't need a manual load."""
+        for system in ("accretech", "electroglas"):
+            folder = app_settings.get_default_ata_folder(system)
+            if not (folder and os.path.isdir(folder)):
+                continue
+            ui = self._by_system[system]["ui"]
+            n_dies = ui.load_ata_folder(folder)
+            self._by_system[system]["total"] = n_dies
+            self._by_system[system]["tested"] = 0
+            self._by_system[system]["passed"] = 0
+            self._by_system[system]["failed"] = 0
+            self._by_system[system]["results"].clear()
+            folder_name = os.path.basename(folder)
+            if system == self.active_system:
+                self._ata_lbl.config(text=f"ATA: {folder_name}  ({n_dies} dies)",
+                                     foreground="#1d4ed8")
+                ui.exec_panel.set_wafer_map(ui.wafer_map, wafer_id=folder_name)
+                ui.wafer_id_var.set(folder_name)
+            ui.exec_panel.log(
+                f"[SYSTEM] Default ATA folder '{folder_name}' auto-loaded — "
+                f"{n_dies} dies found.")
 
     @property
     def drivers(self):
@@ -140,7 +167,11 @@ class AtomicaDashboard(tk.Tk):
         else:
             self._main_pane.add(self.ui, weight=1)
         self._style_system_toggle()
-        if carry_over_folder and self.ui._ata_folder != carry_over_folder:
+        default_folder = app_settings.get_default_ata_folder(system)
+        if default_folder and os.path.isdir(default_folder):
+            if self.ui._ata_folder != default_folder:
+                self._do_load_ata_folder(default_folder)
+        elif carry_over_folder and self.ui._ata_folder != carry_over_folder:
             self._do_load_ata_folder(carry_over_folder)
         self.update_statistics_visuals()
         self.check_system_ready()
