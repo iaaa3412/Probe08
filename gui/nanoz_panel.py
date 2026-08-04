@@ -50,12 +50,6 @@ class NanoZPanel(ttk.Frame):
         self.controller = controller
         self._main_layout = main_layout
 
-        # Independent of whatever ATA folder is loaded on the rest of the
-        # Accretech tab (main toolbar's 📁 Load ATA Folder) - NanoZ has its
-        # own folder, auto-set to the working directory's NAUTATA folder on
-        # startup (see _nanoz_autoload_nautata), or manually via the Setup
-        # tab's own 📁 Load ATA Folder button.
-        self._nanoz_ata_folder: str | None = None
         self._boards: dict[str, nzb.NanoZBoard] = {}
         self._board_rows: dict[str, str] = {}
         self._board_label_to_port: dict[str, str] = {}
@@ -99,7 +93,13 @@ class NanoZPanel(ttk.Frame):
         self.after(300, self._refresh_charts_loop)
         self.after(500, self._refresh_results_loop)
         self.after(1000, self._auto_refresh_board_status)
-        self.after(300, self._nanoz_autoload_nautata)
+
+    @property
+    def _nanoz_ata_folder(self):
+        """NanoZ shares the same ATA folder as the rest of the Accretech tab
+        - selecting the NanoZ tab (see MainLayout._on_top_tab_changed) makes
+        sure it's pointed at NAUTATA rather than tracking its own folder."""
+        return getattr(self._main_layout, "_ata_folder", None)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
@@ -136,24 +136,10 @@ class NanoZPanel(ttk.Frame):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Setup")
         tab.columnconfigure(0, weight=1)
-
-        folder_row = ttk.Frame(tab)
-        folder_row.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 0))
-        ttk.Label(folder_row, text="NanoZ ATA Folder:", font=("Segoe UI", 9, "bold")).pack(
-            side="left", padx=(0, 6))
-        ttk.Button(folder_row, text="📁 Load ATA Folder…",
-                  command=self._nanoz_load_ata_folder).pack(side="left", padx=(0, 8))
-        self._nanoz_ata_lbl = ttk.Label(folder_row, text="(none — autoloads NAUTATA at startup)",
-                                        foreground="#6b7280")
-        self._nanoz_ata_lbl.pack(side="left")
-        ttk.Label(folder_row,
-                  text="Independent of the main Accretech ATA folder above — NanoZ boards, "
-                       "recipes and wafer plans are tied to this folder.",
-                  foreground="#9ca3af", font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
+        tab.rowconfigure(0, weight=1)
 
         split = ttk.PanedWindow(tab, orient="vertical")
-        split.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
-        tab.rowconfigure(1, weight=1)
+        split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         boards_lf = ttk.LabelFrame(split, text="NanoZ Boards  (all connected boards are always live)")
         split.add(boards_lf, weight=3)
@@ -1550,42 +1536,12 @@ class NanoZPanel(ttk.Frame):
         folder = self._nanoz_ata_folder
         if not folder:
             messagebox.showerror("No ATA Folder",
-                                 "Load an ATA folder first (📁 Load ATA Folder, top of "
-                                 "this Setup tab).")
+                                 "Load an ATA folder from the toolbar first.")
             return
         n = self.wafer_map.load_from_ata(folder, filename="ata_wafer_map_accretech.csv")
         self._log_main(f"Wafer map loaded from '{os.path.basename(folder)}' — {n} die(s).")
 
-    def _nanoz_load_ata_folder(self):
-        initial = self._nanoz_ata_folder or self._main_layout.working_dir_var.get()
-        folder = filedialog.askdirectory(
-            title="Select NanoZ ATA Folder",
-            initialdir=initial if initial and os.path.isdir(initial) else None)
-        if not folder:
-            return
-        self.on_ata_folder_loaded(folder)
-
-    def _nanoz_autoload_nautata(self):
-        """NanoZ always defaults to the NAUTATA folder (the real Nautilus
-        wafer-plan ATA folder), independent of whatever ATA folder is loaded
-        on the rest of the Accretech tab — no manual step needed on startup."""
-        if self._nanoz_ata_folder:
-            return
-        working_dir = self._main_layout.working_dir_var.get()
-        if not working_dir or not os.path.isdir(working_dir):
-            return
-        match = next((n for n in os.listdir(working_dir)
-                     if n.lower() == "nautata"
-                     and os.path.isdir(os.path.join(working_dir, n))), None)
-        if not match:
-            self._log_main(f"No NAUTATA folder found under '{working_dir}' — "
-                           "use 📁 Load ATA Folder above to pick one manually.")
-            return
-        self.on_ata_folder_loaded(os.path.join(working_dir, match))
-
     def on_ata_folder_loaded(self, folder_path: str):
-        self._nanoz_ata_folder = folder_path
-        self._nanoz_ata_lbl.config(text=folder_path, foreground="black")
         n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
         if n:
             self._log_main(f"Wafer map auto-loaded from "

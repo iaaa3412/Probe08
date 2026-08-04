@@ -384,6 +384,33 @@ class MainLayout(ttk.Frame):
             top_nb.add(nanoz_frame, text="  NanoZ  ")
             self.nanoz_panel = NanoZPanel(nanoz_frame, controller=self.controller, main_layout=self)
             self.nanoz_panel.pack(fill="both", expand=True)
+            self._nanoz_tab_frame = nanoz_frame
+            top_nb.bind("<<NotebookTabChanged>>", self._on_top_tab_changed, add="+")
+
+    def _on_top_tab_changed(self, event):
+        nb = event.widget
+        try:
+            selected = nb.select()
+        except Exception:
+            return
+        if selected != str(getattr(self, "_nanoz_tab_frame", None)):
+            return
+        # Clicking the NanoZ tab loads NAUTATA into the shared ATA folder,
+        # exactly as if it had been picked from the toolbar's ATA Folder
+        # dropdown — NanoZ doesn't track its own independent folder.
+        if self._ata_folder and os.path.basename(self._ata_folder).lower() == "nautata":
+            return
+        working_dir = self.working_dir_var.get()
+        if not working_dir or not os.path.isdir(working_dir):
+            return
+        match = next((n for n in os.listdir(working_dir)
+                     if n.lower() == "nautata"
+                     and os.path.isdir(os.path.join(working_dir, n))), None)
+        if not match:
+            self.controller.log(
+                f"[SYSTEM] NanoZ tab: no NAUTATA folder found under '{working_dir}'.")
+            return
+        self.controller._do_load_ata_folder(os.path.join(working_dir, match))
 
     _ACCRETECH_INSTRUMENTS = [
         ("UF200R Prober", "prober"),
@@ -1359,6 +1386,13 @@ class MainLayout(ttk.Frame):
         if pma_process is not None:
             try:
                 pma_process.scan_ata_folder()
+            except Exception:
+                pass
+
+        nanoz = getattr(self, "nanoz_panel", None)
+        if nanoz is not None:
+            try:
+                nanoz.on_ata_folder_loaded(folder_path)
             except Exception:
                 pass
 
