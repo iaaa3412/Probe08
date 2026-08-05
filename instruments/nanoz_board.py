@@ -353,14 +353,97 @@ def parse_cycle_record(data: bytes) -> "dict | None":
            "sequence_refs": seq_refs}
 
 
+# Named-field byte offsets within a sequence record, mapped against the
+# real Nanoz_EK.exe field names from references/250723_User manual EK IV.pdf
+# section IV.D (Sequence: D.a "Sequence settings", D.b "Heater settings" /
+# Table 2). Values matched byte-for-byte against the UI for one real,
+# fully-populated sequence (2026-08-05) - see parse_sequence_records'
+# docstring for the full derivation and confidence notes per field. This
+# dict exists so a future `wreep`-based write can target the same offsets
+# used here for reading, without re-deriving them.
+SEQ_FIELD_OFFSETS = {
+    "duration_s": 2,        # CONFIRMED (live diff, 5s -> 2s)
+    "delay_s": 4,            # matches UI "Delay", not independently diffed
+    "sensor_mv": 6,           # manual: "one voltage applied for all sensors" -
+                              # UI has a single Sensors-NZG2 field; the board
+                              # stores 4 (offsets 6/10/14/18, all equal here)
+    "ramp_up_ms": 22,         # Table 2 row 3
+    "high_duration_ms": 26,   # Table 2 row 4
+    "ramp_down_ms": 30,       # Table 2 row 5
+    "low_duration_ms": 34,    # Table 2 row 6 - best-effort pairing, see docstring
+    "phase_shift_ms": 38,     # Table 2 row 7 - best-effort pairing, see docstring
+    "heater1_low_mv": 42,     # Table 2 row 1 (low state)
+    "heater2_low_mv": 46,     # Table 2 row 2 (low state)
+    "heater1_high_mv": 50,    # Table 2 row 1 (high state)
+    "heater2_high_mv": 54,    # Table 2 row 2 (high state)
+    "chip": 58,                # ambiguous vs offset 60, see docstring
+    "resolution_ms": 62,       # Table 2 row 8 - ambiguous vs offset 64
+}
+
+
 def parse_sequence_records(data: bytes) -> list:
-    """Best-effort scan of the EEPROM_SEQUENCES_ADDR region for sequence
-    records, each terminated by a 0xFFFF marker. Only Duration (int16 at
-    record offset +2) and Chip (int16 at +54) are confirmed; every other
-    field in a record is returned as raw bytes (hex) rather than guessed,
-    since the exact sub-order of the heater ramp fields and the true record
-    stride are not yet confirmed against real hardware (only 1 real
-    sequence has ever been observed)."""
+    """Scan the EEPROM_SEQUENCES_ADDR region for sequence records, each
+    terminated by a 0xFFFF marker. Layout confirmed 2026-08-04/05 via a
+    live diff against a real, fully-populated sequence (Sensors 1-4=900mV,
+    Heater times=100/200/300, Heater extra=400/500, Heater voltages=
+    1600/1700/1800/1900, Resolution=0 - every value below was cross-checked
+    byte-for-byte against Nanoz_EK.exe's own Sequence/Heater dialog for
+    this exact sequence). Field NAMES below (as opposed to raw offsets)
+    come from references/250723_User manual EK IV.pdf section IV.D, Table 2
+    "Heater control parameters":
+
+    offset 0            u16  wire_index (0-based)
+    offset 2   duration_s     i16   CONFIRMED (earlier diff, 5s -> 2s)
+    offset 4   delay_s        i16   matches UI "Delay: 0", not independently diffed
+    offset 6,10,14,18   i16 x4  sensor_mv/sensors_mv (Sensor 1-4) CONFIRMED
+                       value-match, though the manual says the real UI only
+                       exposes ONE "Sensors-NZG2" voltage applied to all
+                       sensors - offset 6 is treated as that canonical
+                       field. Each real value is immediately followed by a
+                       constant-800 int16 at +8/+12/+16/+20 whose meaning
+                       is still unknown (returned as sensors_pad_raw).
+    offset 22 ramp_up_ms, 26 high_duration_ms, 30 ramp_down_ms   i16 x3
+                       (the UI's 3 "Times in ms" boxes) CONFIRMED value
+                       match against Table 2 rows 3/4/5 by process of
+                       elimination (3 values, 3 remaining un-matched Table-2
+                       time rows before Low state duration/Phase shift) -
+                       each followed by a constant-0 int16 (unused/reserved)
+    offset 34 low_duration_ms, 38 phase_shift_ms   i16 x2 (the UI's 2
+                       bottom boxes, mislabeled "Voltages in mV" in the
+                       dialog but drawn as horizontal ms-style double-
+                       arrows) - values match Table 2 rows 6/7 by
+                       elimination, this specific pairing/order is a
+                       best-effort guess, not yet isolated by its own diff.
+                       followed by constant-0 padding.
+    offset 42 heater1_low_mv, 46 heater2_low_mv, 50 heater1_high_mv,
+    54 heater2_high_mv   i16 x4 (order found on the wire: 1600,1800,1700,
+                       1900 - i.e. NOT left-to-right as drawn; grouped as
+                       [H1_low, H2_low, H1_high, H2_high] since 1600<1700
+                       and 1800<1900, matching Table 2 rows 1/2's "low &
+                       high states") CONFIRMED value match - each followed
+                       by a constant-2000 int16, meaning unknown (returned
+                       as heater_v_pad_raw)
+    offset 58, 60      i16, i16  both =1 in this sample - one of these is
+                       almost certainly Chip (a different dialog for this
+                       same sequence showed "Chip: 1"), but with both equal
+                       to 1 there's no way yet to tell which is Chip vs an
+                       unrelated flag. NOT the old +54 guess - that offset
+                       is actually heater1_high_mv now that a real,
+                       non-erased sequence has been observed; +54 only
+                       looked like Chip=1 before because the old baseline
+                       record's later bytes hadn't been written yet.
+    offset 62, 64      i16, i16  both =0 - resolution_ms (Table 2 row 8,
+                       "Time resolution", matches UI's "Resolution: Time: 0
+                       ms") is presumably one of these, unconfirmed which.
+    offset 66          0xFFFF terminator
+
+    Everything above except duration_s is unconfirmed-by-elimination only
+    (matched by value equality/count against one real sample and the
+    manual's Table 2, not yet isolated by changing that one field alone
+    and re-diffing) - treat sensor/heater-times/heater-voltages as high-
+    confidence but chip/resolution candidates as genuinely ambiguous, and
+    the low_duration/phase_shift and heater-low/high pairings as
+    best-effort, until a future diff isolates them."""
     records = []
     start = 0
     n = len(data)
@@ -376,16 +459,107 @@ def parse_sequence_records(data: bytes) -> list:
         if len(record) >= 4:
             wire_index = struct.unpack_from("<H", record, 0)[0]
             duration_s = struct.unpack_from("<h", record, 2)[0]
-            chip = (struct.unpack_from("<h", record, 54)[0]
-                   if len(record) >= 56 else None)
+            delay_s = struct.unpack_from("<h", record, 4)[0] if len(record) >= 6 else None
+            sensors_mv = sensors_pad_raw = None
+            if len(record) >= 22:
+                sensors_mv = [struct.unpack_from("<h", record, o)[0] for o in (6, 10, 14, 18)]
+                sensors_pad_raw = [struct.unpack_from("<h", record, o)[0] for o in (8, 12, 16, 20)]
+            heater_times_ms = None
+            if len(record) >= 32:
+                heater_times_ms = [struct.unpack_from("<h", record, o)[0] for o in (22, 26, 30)]
+            heater_extra = None
+            if len(record) >= 40:
+                heater_extra = [struct.unpack_from("<h", record, o)[0] for o in (34, 38)]
+            heater_voltages_mv = heater_v_pad_raw = None
+            if len(record) >= 58:
+                heater_voltages_mv = [struct.unpack_from("<h", record, o)[0] for o in (42, 46, 50, 54)]
+                heater_v_pad_raw = [struct.unpack_from("<h", record, o)[0] for o in (44, 48, 52, 56)]
+            chip_candidates = None
+            if len(record) >= 62:
+                chip_candidates = [struct.unpack_from("<h", record, o)[0] for o in (58, 60)]
+            resolution_candidates = None
+            if len(record) >= 66:
+                resolution_candidates = [struct.unpack_from("<h", record, o)[0] for o in (62, 64)]
+            ht = heater_times_ms or [None, None, None]
+            he = heater_extra or [None, None]
+            hv = heater_voltages_mv or [None, None, None, None]
             records.append({
+                "blob_offset": start,
+                "record_len": len(record),
                 "wire_index": wire_index,
                 "duration_s": duration_s,
-                "chip": chip,
+                "delay_s": delay_s,
+                "sensor_mv": sensors_mv[0] if sensors_mv else None,
+                "sensors_mv": sensors_mv,
+                "sensors_pad_raw": sensors_pad_raw,
+                "ramp_up_ms": ht[0],
+                "high_duration_ms": ht[1],
+                "ramp_down_ms": ht[2],
+                "low_duration_ms": he[0],
+                "phase_shift_ms": he[1],
+                "heater1_low_mv": hv[0],
+                "heater2_low_mv": hv[1],
+                "heater1_high_mv": hv[2],
+                "heater2_high_mv": hv[3],
+                "heater_times_ms": heater_times_ms,
+                "heater_extra": heater_extra,
+                "heater_voltages_mv": heater_voltages_mv,
+                "heater_v_pad_raw": heater_v_pad_raw,
+                "chip_candidates": chip_candidates,
+                "resolution_candidates": resolution_candidates,
+                "chip": chip_candidates[0] if chip_candidates else None,
+                "resolution_ms": resolution_candidates[0] if resolution_candidates else None,
                 "raw_hex": record.hex(),
             })
         start = end
     return records
+
+
+def encode_sequence_patch(original_record: bytes, fields: dict) -> bytearray:
+    """Patch a real sequence record (as returned by rdeep/parse_sequence_records)
+    with new values for the D-portion (Sequence settings + Heater settings)
+    fields ONLY - every other byte (wire_index, the sensor/heater padding
+    int16s, the ambiguous Chip/Resolution offsets, and the 0xFFFF
+    terminator) is left exactly as read. Never construct a record from
+    scratch - always patch a real one, since large parts of the layout
+    (padding meaning, whether stride varies) are not understood well
+    enough to safely regenerate from nothing.
+
+    `fields` keys (all optional - omitted keys keep their original byte
+    value): duration_s, delay_s, sensor_mv (single value, written to all 4
+    real sensor slots per the manual's "one voltage for all sensors"),
+    ramp_up_ms, high_duration_ms, ramp_down_ms, low_duration_ms,
+    phase_shift_ms, heater1_low_mv, heater2_low_mv, heater1_high_mv,
+    heater2_high_mv. chip/resolution_ms are deliberately NOT accepted here
+    - their byte offset is still ambiguous (see parse_sequence_records'
+    docstring) and a wrong guess could silently overwrite an unrelated,
+    still-unknown field with no checksum-level way to detect it.
+
+    Duration/Delay/heater timing/heater voltage fields are packed as
+    UNSIGNED 16-bit (manual's documented ranges go up to 60000, which
+    overflows a signed int16) - sensor_mv is packed SIGNED since the
+    manual documents a negative sensor bias range (NZGS2: +/-0.8V)."""
+    buf = bytearray(original_record)
+
+    def put_u(offset, value):
+        struct.pack_into("<H", buf, offset, int(value))
+
+    def put_s(offset, value):
+        struct.pack_into("<h", buf, offset, int(value))
+
+    if "duration_s" in fields:
+        put_u(SEQ_FIELD_OFFSETS["duration_s"], fields["duration_s"])
+    if "delay_s" in fields:
+        put_u(SEQ_FIELD_OFFSETS["delay_s"], fields["delay_s"])
+    if "sensor_mv" in fields:
+        for o in (6, 10, 14, 18):
+            put_s(o, fields["sensor_mv"])
+    for key in ("ramp_up_ms", "high_duration_ms", "ramp_down_ms", "low_duration_ms",
+               "phase_shift_ms", "heater1_low_mv", "heater2_low_mv",
+               "heater1_high_mv", "heater2_high_mv"):
+        if key in fields:
+            put_u(SEQ_FIELD_OFFSETS[key], fields[key])
+    return buf
 
 
 def append_csv_row(path, row: dict) -> None:
@@ -858,6 +1032,26 @@ class NanoZBoard:
     def send_raw(self, cmd: str):
         if self.ser:
             send_ascii(self.ser, cmd)
+
+    def write_eeprom(self, addr: int, data: bytes):
+        """Write a raw block to EEPROM (wreep). DANGEROUS - see the NanoZ_EK
+        tab and project notes: only ever call this with a byte-for-byte
+        patch of a record that was just read (encode_sequence_patch), never
+        a from-scratch record, since large parts of the layout aren't
+        understood well enough to safely regenerate. Per the protocol doc,
+        the board rejects the write outright (no partial/garbled write) if
+        the checksum doesn't match what it computes, or if the full <len>
+        bytes don't arrive within ~1s of the command line - the caller
+        should still verify afterward with a fresh rdeep, since a rejection
+        is only reported as a text error line, not a return value here."""
+        if not self.ser:
+            return
+        cs = 0
+        for b in data:
+            cs ^= b
+        send_ascii(self.ser, f"wreep {len(data)} {cs:04X} {addr}")
+        self.ser.write(bytes(data))
+        self.ser.flush()
 
     def stop(self):
         self._running = False

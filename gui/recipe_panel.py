@@ -114,47 +114,6 @@ def _limit_is_current_compliance(step_type: str, mode: str, instrument: str) -> 
     return step_type == "current" and mode != "apply"
 
 
-def _limit_hint(step_type: str, mode: str, instrument: str) -> str:
-    if step_type == "wave":
-        return "V (output clamp, ±) · m/µ/n/k ok"
-    if not _limit_applicable(step_type, mode, instrument):
-        return "— (n/a)"
-    if step_type == "voltage":
-        return "A (current compliance) · m/µ/n/k ok"
-    if step_type == "current" and mode == "apply":
-        return "V (voltage compliance) · m/µ/n/k ok"
-    return "A (current compliance, if biasing) · m/µ/n/k ok"
-
-
-def _level_hint(step_type: str, mode: str) -> str:
-    if step_type == "delay":
-        return "ms (wait time)"
-    if step_type == "resistance":
-        return "— (2-wire Ω)"
-    if step_type == "wave":
-        return "Vpp (WGEN amplitude) · m/µ/n/k ok"
-    if step_type == "open":
-        return "— (no level)"
-    if step_type == "picture":
-        return "— (not yet implemented)"
-    if step_type == "voltage":
-        return "V (forced) · m/µ/n/k ok" if mode == "apply" else "— (reads V)"
-    if step_type == "current":
-        return "A (forced) · m/µ/n/k ok" if mode == "apply" else "V (bias while reading I) · m/µ/n/k ok"
-    if step_type == "passfail":
-        return "— (see Min/Max)"
-    return ""
-
-
-def _passfail_hint() -> str:
-    return ("value must be Min ≤ x ≤ Max (leave either blank for one-sided / "
-           "unbounded) · m/µ/n/k ok")
-
-
-def _avg_hint() -> str:
-    return "take N readings (delay between each), record their mean — Count=1 is off"
-
-
 def _avg_display(step: dict) -> str:
     try:
         n = int(step.get("avg_count") or 1)
@@ -502,20 +461,18 @@ class RecipePanel(ttk.Frame):
                                            command=self._set_default_recipe)
         self._btn_set_default.pack(side="left", padx=2, pady=4)
 
-        self._btn_new = ttk.Button(bar, text="＋ New", width=7,
+        self._btn_new = ttk.Button(bar, text="＋ New", width=9,
                                    command=self._new_recipe)
         self._btn_new.pack(side="left", padx=2, pady=4)
-        self._btn_rename = ttk.Button(bar, text="✎ Rename", width=9,
+        self._btn_rename = ttk.Button(bar, text="✎ Rename", width=11,
                                       command=self._rename_recipe)
         self._btn_rename.pack(side="left", padx=2, pady=4)
-        self._btn_delete = ttk.Button(bar, text="🗑 Delete", width=9,
+        self._btn_delete = ttk.Button(bar, text="🗑 Delete", width=11,
                                       command=self._delete_recipe)
         self._btn_delete.pack(side="left", padx=2, pady=4)
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
 
-        self._btn_load_ini = ttk.Button(bar, text="📂  Load .ini…", command=self._load)
-        self._btn_load_ini.pack(side="left", padx=2, pady=4)
         if self._system != "accretech":
             self._btn_import_legacy = ttk.Button(bar, text="📥  Import Legacy (.pma)…",
                                                  command=self._import_legacy)
@@ -597,109 +554,96 @@ class RecipePanel(ttk.Frame):
         self._step_tree.configure(yscrollcommand=ssb.set)
         self._step_tree.bind("<<TreeviewSelect>>", lambda _e: self._step_to_editor())
 
-        ed1 = ttk.Frame(sf)
-        ed1.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ed2 = ttk.Frame(sf)
-        ed2.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        ed3 = ttk.Frame(sf)
-        ed3.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        ed4 = ttk.Frame(sf)
-        ed4.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        # A compact label:widget grid (2 fields per row-slot) instead of one
+        # long pack()ed row per group - keeps the editor readable without
+        # needing to widen the window, now that the per-field hint labels
+        # (which used to force the old rows wide) are gone.
+        editor = ttk.Frame(sf)
+        editor.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        for c in range(8):
+            editor.columnconfigure(c, weight=0)
 
         self._ed_vars = {k: tk.StringVar() for k in _STEP_FIELDS}
         self._ed_vars["type"].set("resistance")
         self._ed_vars["mode"].set("measure")
 
-        def _lbl(parent, text):
-            ttk.Label(parent, text=text).pack(side="left", padx=(6, 1))
+        def _lbl(r, c, text):
+            ttk.Label(editor, text=text).grid(row=r, column=c, sticky="e", padx=(6, 2), pady=2)
 
-        _lbl(ed1, "Name:")
-        ttk.Entry(ed1, textvariable=self._ed_vars["name"], width=12).pack(side="left")
-        _lbl(ed1, "Type:")
-        type_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["type"],
+        _lbl(0, 0, "Name:")
+        ttk.Entry(editor, textvariable=self._ed_vars["name"], width=12).grid(
+            row=0, column=1, sticky="w")
+        _lbl(0, 2, "Type:")
+        type_cb = ttk.Combobox(editor, textvariable=self._ed_vars["type"],
                                values=self._step_type_choices, state="readonly", width=10)
-        type_cb.pack(side="left")
+        type_cb.grid(row=0, column=3, sticky="w")
         type_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
-        _lbl(ed1, "Mode:")
-        self._mode_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["mode"],
+        _lbl(0, 4, "Mode:")
+        self._mode_cb = ttk.Combobox(editor, textvariable=self._ed_vars["mode"],
                                      values=_STEP_MODES, state="readonly", width=8)
-        self._mode_cb.pack(side="left")
+        self._mode_cb.grid(row=0, column=5, sticky="w")
         self._mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
-        _lbl(ed1, "Instr:")
-        self._instr_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["instrument"],
+        _lbl(0, 6, "Instr:")
+        self._instr_cb = ttk.Combobox(editor, textvariable=self._ed_vars["instrument"],
                                       values=self._instrument_choices, state="readonly", width=6)
-        self._instr_cb.pack(side="left")
+        self._instr_cb.grid(row=0, column=7, sticky="w")
         self._instr_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
-        _lbl(ed1, "Chan:")
-        self._chan_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["chan"],
+
+        _lbl(1, 0, "Chan:")
+        self._chan_cb = ttk.Combobox(editor, textvariable=self._ed_vars["chan"],
                                      values=self._smu_channel_choices, state="readonly", width=5)
-        self._chan_cb.pack(side="left")
-        _lbl(ed1, "Target:")
-        self._target_cb = ttk.Combobox(ed1, textvariable=self._ed_vars["target"],
+        self._chan_cb.grid(row=1, column=1, sticky="w")
+        _lbl(1, 2, "Target:")
+        self._target_cb = ttk.Combobox(editor, textvariable=self._ed_vars["target"],
                                        values=("all",), width=13,
                                        postcommand=self._refresh_target_values)
-        self._target_cb.pack(side="left")
-
-        _lbl(ed2, "HI:")
-        self._hi_cb = ttk.Combobox(ed2, textvariable=self._ed_vars["hi"], width=10,
+        self._target_cb.grid(row=1, column=3, sticky="w")
+        _lbl(1, 4, "HI:")
+        self._hi_cb = ttk.Combobox(editor, textvariable=self._ed_vars["hi"], width=8,
                                    postcommand=lambda: self._refresh_pin_values(self._hi_cb))
-        self._hi_cb.pack(side="left")
-        _lbl(ed2, "LO:")
-        self._lo_cb = ttk.Combobox(ed2, textvariable=self._ed_vars["lo"], width=10,
+        self._hi_cb.grid(row=1, column=5, sticky="w")
+        _lbl(1, 6, "LO:")
+        self._lo_cb = ttk.Combobox(editor, textvariable=self._ed_vars["lo"], width=8,
                                    postcommand=lambda: self._refresh_pin_values(self._lo_cb))
-        self._lo_cb.pack(side="left")
+        self._lo_cb.grid(row=1, column=7, sticky="w")
         self._pin_widgets = [self._hi_cb, self._lo_cb]
-        _lbl(ed2, "Level:")
-        self._level_ent = ttk.Entry(ed2, textvariable=self._ed_vars["level"], width=8)
-        self._level_ent.pack(side="left")
-        self._level_hint = ttk.Label(ed2, text=_level_hint("resistance", "measure"),
-                                     foreground="gray", font=("Arial", 8))
-        self._level_hint.pack(side="left", padx=(2, 6))
-        _lbl(ed2, "Conn:")
-        conn_ent = ttk.Entry(ed2, textvariable=self._ed_vars["conn"], width=16)
-        conn_ent.pack(side="left")
-        conn_btn = ttk.Button(ed2, text="⚙", width=3, command=self._conn_from_editor)
-        conn_btn.pack(side="left")
-        self._conn_widgets = [conn_ent, conn_btn]
 
-        _lbl(ed3, "Limit:")
-        self._limit_ent = ttk.Entry(ed3, textvariable=self._ed_vars["limit"], width=9)
-        self._limit_ent.pack(side="left")
-        self._limit_hint_lbl = ttk.Label(ed3, text=_limit_hint("resistance", "measure", "DMM"),
-                                         foreground="gray", font=("Arial", 8))
-        self._limit_hint_lbl.pack(side="left", padx=(2, 10))
-        _lbl(ed3, "Shape:")
-        self._shape_cb = ttk.Combobox(ed3, textvariable=self._ed_vars["shape"],
+        _lbl(2, 0, "Level:")
+        self._level_ent = ttk.Entry(editor, textvariable=self._ed_vars["level"], width=9)
+        self._level_ent.grid(row=2, column=1, sticky="w")
+        _lbl(2, 2, "Limit:")
+        self._limit_ent = ttk.Entry(editor, textvariable=self._ed_vars["limit"], width=9)
+        self._limit_ent.grid(row=2, column=3, sticky="w")
+        _lbl(2, 4, "Min:")
+        self._pf_min_ent = ttk.Entry(editor, textvariable=self._ed_vars["min"], width=9)
+        self._pf_min_ent.grid(row=2, column=5, sticky="w")
+        _lbl(2, 6, "Max:")
+        self._pf_max_ent = ttk.Entry(editor, textvariable=self._ed_vars["max"], width=9)
+        self._pf_max_ent.grid(row=2, column=7, sticky="w")
+
+        _lbl(3, 0, "Shape:")
+        self._shape_cb = ttk.Combobox(editor, textvariable=self._ed_vars["shape"],
                                       values=_WAVE_SHAPES, state="readonly", width=6)
-        self._shape_cb.pack(side="left")
-        _lbl(ed3, "Freq (Hz, k/M ok):")
-        self._freq_ent = ttk.Entry(ed3, textvariable=self._ed_vars["freq"], width=9)
-        self._freq_ent.pack(side="left")
+        self._shape_cb.grid(row=3, column=1, sticky="w")
+        _lbl(3, 2, "Freq (Hz):")
+        self._freq_ent = ttk.Entry(editor, textvariable=self._ed_vars["freq"], width=9)
+        self._freq_ent.grid(row=3, column=3, sticky="w")
+        _lbl(3, 4, "Avg Count:")
+        self._avg_count_ent = ttk.Entry(editor, textvariable=self._ed_vars["avg_count"], width=5)
+        self._avg_count_ent.grid(row=3, column=5, sticky="w")
+        _lbl(3, 6, "Avg Delay (ms):")
+        self._avg_delay_ent = ttk.Entry(editor, textvariable=self._ed_vars["avg_delay"], width=7)
+        self._avg_delay_ent.grid(row=3, column=7, sticky="w")
 
-        _lbl(ed4, "Min:")
-        self._pf_min_ent = ttk.Entry(ed4, textvariable=self._ed_vars["min"], width=9)
-        self._pf_min_ent.pack(side="left")
-        _lbl(ed4, "Max:")
-        self._pf_max_ent = ttk.Entry(ed4, textvariable=self._ed_vars["max"], width=9)
-        self._pf_max_ent.pack(side="left")
-        self._pf_hint_lbl = ttk.Label(ed4, text=_passfail_hint(),
-                                      foreground="gray", font=("Arial", 8))
-        self._pf_hint_lbl.pack(side="left", padx=(2, 6))
-
-        ed5 = ttk.Frame(sf)
-        ed5.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        _lbl(ed5, "Avg Count:")
-        self._avg_count_ent = ttk.Entry(ed5, textvariable=self._ed_vars["avg_count"], width=5)
-        self._avg_count_ent.pack(side="left")
-        _lbl(ed5, "Avg Delay (ms):")
-        self._avg_delay_ent = ttk.Entry(ed5, textvariable=self._ed_vars["avg_delay"], width=7)
-        self._avg_delay_ent.pack(side="left")
-        _lbl(ed5, "NPLC:")
-        self._nplc_ent = ttk.Entry(ed5, textvariable=self._ed_vars["nplc"], width=6)
-        self._nplc_ent.pack(side="left")
-        self._avg_hint_lbl = ttk.Label(ed5, text=_avg_hint(),
-                                       foreground="gray", font=("Arial", 8))
-        self._avg_hint_lbl.pack(side="left", padx=(6, 6))
+        _lbl(4, 0, "NPLC:")
+        self._nplc_ent = ttk.Entry(editor, textvariable=self._ed_vars["nplc"], width=6)
+        self._nplc_ent.grid(row=4, column=1, sticky="w")
+        _lbl(4, 2, "Conn:")
+        conn_ent = ttk.Entry(editor, textvariable=self._ed_vars["conn"], width=16)
+        conn_ent.grid(row=4, column=3, columnspan=2, sticky="w")
+        conn_btn = ttk.Button(editor, text="⚙", width=3, command=self._conn_from_editor)
+        conn_btn.grid(row=4, column=5, sticky="w")
+        self._conn_widgets = [conn_ent, conn_btn]
 
         self._on_type_change()
 
@@ -723,28 +667,6 @@ class RecipePanel(ttk.Frame):
         self._btn_recompute = ttk.Button(btns, text="↻ Recompute connections",
                                          command=self._recompute_all)
         self._btn_recompute.pack(side="right", padx=2)
-
-        cf = ttk.LabelFrame(
-            sf, text="Switch Connections (stored per step; max 2 closes)", padding=4)
-        cf.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        cf.columnconfigure(0, weight=1)
-        ttk.Label(cf,
-                  text="707B rows: A=SMU A HI  B=SMU A LO  E=DMM LO  F=DMM HI   •   "
-                       "pins 1–12 → slot 2, 13–24 → slot 4 (e.g. pin 14 → 4_02)",
-                  foreground="gray", font=("Arial", 8)).grid(row=0, column=0, sticky="w")
-        self._conn_text = tk.Text(cf, height=4, font=("Consolas", 8),
-                                  state="disabled", bg="#f8fafc", wrap="none")
-        self._conn_text.grid(row=1, column=0, sticky="ew")
-        csb = ttk.Scrollbar(cf, orient="vertical", command=self._conn_text.yview)
-        csb.grid(row=1, column=1, sticky="ns")
-        self._conn_text.configure(yscrollcommand=csb.set)
-
-    def _update_level_hint(self):
-        t = self._ed_vars["type"].get()
-        mode = self._ed_vars["mode"].get()
-        instrument = self._ed_vars["instrument"].get()
-        self._level_hint.config(text=_level_hint(t, mode))
-        self._limit_hint_lbl.config(text=_limit_hint(t, mode, instrument))
 
     def _refresh_pin_values(self, cb):
         tokens = []
@@ -793,7 +715,6 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["instrument"].set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets, "disabled")
-            self._update_level_hint()
             return
         if t == "picture":
             self._ed_vars["mode"].set("")
@@ -801,7 +722,6 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["instrument"].set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
-            self._update_level_hint()
             return
         if t == "open":
             self._ed_vars["mode"].set("")
@@ -811,7 +731,6 @@ class RecipePanel(ttk.Frame):
             self._target_cb.config(state="normal")
             self._refresh_target_values()
             _set(self._pin_widgets + [self._level_ent], "disabled")
-            self._update_level_hint()
             return
         if t == "passfail":
             self._ed_vars["mode"].set("")
@@ -823,7 +742,6 @@ class RecipePanel(ttk.Frame):
             _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
             self._pf_min_ent.config(state="normal")
             self._pf_max_ent.config(state="normal")
-            self._update_level_hint()
             return
 
         if t == "resistance":
@@ -881,7 +799,6 @@ class RecipePanel(ttk.Frame):
             if not self._ed_vars["nplc"].get():
                 self._ed_vars["nplc"].set("1")
 
-        self._update_level_hint()
 
     def _conn_from_editor(self):
         step = self._editor_step()
@@ -1002,10 +919,6 @@ class RecipePanel(ttk.Frame):
                 body += f"   ⚠ unresolved: {', '.join(unresolved)}"
             lines.append(f"{label}  {body}")
         self._conn_report = "\n".join(lines) if lines else "— no steps —"
-        self._conn_text.config(state="normal")
-        self._conn_text.delete("1.0", "end")
-        self._conn_text.insert("1.0", self._conn_report)
-        self._conn_text.config(state="disabled")
         if self._conn_viewer:
             try:
                 self._conn_viewer(f"[{self._current}]\n{self._conn_report}")
@@ -1245,7 +1158,7 @@ class RecipePanel(ttk.Frame):
             self._validity_lbl.config(text="— Not validated", fg="#6b7280")
 
     def _lockable_buttons(self) -> tuple:
-        names = ["_btn_new", "_btn_rename", "_btn_delete", "_btn_load_ini"]
+        names = ["_btn_new", "_btn_rename", "_btn_delete"]
         if self._system != "accretech":
             names += ["_btn_import_legacy", "_btn_import_workbook"]
         names += ["_btn_save", "_btn_add_step", "_btn_update_step",
@@ -1607,47 +1520,6 @@ class RecipePanel(ttk.Frame):
             self.controller.log(f"[RECIPE] Deleted '{name}' (in-memory only — "
                                 "no probe card active)")
 
-
-    def _load(self):
-        card = self._get_active_card()
-        if not card:
-            messagebox.showerror(
-                "No Probe Card",
-                "Select or create a probe card first — on the Probe Card "
-                "tab. A loaded recipe is registered under the active card.")
-            return
-        path = filedialog.askopenfilename(
-            title="Load Recipe .ini",
-            filetypes=[("Recipe / INI files", "*.ini *.txt *.cfg *.pms"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            found = parse_recipe_file(path)
-        except Exception as exc:
-            self.controller.log(f"[RECIPE] Load error: {exc}")
-            return
-        (name, rec), = found.items()
-        orig_name, n = name, 2
-        while name in self._recipes:
-            name = f"{orig_name} ({n})"
-            n += 1
-        self._store_form()
-        self._recipes[name] = rec
-        if ("(unsaved)" in self._recipes and "(unsaved)" != name
-                and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
-            del self._recipes["(unsaved)"]
-        self._load_form(name)
-        self._refresh_picker()
-        if self._save_recipes(card, self._recipes):
-            self._file_lbl.config(text=f"Imported '{name}' from {path}", fg="#374151")
-            self.controller.log(
-                f"[RECIPE] Imported '{name}' from {path} into probe card '{card}'")
-        else:
-            self.controller.log(
-                f"[RECIPE] Imported '{name}' from {path} — save to probe card "
-                f"'{card}' failed")
 
     def _import_legacy(self):
         if not self._get_active_card():

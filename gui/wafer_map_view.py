@@ -505,10 +505,10 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                                     state="readonly", width=14)
         self._picker.pack(side="left", padx=(2, 4))
         self._picker.bind("<<ComboboxSelected>>", lambda _e: self._switch_card())
-        ttk.Button(bar, text="＋New", width=6, command=self._new_card).pack(side="left", padx=1)
-        ttk.Button(bar, text="✎ Rename", width=9, command=self._rename_card).pack(
+        ttk.Button(bar, text="＋ New", width=9, command=self._new_card).pack(side="left", padx=1)
+        ttk.Button(bar, text="✎ Rename", width=11, command=self._rename_card).pack(
             side="left", padx=1)
-        ttk.Button(bar, text="🗑 Delete", width=8, command=self._delete_card).pack(
+        ttk.Button(bar, text="🗑 Delete", width=11, command=self._delete_card).pack(
             side="left", padx=1)
 
     def get_active_card(self) -> str:

@@ -14,6 +14,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
 from instruments.accretech_uf200r import AccretechUF200R
+from pma_wafer_panel import parse_plain_csv_wafer_map, merge_with_accretech, centroid_offset
 import instruments.nanoz_board as nzb
 
 try:
@@ -87,6 +88,10 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_label_artists: list = []
         self._nzmap_view_debounce_id = None
         self._nzmap_current_labels: list = []
+        self._nzmap_csv_data: dict | None = None
+        self._nzmap_overlay_die_ids: dict[tuple[int, int], str] = {}
+        self._nzmap_overlay_row_offset = 0
+        self._nzmap_overlay_col_offset = 0
 
         self._build_ui()
         self.after(50, self._check_queue)
@@ -616,6 +621,8 @@ class NanoZPanel(ttk.Frame):
                         value="accretech", command=self._redraw_nanoz_wafer_map).pack(side="left")
         ttk.Checkbutton(src_row, text="🏷 Die Labels", variable=self._show_nzmap_labels_var,
                        command=self._update_visible_nzmap_labels).pack(side="left", padx=(12, 0))
+        ttk.Button(src_row, text="🖌 Overlay CSV…",
+                  command=self._nzmap_open_overlay_dialog).pack(side="left", padx=(12, 0))
 
         if _MPL:
             self._nzmap_fig = Figure(figsize=(8, 8), dpi=100)
@@ -712,11 +719,133 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_ax.set_title(f"Accretech — {len(rcs)} die(s) — click a die to see "
                                  "its row/col", fontsize=9)
         self._nzmap_current_labels = [
-            {"x": c, "y": -r, "label": f"R{r}C{c}", "color": "black"} for r, c in rcs
+            {"x": c, "y": -r,
+             "label": self._nzmap_overlay_die_ids.get((r, c)) or f"R{r}C{c}",
+             "color": "black"}
+            for r, c in rcs
         ]
         self._connect_nzmap_view_callbacks()
         self._update_visible_nzmap_labels()
         self._nzmap_canvas.draw_idle()
+
+    def _nzmap_open_overlay_dialog(self):
+        accretech_rc = set(self.wafer_map.dies.keys())
+        if not accretech_rc:
+            self._log_main("Overlay: no Accretech wafer map loaded yet — "
+                           "load an ATA folder first.")
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Overlay CSV Wafer Map onto Accretech")
+        dlg.transient(self.winfo_toplevel())
+        dlg.resizable(False, False)
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        path_var = tk.StringVar(
+            value=self._nzmap_csv_data["path"] if self._nzmap_csv_data else "No CSV loaded.")
+        ttk.Label(frm, textvariable=path_var, foreground="#6b7280",
+                 wraplength=340, justify="left").grid(
+                 row=0, column=0, columnspan=4, sticky="w")
+        ttk.Button(frm, text="📂 Load CSV…", command=lambda: load_csv()).grid(
+            row=0, column=4, sticky="e", padx=(8, 0))
+
+        summary_var = tk.StringVar()
+        ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
+                 justify="left").grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 4))
+        ttk.Label(frm, text="Centered by matching the two maps' centers (🎯 Center Overlay) "
+                 "— a CSV die counts as \"on the map\" when its (row, col), shifted by the "
+                 "offset below, lands on a die the Accretech prober actually walked. Nudge "
+                 "the offset if dies land on the wrong physical die, then Overlay on Map.",
+                 font=("Segoe UI", 8), foreground="#6b7280", wraplength=340,
+                 justify="left").grid(row=2, column=0, columnspan=5, sticky="w", pady=(0, 10))
+
+        ttk.Label(frm, text="Row offset:").grid(row=3, column=0, sticky="e")
+        row_var = tk.IntVar(value=self._nzmap_overlay_row_offset)
+        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
+            row=3, column=1, sticky="w", padx=(4, 16))
+        ttk.Label(frm, text="Col offset:").grid(row=3, column=2, sticky="e")
+        col_var = tk.IntVar(value=self._nzmap_overlay_col_offset)
+        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
+            row=3, column=3, sticky="w", padx=(4, 0))
+
+        state = {"grid": []}
+
+        def csv_grid():
+            if not self._nzmap_csv_data:
+                return []
+            return [{"row": s["row"], "col": s["col"], "die_ids": s["dies"]}
+                   for s in self._nzmap_csv_data["shots"]]
+
+        def recompute(*_a):
+            grid = csv_grid()
+            state["grid"] = grid
+            if not grid:
+                summary_var.set("No CSV loaded — click 📂 Load CSV… first.")
+                return
+            try:
+                ro, co = row_var.get(), col_var.get()
+            except tk.TclError:
+                return
+            matched = merge_with_accretech(grid, accretech_rc, ro, co)
+            state["matched"] = matched
+            summary_var.set(
+                f"Accretech dies on map:  {len(accretech_rc)}\n"
+                f"CSV dies (real ID):     {len(grid)}\n"
+                f"Overlaid (on both maps): {len(matched)}"
+            )
+
+        def center_overlay():
+            grid = csv_grid()
+            if not grid:
+                recompute()
+                return
+            ro, co = centroid_offset(grid, accretech_rc)
+            row_var.set(ro)
+            col_var.set(co)
+
+        def load_csv():
+            path = filedialog.askopenfilename(
+                title="Load CSV Wafer Map",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+            if not path:
+                return
+            try:
+                self._nzmap_csv_data = parse_plain_csv_wafer_map(path)
+            except OSError as exc:
+                messagebox.showerror("Could not load CSV wafer map", str(exc))
+                return
+            path_var.set(f"{path}  ({self._nzmap_csv_data['die_count']} die(s))")
+            center_overlay()
+
+        row_var.trace_add("write", recompute)
+        col_var.trace_add("write", recompute)
+        recompute()
+
+        def do_overlay():
+            self._nzmap_overlay_row_offset = row_var.get()
+            self._nzmap_overlay_col_offset = col_var.get()
+            matched = state.get("matched", [])
+            self._nzmap_overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"])
+                                           for d in matched}
+            self._nzmap_source_var.set("accretech")
+            self._redraw_nanoz_wafer_map()
+            self._log_main(f"NanoZ Wafer Map: overlaid {len(matched)} CSV die(s) onto Accretech.")
+
+        def do_clear():
+            self._nzmap_overlay_die_ids = {}
+            self._redraw_nanoz_wafer_map()
+            self._log_main("NanoZ Wafer Map: overlay cleared.")
+
+        ttk.Button(frm, text="🎯 Center Overlay", command=center_overlay).grid(
+            row=3, column=4, sticky="w", padx=(10, 0))
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=4, column=0, columnspan=5, sticky="ew", pady=(12, 0))
+        ttk.Button(btns, text="🖌 Overlay on Map", command=do_overlay).pack(side="left")
+        ttk.Button(btns, text="✕ Clear Overlay", command=do_clear).pack(side="left", padx=6)
+        ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
 
     _NZMAP_MAX_VISIBLE_LABELS = 900
 
@@ -1086,7 +1215,7 @@ class NanoZPanel(ttk.Frame):
         nb.add(tab, text="Charts")
         self._charts_tab = tab
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
+        tab.rowconfigure(2, weight=1)
 
         pick = ttk.Frame(tab)
         pick.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
@@ -1097,17 +1226,29 @@ class NanoZPanel(ttk.Frame):
         self._chart_board_cb.bind(
             "<<ComboboxSelected>>",
             lambda _e: (self._on_console_board_picked(_e), self._redraw_charts()))
-        ttk.Label(pick, text="Chip:").pack(side="left")
-        self._chart_chip_cb = ttk.Combobox(
-            pick, textvariable=self.console_chip_var, state="readonly", width=3,
-            values=("0", "1"))
-        self._chart_chip_cb.pack(side="left", padx=(4, 12))
-        self._chart_chip_cb.bind("<<ComboboxSelected>>", lambda _e: self._redraw_charts())
-        ttk.Label(pick, text="SPL is per-chip (0=right, 1=left); ENV is board-wide",
-                 foreground="#6b7280", wraplength=480, justify="left").pack(side="left")
+        ttk.Label(pick, text="Sensors:").pack(side="left", padx=(12, 0))
+        self._chart_sensor_metric_var = tk.StringVar(value="Current")
+        ttk.Combobox(pick, textvariable=self._chart_sensor_metric_var, state="readonly", width=10,
+                    values=("Current", "Resistance")).pack(side="left", padx=(4, 12))
+        self._chart_sensor_metric_var.trace_add("write", lambda *_: self._redraw_charts())
+        ttk.Label(pick, text="Heaters:").pack(side="left")
+        self._chart_heater_metric_var = tk.StringVar(value="Voltage")
+        ttk.Combobox(pick, textvariable=self._chart_heater_metric_var, state="readonly", width=10,
+                    values=("Voltage", "Current", "Power", "Resistance")).pack(side="left", padx=(4, 12))
+        self._chart_heater_metric_var.trace_add("write", lambda *_: self._redraw_charts())
         self._chart_live_btn = ttk.Button(pick, text="▶ Jump to Live",
                                           command=self._chart_resume_live)
         self._chart_live_btn.pack(side="left", padx=(12, 0))
+
+        channels_row = ttk.Frame(tab)
+        channels_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
+        ttk.Label(channels_row, text="Show channels (both chips: chip0=solid, chip1=dashed):").pack(side="left")
+        self._chart_visible_vars = {}
+        for key in ("s1", "s2", "s3", "s4", "h1", "h2"):
+            var = tk.BooleanVar(value=True)
+            self._chart_visible_vars[key] = var
+            ttk.Checkbutton(channels_row, text=key.upper(), variable=var,
+                            command=self._redraw_charts).pack(side="left", padx=(6, 0))
 
         if _MPL:
             self._chart_fig = Figure(figsize=(8, 7), dpi=100)
@@ -1116,10 +1257,10 @@ class NanoZPanel(ttk.Frame):
             self._chart_ax_t = self._chart_fig.add_subplot(313, sharex=self._chart_ax_v)
             self._chart_fig.tight_layout(pad=2.2)
             self._chart_canvas = FigureCanvasTkAgg(self._chart_fig, master=tab)
-            self._chart_canvas.get_tk_widget().grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 0))
+            self._chart_canvas.get_tk_widget().grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 0))
             toolbar = NavigationToolbar2Tk(self._chart_canvas, tab, pack_toolbar=False)
             toolbar.update()
-            toolbar.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+            toolbar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
             # Default view auto-scrolls to the last _CHART_WINDOW_S seconds.
             # Panning/zooming via the toolbar above (or scroll-back) drops
             # into "browsing history" mode and stops auto-scrolling until
@@ -1128,10 +1269,17 @@ class NanoZPanel(ttk.Frame):
             self._chart_follow_live = True
             self._chart_programmatic_xlim = False
             self._chart_ax_v.callbacks.connect("xlim_changed", self._on_chart_xlim_changed)
+            # xlim_changed alone isn't reliable for pausing mid-drag - some
+            # backends only fire it once, on button release, so the 300ms
+            # loop could still redraw (and snap the view back to live)
+            # partway through a pan gesture. Pausing on the raw mouse-down
+            # inside the chart canvas instead guarantees nothing resets the
+            # view once the user has started interacting with it.
+            self._chart_canvas.mpl_connect("button_press_event", self._on_chart_button_press)
             self._draw_empty_charts()
         else:
             ttk.Label(tab, text="matplotlib not installed — install it to view live charts.",
-                     foreground="red").grid(row=1, column=0, sticky="nw", padx=10, pady=10)
+                     foreground="red").grid(row=2, column=0, sticky="nw", padx=10, pady=10)
 
     def _draw_empty_charts(self):
         for ax, title in ((self._chart_ax_v, "Heater Voltage (mV) — SPL"),
@@ -1148,7 +1296,7 @@ class NanoZPanel(ttk.Frame):
         nb.add(tab, text="Results")
         self._results_tab = tab
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
+        tab.rowconfigure(2, weight=1)
 
         top = ttk.Frame(tab)
         top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
@@ -1157,6 +1305,34 @@ class NanoZPanel(ttk.Frame):
                             "start. Every raw reading (not just this average) is logged to the "
                             "SPL CSV, tagged with the die it was taken on.",
                  foreground="#6b7280", wraplength=700, justify="left").pack(side="left")
+
+        export_frame = ttk.LabelFrame(tab, text="Data Export")
+        export_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+
+        ttk.Label(
+            export_frame,
+            text="Output filename:  <Lot ID>_<Wafer ID>_nanoz_results.csv  "
+                 "(Wafer ID omitted if blank)"
+        ).pack(anchor="w", padx=10, pady=(8, 4))
+
+        file_row = ttk.Frame(export_frame)
+        file_row.pack(fill="x", padx=10, pady=4)
+        ttk.Label(file_row, text="Lot ID:").pack(side="left")
+        self._nz_lot_id_var = tk.StringVar(value="")
+        ttk.Entry(file_row, textvariable=self._nz_lot_id_var, width=22).pack(side="left", padx=6)
+        ttk.Label(file_row, text="Wafer ID:").pack(side="left", padx=(12, 0))
+        self._nz_wafer_id_var = tk.StringVar(value="")
+        ttk.Entry(file_row, textvariable=self._nz_wafer_id_var, width=22).pack(side="left", padx=6)
+
+        path_row = ttk.Frame(export_frame)
+        path_row.pack(fill="x", padx=10, pady=(4, 12))
+        ttk.Label(path_row, text="Export Path:").pack(side="left")
+        self._nz_export_path_var = tk.StringVar(value="")
+        ttk.Entry(path_row, textvariable=self._nz_export_path_var, width=40).pack(side="left", padx=6)
+        ttk.Button(path_row, text="Browse...", command=self._nz_browse_export_path).pack(
+            side="left", padx=4)
+        ttk.Button(path_row, text="Save to CSV", command=self._nz_save_results_csv).pack(
+            side="left", padx=10)
 
         cols = ("port", "chip", "die", "channel", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
         self._results_tree = ttk.Treeview(tab, columns=cols, show="headings", height=16)
@@ -1168,7 +1344,35 @@ class NanoZPanel(ttk.Frame):
         for cid, text, width in heads:
             self._results_tree.heading(cid, text=text)
             self._results_tree.column(cid, width=width, anchor="center")
-        self._results_tree.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        self._results_tree.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+    def _nz_browse_export_path(self):
+        path = filedialog.askdirectory(title="Choose Export Folder")
+        if path:
+            self._nz_export_path_var.set(path)
+
+    def _nz_save_results_csv(self):
+        folder = self._nz_export_path_var.get().strip() or self._nanoz_ata_folder
+        if not folder:
+            messagebox.showerror("No Export Path", "Choose an export path first.")
+            return
+        lot_id = self._nz_lot_id_var.get().strip()
+        wafer_id = self._nz_wafer_id_var.get().strip()
+        name_parts = [p for p in (lot_id, wafer_id) if p] or ["nanoz"]
+        filename = "_".join(name_parts) + "_nanoz_results.csv"
+        path = os.path.join(folder, filename)
+        cols = ("port", "chip", "die", "channel", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(cols)
+                for iid in self._results_tree.get_children():
+                    writer.writerow(self._results_tree.item(iid, "values"))
+        except OSError as e:
+            messagebox.showerror("Save Failed", str(e))
+            return
+        self._log_main(f"NanoZ Results: saved {len(self._results_tree.get_children())} "
+                       f"row(s) to {path}")
 
     def _results_tab_visible(self):
         try:
@@ -1219,16 +1423,17 @@ class NanoZPanel(ttk.Frame):
         tab = ttk.Frame(nb)
         nb.add(tab, text="NanoZ_EK")
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(2, weight=1)
 
         ttk.Label(tab,
-                  text="Read-only replica of Nanoz_EK.exe's Configuration page, decoded "
-                       "directly from the board's EEPROM. Duration and Chip are confirmed "
-                       "field-accurate against real hardware; everything else labeled "
-                       "\"unconfirmed\" is a best-effort guess shown as raw bytes rather "
-                       "than a possibly-wrong decoded value. No write support - see the "
-                       "project notes on why.",
-                  foreground="#6b7280", wraplength=900, justify="left").grid(
+                  text="Replica of Nanoz_EK.exe's Configuration window (see references/250723_User "
+                       "manual EK IV.pdf section IV.B-D), decoded from the board's EEPROM. Duration "
+                       "is confirmed field-accurate against real hardware; other D.a/D.b fields are "
+                       "high-confidence matches against a real sequence but not yet individually "
+                       "isolated. \"Write Sequence to Device\" sends REAL writes for the D.a Sequence "
+                       "settings + D.b Heater settings fields only (edit them, then click Write) - "
+                       "Chip, Resolution, and everything in Cycle/Configuration are preserved exactly "
+                       "as last read, never guessed at. Always read a sequence before editing/writing it.",
+                  foreground="#6b7280", wraplength=1000, justify="left").grid(
                   row=0, column=0, sticky="w", padx=8, pady=(8, 4))
 
         pick = ttk.Frame(tab)
@@ -1243,39 +1448,143 @@ class NanoZPanel(ttk.Frame):
         self._btn_ek_read = ttk.Button(pick, text="🔄 Read Configuration",
                                        command=self._ek_read_configuration)
         self._btn_ek_read.pack(side="left")
+        self._btn_ek_write = ttk.Button(pick, text="💾 Write Sequence to Device",
+                                        command=self._ek_write_sequence, state="disabled")
+        self._btn_ek_write.pack(side="left", padx=(6, 0))
+        ttk.Label(pick, text="(writes D.a/D.b only — Chip/Resolution/Cycle/Configuration untouched; "
+                             "read a sequence first)",
+                  foreground="#9ca3af").pack(side="left", padx=(4, 0))
         self._ek_status_var = tk.StringVar(value="")
         ttk.Label(pick, textvariable=self._ek_status_var, foreground="#6b7280").pack(
                   side="left", padx=(10, 0))
 
-        split = ttk.PanedWindow(tab, orient="vertical")
-        split.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        body = ttk.Frame(tab)
+        body.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        tab.rowconfigure(2, weight=1)
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
 
-        top_lf = ttk.LabelFrame(split, text="Configuration / Chips")
-        split.add(top_lf, weight=1)
-        self._ek_config_var = tk.StringVar(value="(no data read yet)")
-        ttk.Label(top_lf, textvariable=self._ek_config_var, font=("Consolas", 9),
-                 justify="left").pack(anchor="w", padx=8, pady=6)
+        # --- B. Configuration -------------------------------------------------
+        cfg_lf = ttk.LabelFrame(body, text="B — Configuration")
+        cfg_lf.grid(row=0, column=0, sticky="new", padx=(0, 6), pady=(0, 6))
+        self._ek_cycles_count_var = tk.StringVar(value="")
+        self._ek_sequences_count_var = tk.StringVar(value="")
+        self._ek_periodicity_var = tk.StringVar(value="")
+        self._ek_signature_var = tk.StringVar(value="—")
+        self._ek_chip1_var = tk.StringVar(value="—")
+        self._ek_chip2_var = tk.StringVar(value="—")
+        r = 0
+        for label, var, editable in (
+            ("Cycles:", self._ek_cycles_count_var, True),
+            ("Sequences:", self._ek_sequences_count_var, True),
+            ("Periodicity (ms):", self._ek_periodicity_var, True),
+        ):
+            ttk.Label(cfg_lf, text=label).grid(row=r, column=0, sticky="e", padx=4, pady=2)
+            ttk.Entry(cfg_lf, textvariable=var, width=10).grid(row=r, column=1, sticky="w", padx=(0, 4))
+            r += 1
+        ttk.Label(cfg_lf, text="Signature:").grid(row=r, column=0, sticky="e", padx=4, pady=2)
+        ttk.Label(cfg_lf, textvariable=self._ek_signature_var).grid(row=r, column=1, sticky="w")
+        r += 1
+        ttk.Label(cfg_lf, text="Chip 1 (ID / Age):").grid(row=r, column=0, sticky="e", padx=4, pady=2)
+        ttk.Label(cfg_lf, textvariable=self._ek_chip1_var).grid(row=r, column=1, columnspan=3, sticky="w")
+        r += 1
+        ttk.Label(cfg_lf, text="Chip 2 (ID / Age):").grid(row=r, column=0, sticky="e", padx=4, pady=2)
+        ttk.Label(cfg_lf, textvariable=self._ek_chip2_var).grid(row=r, column=1, columnspan=3, sticky="w")
 
-        cyc_lf = ttk.LabelFrame(split, text="Cycles")
-        split.add(cyc_lf, weight=2)
-        cyc_cols = ("cycle_ui", "cycle_wire", "num_seq", "seq_refs")
-        self._ek_cycles_tree = ttk.Treeview(cyc_lf, columns=cyc_cols, show="headings", height=6)
-        for cid, text, width in (("cycle_ui", "Cycle (UI)", 80), ("cycle_wire", "Cycle (wire, 0-based)", 130),
-                                 ("num_seq", "# Sequences", 90), ("seq_refs", "Sequence refs (wire)", 300)):
-            self._ek_cycles_tree.heading(cid, text=text)
-            self._ek_cycles_tree.column(cid, width=width, anchor="center" if cid != "seq_refs" else "w")
-        self._ek_cycles_tree.pack(fill="both", expand=True, padx=6, pady=6)
+        # --- C. Cycle -----------------------------------------------------
+        cyc_lf = ttk.LabelFrame(body, text="C — Cycle")
+        cyc_lf.grid(row=0, column=1, sticky="new", padx=(6, 0), pady=(0, 6))
+        self._ek_cycle_index_var = tk.StringVar(value="1")
+        self._ek_cycle_numseq_var = tk.StringVar(value="")
+        self._ek_cycle_seqorder_var = tk.StringVar(value="")
+        self._ek_cycle_loopback_var = tk.BooleanVar(value=False)
+        ttk.Label(cyc_lf, text="Index:").grid(row=0, column=0, sticky="e", padx=4, pady=2)
+        self._ek_cycle_index_spin = ttk.Spinbox(
+            cyc_lf, from_=1, to=nzb.MAX_CYCLES_NB, width=6, textvariable=self._ek_cycle_index_var,
+            command=self._ek_on_cycle_index_changed)
+        self._ek_cycle_index_spin.grid(row=0, column=1, sticky="w")
+        self._ek_cycle_index_spin.bind("<Return>", self._ek_on_cycle_index_changed)
+        self._ek_cycle_index_spin.bind("<FocusOut>", self._ek_on_cycle_index_changed)
+        ttk.Label(cyc_lf, text="(cycle numbering starts at 1, per the manual)",
+                 foreground="#9ca3af").grid(row=0, column=2, sticky="w", padx=(6, 0))
+        ttk.Label(cyc_lf, text="Number of sequences:").grid(row=1, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(cyc_lf, textvariable=self._ek_cycle_numseq_var, width=10).grid(row=1, column=1, sticky="w")
+        ttk.Label(cyc_lf, text="Sequence order (comma-sep, UI index):").grid(row=2, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(cyc_lf, textvariable=self._ek_cycle_seqorder_var, width=24).grid(
+            row=2, column=1, columnspan=2, sticky="w")
+        ttk.Checkbutton(cyc_lf, text="Loop back (not yet located in EEPROM — disabled)",
+                        variable=self._ek_cycle_loopback_var, state="disabled").grid(
+                        row=3, column=0, columnspan=3, sticky="w", padx=4, pady=(4, 2))
 
-        seq_lf = ttk.LabelFrame(split, text="Sequences  (Duration/Chip confirmed; rest = raw bytes)")
-        split.add(seq_lf, weight=2)
-        seq_cols = ("seq_ui", "seq_wire", "duration", "chip", "raw")
-        self._ek_sequences_tree = ttk.Treeview(seq_lf, columns=seq_cols, show="headings", height=6)
-        for cid, text, width in (("seq_ui", "Sequence (UI)", 90), ("seq_wire", "Sequence (wire)", 100),
-                                 ("duration", "Duration (s)", 90), ("chip", "Chip", 60),
-                                 ("raw", "Raw record (hex)", 500)):
-            self._ek_sequences_tree.heading(cid, text=text)
-            self._ek_sequences_tree.column(cid, width=width, anchor="center" if cid != "raw" else "w")
-        self._ek_sequences_tree.pack(fill="both", expand=True, padx=6, pady=6)
+        # --- D.a Sequence settings -----------------------------------------
+        seq_lf = ttk.LabelFrame(body, text="D.a — Sequence settings")
+        seq_lf.grid(row=1, column=0, sticky="new", padx=(0, 6), pady=(0, 6))
+        self._ek_seq_index_var = tk.StringVar(value="1")
+        self._ek_seq_duration_var = tk.StringVar(value="")
+        self._ek_seq_delay_var = tk.StringVar(value="")
+        self._ek_seq_chip_var = tk.StringVar(value="1")
+        self._ek_seq_sensor_var = tk.StringVar(value="")
+        ttk.Label(seq_lf, text="Index:").grid(row=0, column=0, sticky="e", padx=4, pady=2)
+        self._ek_seq_index_spin = ttk.Spinbox(
+            seq_lf, from_=1, to=nzb.MAX_SEQUENCE_NB, width=6, textvariable=self._ek_seq_index_var,
+            command=self._ek_on_seq_index_changed)
+        self._ek_seq_index_spin.grid(row=0, column=1, sticky="w")
+        self._ek_seq_index_spin.bind("<Return>", self._ek_on_seq_index_changed)
+        self._ek_seq_index_spin.bind("<FocusOut>", self._ek_on_seq_index_changed)
+        ttk.Label(seq_lf, text="Duration (s):").grid(row=1, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(seq_lf, textvariable=self._ek_seq_duration_var, width=10).grid(row=1, column=1, sticky="w")
+        ttk.Label(seq_lf, text="(CONFIRMED offset)", foreground="#16a34a").grid(row=1, column=2, sticky="w", padx=(6, 0))
+        ttk.Label(seq_lf, text="Delay (s):").grid(row=2, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(seq_lf, textvariable=self._ek_seq_delay_var, width=10).grid(row=2, column=1, sticky="w")
+        ttk.Label(seq_lf, text="Chip:").grid(row=3, column=0, sticky="e", padx=4, pady=2)
+        ttk.Combobox(seq_lf, textvariable=self._ek_seq_chip_var, values=("1", "2"),
+                    state="readonly", width=4).grid(row=3, column=1, sticky="w")
+        ttk.Label(seq_lf, text="(offset ambiguous — see tab description)",
+                 foreground="#9ca3af").grid(row=3, column=2, sticky="w", padx=(6, 0))
+        ttk.Label(seq_lf, text="Sensors-NZG2 (mV, all sensors):").grid(row=4, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(seq_lf, textvariable=self._ek_seq_sensor_var, width=10).grid(row=4, column=1, sticky="w")
+
+        # --- D.b Heater settings (Table 2) ----------------------------------
+        heat_lf = ttk.LabelFrame(body, text="D.b — Heater settings  (Table 2: Heater control parameters)")
+        heat_lf.grid(row=1, column=1, sticky="new", padx=(6, 0), pady=(0, 6))
+        for c, text in enumerate(("Parameter", "Value", "Unit", "Min", "Max")):
+            ttk.Label(heat_lf, text=text, font=("TkDefaultFont", 8, "bold")).grid(
+                row=0, column=c, sticky="w", padx=4)
+        self._ek_heater_vars = {}
+        heater_rows = (
+            ("heater1_low_mv", "1. Heater 1 — low state", "mV", "0", "2200"),
+            ("heater1_high_mv", "1. Heater 1 — high state", "mV", "0", "2200"),
+            ("heater2_low_mv", "2. Heater 2 — low state", "mV", "0", "2200"),
+            ("heater2_high_mv", "2. Heater 2 — high state", "mV", "0", "2200"),
+            ("ramp_up_ms", "3. Ramp up time", "ms", "0", "60000"),
+            ("high_duration_ms", "4. High state duration", "ms", "0", "60000"),
+            ("ramp_down_ms", "5. Ramp down time", "ms", "0", "60000"),
+            ("low_duration_ms", "6. Low state duration", "ms", "0", "60000"),
+            ("phase_shift_ms", "7. Phase shift Heater 1/2", "ms", "0", "60000"),
+            ("resolution_ms", "8. Time resolution", "ms", "0", "10000"),
+        )
+        for i, (key, label, unit, lo, hi) in enumerate(heater_rows, start=1):
+            var = tk.StringVar(value="")
+            self._ek_heater_vars[key] = var
+            ttk.Label(heat_lf, text=label).grid(row=i, column=0, sticky="w", padx=4, pady=1)
+            ttk.Entry(heat_lf, textvariable=var, width=8).grid(row=i, column=1, padx=4)
+            ttk.Label(heat_lf, text=unit).grid(row=i, column=2, sticky="w")
+            ttk.Label(heat_lf, text=lo, foreground="#9ca3af").grid(row=i, column=3)
+            ttk.Label(heat_lf, text=hi, foreground="#9ca3af").grid(row=i, column=4)
+        ttk.Label(heat_lf, text="Rows 6/7 pairing and the Chip/Resolution offset ambiguity are "
+                       "best-effort — see the tab description and project notes.",
+                 foreground="#9ca3af", wraplength=380, justify="left").grid(
+                 row=len(heater_rows) + 1, column=0, columnspan=5, sticky="w", padx=4, pady=(4, 2))
+
+        raw_lf = ttk.LabelFrame(body, text="Raw sequence record (debug)")
+        raw_lf.grid(row=2, column=0, columnspan=2, sticky="new")
+        self._ek_seq_raw_var = tk.StringVar(value="(no data read yet)")
+        ttk.Label(raw_lf, textvariable=self._ek_seq_raw_var, font=("Consolas", 8),
+                 foreground="#6b7280").pack(anchor="w", padx=8, pady=4)
+
+        self._ek_cycles_by_index = {}
+        self._ek_sequences_by_index = {}
+        self._ek_write_board = None
 
     def _ek_refresh_board_list(self):
         ports = sorted(self._boards.keys())
@@ -1301,7 +1610,9 @@ class NanoZPanel(ttk.Frame):
             messagebox.showerror("No Board Connected",
                                  "Pick a connected board first (Setup tab -> Connect All).")
             return
+        self._ek_write_board = board
         self._btn_ek_read.config(state="disabled")
+        self._btn_ek_write.config(state="disabled")
         self._ek_status_var.set("Reading...")
         threading.Thread(target=self._ek_read_thread, args=(board,), daemon=True).start()
 
@@ -1380,28 +1691,185 @@ class NanoZPanel(ttk.Frame):
             return f"{h:02d}:{m:02d}:{s:02d}"
 
         c1, c2 = params["chip1"], params["chip2"]
-        self._ek_config_var.set(
-            f"Signature: {params['signature']}\n"
-            f"Cycles configured: {params['cycles_configured']}\n"
-            f"Periodicity: {params['periodicity_ms']} ms\n"
-            f"CAL-1: {params['cal1']:.6f}   CAL-2: {params['cal2']:.6f}\n"
-            f"Chip 1: ID={c1['id']}  Age={age_str(c1['age_s'])}\n"
-            f"Chip 2: ID={c2['id']}  Age={age_str(c2['age_s'])}"
-        )
+        self._ek_cycles_count_var.set(str(params["cycles_configured"]))
+        self._ek_sequences_count_var.set(str(len(sequences)))
+        self._ek_periodicity_var.set(str(params["periodicity_ms"]))
+        self._ek_signature_var.set(params["signature"])
+        self._ek_chip1_var.set(f"{c1['id']}  /  {age_str(c1['age_s'])}")
+        self._ek_chip2_var.set(f"{c2['id']}  /  {age_str(c2['age_s'])}")
 
-        for iid in self._ek_cycles_tree.get_children():
-            self._ek_cycles_tree.delete(iid)
-        for c in cycles:
-            self._ek_cycles_tree.insert("", "end", values=(
-                c["wire_index"] + 1, c["wire_index"], c["num_sequences"],
-                ", ".join(str(r) for r in c["sequence_refs"]) or "—"))
+        self._ek_cycles_by_index = {c["wire_index"] + 1: c for c in cycles}
+        self._ek_sequences_by_index = {s["wire_index"] + 1: s for s in sequences}
 
-        for iid in self._ek_sequences_tree.get_children():
-            self._ek_sequences_tree.delete(iid)
-        for s in sequences:
-            self._ek_sequences_tree.insert("", "end", values=(
-                s["wire_index"] + 1, s["wire_index"], s["duration_s"],
-                s["chip"] if s["chip"] is not None else "—", s["raw_hex"]))
+        cyc_max = max(self._ek_cycles_by_index.keys(), default=1)
+        self._ek_cycle_index_spin.config(to=max(cyc_max, 1))
+        first_cycle = min(self._ek_cycles_by_index.keys(), default=1)
+        self._ek_cycle_index_var.set(str(first_cycle))
+        self._ek_load_cycle(first_cycle)
+
+        seq_max = max(self._ek_sequences_by_index.keys(), default=1)
+        self._ek_seq_index_spin.config(to=max(seq_max, 1))
+        first_seq = min(self._ek_sequences_by_index.keys(), default=1)
+        self._ek_seq_index_var.set(str(first_seq))
+        self._ek_load_sequence(first_seq)
+
+    def _ek_on_cycle_index_changed(self, _event=None):
+        try:
+            idx = int(self._ek_cycle_index_var.get())
+        except ValueError:
+            return
+        self._ek_load_cycle(idx)
+
+    def _ek_load_cycle(self, idx: int):
+        c = self._ek_cycles_by_index.get(idx)
+        if not c:
+            self._ek_cycle_numseq_var.set("—")
+            self._ek_cycle_seqorder_var.set("—")
+            return
+        self._ek_cycle_numseq_var.set(str(c["num_sequences"]))
+        self._ek_cycle_seqorder_var.set(
+            ", ".join(str(r + 1) for r in c["sequence_refs"]) or "—")
+
+    def _ek_on_seq_index_changed(self, _event=None):
+        try:
+            idx = int(self._ek_seq_index_var.get())
+        except ValueError:
+            return
+        self._ek_load_sequence(idx)
+
+    def _ek_load_sequence(self, idx: int):
+        s = self._ek_sequences_by_index.get(idx)
+        if not s:
+            self._ek_seq_duration_var.set("—")
+            self._ek_seq_delay_var.set("—")
+            self._ek_seq_sensor_var.set("—")
+            for var in self._ek_heater_vars.values():
+                var.set("—")
+            self._ek_seq_raw_var.set("(no sequence at this index)")
+            self._btn_ek_write.config(state="disabled")
+            return
+
+        def fmt(v):
+            return "—" if v is None else str(v)
+
+        self._ek_seq_duration_var.set(fmt(s.get("duration_s")))
+        self._ek_seq_delay_var.set(fmt(s.get("delay_s")))
+        self._ek_seq_chip_var.set(fmt(s.get("chip")))
+        self._ek_seq_sensor_var.set(fmt(s.get("sensor_mv")))
+        for key, var in self._ek_heater_vars.items():
+            var.set(fmt(s.get(key)))
+        cc = s.get("chip_candidates")
+        rc = s.get("resolution_candidates")
+        self._ek_seq_raw_var.set(
+            f"chip candidates: {cc}   resolution candidates: {rc}\n{s.get('raw_hex', '')}")
+        self._btn_ek_write.config(
+            state="normal" if self._ek_write_board is not None else "disabled")
+
+    # (field_key, StringVar, label, min, max) for validation + the
+    # confirmation dialog. Matches manual Table 2 / section D.a ranges.
+    def _ek_d_field_specs(self):
+        return [
+            ("duration_s", self._ek_seq_duration_var, "Duration (s)", 0, 60000),
+            ("delay_s", self._ek_seq_delay_var, "Delay (s)", 0, 60000),
+            ("sensor_mv", self._ek_seq_sensor_var, "Sensors-NZG2 (mV)", -800, 800),
+            ("ramp_up_ms", self._ek_heater_vars["ramp_up_ms"], "Ramp up time (ms)", 0, 60000),
+            ("high_duration_ms", self._ek_heater_vars["high_duration_ms"], "High state duration (ms)", 0, 60000),
+            ("ramp_down_ms", self._ek_heater_vars["ramp_down_ms"], "Ramp down time (ms)", 0, 60000),
+            ("low_duration_ms", self._ek_heater_vars["low_duration_ms"], "Low state duration (ms)", 0, 60000),
+            ("phase_shift_ms", self._ek_heater_vars["phase_shift_ms"], "Phase shift H1/H2 (ms)", 0, 60000),
+            ("heater1_low_mv", self._ek_heater_vars["heater1_low_mv"], "Heater 1 low state (mV)", 0, 2200),
+            ("heater2_low_mv", self._ek_heater_vars["heater2_low_mv"], "Heater 2 low state (mV)", 0, 2200),
+            ("heater1_high_mv", self._ek_heater_vars["heater1_high_mv"], "Heater 1 high state (mV)", 0, 2200),
+            ("heater2_high_mv", self._ek_heater_vars["heater2_high_mv"], "Heater 2 high state (mV)", 0, 2200),
+        ]
+
+    def _ek_write_sequence(self):
+        try:
+            idx = int(self._ek_seq_index_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Index", "Sequence index must be a number.")
+            return
+        s = self._ek_sequences_by_index.get(idx)
+        board = self._ek_write_board
+        if not s or board is None or board.state != "connected":
+            messagebox.showerror("Not Ready", "Read this sequence from a connected board first.")
+            return
+
+        fields, errors, changes = {}, [], []
+        for key, var, label, lo, hi in self._ek_d_field_specs():
+            raw = var.get().strip()
+            try:
+                val = int(raw)
+            except ValueError:
+                errors.append(f"{label}: '{raw}' is not a whole number")
+                continue
+            if not (lo <= val <= hi):
+                errors.append(f"{label}: {val} is outside the documented range [{lo}, {hi}]")
+                continue
+            fields[key] = val
+            old = s.get(key)
+            if old != val:
+                changes.append(f"  {label}: {old} -> {val}")
+
+        if errors:
+            messagebox.showerror("Out of Range", "Fix these before writing:\n\n" + "\n".join(errors))
+            return
+        if not changes:
+            messagebox.showinfo("Nothing Changed", "No D.a/D.b field differs from the last read - nothing to write.")
+            return
+
+        cc = s.get("chip_candidates")
+        rc = s.get("resolution_candidates")
+        proceed = messagebox.askyesno(
+            "Confirm Write to Real Hardware",
+            "This sends a real wreep write to the board's EEPROM. This is NOT simulated.\n\n"
+            f"Sequence (UI index {idx}) changes:\n" + "\n".join(changes) + "\n\n"
+            "Untouched (preserved exactly as last read): wire_index, sensor/heater padding "
+            f"bytes, Chip (candidates {cc}, offset ambiguous), Resolution (candidates {rc}, "
+            "offset ambiguous), and everything in the Cycle/Configuration sections.\n\n"
+            "If the checksum this app computes doesn't match what the board expects, the "
+            "board rejects the write outright (per the protocol doc) rather than corrupting "
+            "anything - but there is no undo if the write DOES succeed with a wrong value.\n\n"
+            "Proceed?",
+            icon="warning")
+        if not proceed:
+            return
+
+        self._btn_ek_write.config(state="disabled")
+        self._ek_status_var.set("Writing...")
+        threading.Thread(target=self._ek_write_thread, args=(board, s, fields, idx), daemon=True).start()
+
+    def _ek_write_thread(self, board: "nzb.NanoZBoard", s: dict, fields: dict, idx: int):
+        try:
+            original = bytes.fromhex(s["raw_hex"])
+            patched = nzb.encode_sequence_patch(original, fields)
+            addr = nzb.EEPROM_SEQUENCES_ADDR + s["blob_offset"]
+            board.write_eeprom(addr, bytes(patched))
+            # No ack on success per the protocol doc - only an error line on
+            # failure, which lands on the Console tab's log via the normal
+            # text-packet path. Give it a moment, then read back to verify.
+            time.sleep(1.0)
+            length = s.get("record_len", len(patched))
+            readback = self._ek_request_eeprom_sync(board, addr, length, timeout_s=3.0)
+            ok = readback is not None and bytes(readback) == bytes(patched)
+            self.after(0, lambda: self._ek_write_done(idx, ok, readback))
+        except Exception as e:
+            self.after(0, lambda e=e: self._ek_write_failed(str(e)))
+
+    def _ek_write_done(self, idx: int, ok: bool, readback):
+        self._btn_ek_write.config(state="normal")
+        if ok:
+            self._ek_status_var.set(f"Write OK — verified by readback (sequence UI index {idx}).")
+            self._log_main(f"NanoZ_EK: wrote sequence {idx}, readback matches.")
+        else:
+            self._ek_status_var.set("Write sent, but readback did NOT match — check Console tab log for an error line, then re-read.")
+            self._log_main(f"NanoZ_EK: wrote sequence {idx}, readback MISMATCH — "
+                           f"got {readback.hex() if readback else None}. Re-read to confirm current state.")
+
+    def _ek_write_failed(self, msg: str):
+        self._btn_ek_write.config(state="normal")
+        self._ek_status_var.set(f"Write failed: {msg}")
+        self._log_main(f"NanoZ_EK: write failed — {msg}")
 
     def _charts_tab_visible(self):
         if not _MPL:
@@ -1412,7 +1880,12 @@ class NanoZPanel(ttk.Frame):
             return False
 
     def _refresh_charts_loop(self):
-        if self._charts_tab_visible():
+        # Only auto-redraw while following live data. A manual pan/zoom (or
+        # an in-progress drag) sets _chart_follow_live False; redrawing then
+        # would clear+replot the axes out from under the user's drag every
+        # 300ms, visually snapping the view back mid-gesture. Once paused,
+        # nothing redraws until "Jump to Live" is pressed.
+        if self._charts_tab_visible() and self._chart_follow_live:
             self._redraw_charts()
         self.after(300, self._refresh_charts_loop)
 
@@ -1445,16 +1918,57 @@ class NanoZPanel(ttk.Frame):
             prev = x
         return out_x, out_y
 
-    def _plot_series(self, ax, xs: list, hist: list, field: str, label: str):
+    def _plot_series(self, ax, xs: list, hist: list, field: str, label: str, linestyle: str = "-"):
         ys = [r.get(field, 0) for r in hist]
         gx, gy = self._break_gaps(xs, ys)
-        ax.plot(gx, gy, label=label)
+        ax.plot(gx, gy, label=label, linestyle=linestyle)
+
+    def _plot_computed(self, ax, xs: list, hist: list, value_fn, label: str, linestyle: str = "-"):
+        ys = [value_fn(r) for r in hist]
+        ys = [float("nan") if y is None else y for y in ys]
+        gx, gy = self._break_gaps(xs, ys)
+        ax.plot(gx, gy, label=label, linestyle=linestyle)
+
+    # Graph settings (matches Nanoz_EK.exe's "Sensors"/"Heaters" dropdowns,
+    # manual section V.A): Sensors = Current or Resistance; Heaters =
+    # Voltage, Current, Power or Resistance. Resistance(Ohm) = V(mV)/I(mA)
+    # (units cancel: mV/mA = V/A = Ohm). Power(mW) = V(mV)*I(mA)/1000.
+    _SENSOR_METRIC_UNITS = {"Current": "mA", "Resistance": "Ω"}
+    _HEATER_METRIC_UNITS = {"Voltage": "mV", "Current": "mA", "Power": "mW", "Resistance": "Ω"}
+
+    def _sensor_metric_value(self, rec: dict, s: int):
+        metric = self._chart_sensor_metric_var.get()
+        if metric == "Resistance":
+            v, i = rec.get(f"dac_mv_s{s}"), rec.get(f"adc_current_ma_s{s}")
+            return v / i if (v is not None and i) else None
+        return rec.get(f"adc_current_ma_s{s}")
+
+    def _heater_metric_value(self, rec: dict, h: int):
+        metric = self._chart_heater_metric_var.get()
+        v, i = rec.get(f"heater{h}_voltage_mv"), rec.get(f"heater{h}_current_ma")
+        if metric == "Voltage":
+            return v
+        if metric == "Current":
+            return i
+        if metric == "Power":
+            return v * i / 1000 if (v is not None and i is not None) else None
+        if metric == "Resistance":
+            return v / i if (v is not None and i) else None
+        return None
 
     def _on_chart_xlim_changed(self, _ax):
         if self._chart_programmatic_xlim:
             return
         # A real user pan/zoom (toolbar) moved the view - stop auto-scrolling
         # so _redraw_charts doesn't yank it back to the live edge every cycle.
+        self._chart_follow_live = False
+
+    def _on_chart_button_press(self, _event):
+        # Fires on any mouse-down inside the chart canvas, including the
+        # start of a toolbar pan/zoom drag - pausing here (rather than
+        # waiting for xlim_changed) means the 300ms auto-redraw loop can't
+        # sneak in a redraw mid-drag and snap the view back to live before
+        # the drag itself has moved anything yet.
         self._chart_follow_live = False
 
     def _chart_resume_live(self):
@@ -1465,8 +1979,10 @@ class NanoZPanel(ttk.Frame):
         if not _MPL:
             return
         port = self.console_board_var.get()
-        chip = self.console_chip_var.get()
-        spl_hist = list(self._spl_history.get((port, chip), ()))
+        hist_by_chip = {
+            "0": list(self._spl_history.get((port, "0"), ())),
+            "1": list(self._spl_history.get((port, "1"), ())),
+        }
         env_hist = list(self._env_history.get(port, ()))
 
         prev_xlim = self._chart_ax_v.get_xlim()
@@ -1474,20 +1990,32 @@ class NanoZPanel(ttk.Frame):
         self._chart_ax_i.clear()
         self._chart_ax_t.clear()
 
-        candidates = [self._pkt_time(h[0]) for h in (spl_hist, env_hist) if h]
+        candidates = [self._pkt_time(h[0]) for h in (*hist_by_chip.values(), env_hist) if h]
         candidates = [t for t in candidates if t is not None]
         t0 = min(candidates) if candidates else dt.datetime.now()
         t_max = 0.0
+        visible = self._chart_visible_vars
 
-        if spl_hist:
-            xs = self._elapsed_seconds(spl_hist, t0)
+        any_spl = False
+        for chip, hist, linestyle in (("0", hist_by_chip["0"], "-"), ("1", hist_by_chip["1"], "--")):
+            if not hist:
+                continue
+            any_spl = True
+            xs = self._elapsed_seconds(hist, t0)
             t_max = max(t_max, max(xs, default=0.0))
-            self._plot_series(self._chart_ax_v, xs, spl_hist, "heater1_voltage_mv", "heater1")
-            self._plot_series(self._chart_ax_v, xs, spl_hist, "heater2_voltage_mv", "heater2")
-            self._chart_ax_v.legend(fontsize=7, loc="upper left")
+            for h in (1, 2):
+                if visible[f"h{h}"].get():
+                    self._plot_computed(self._chart_ax_v, xs, hist,
+                                        lambda r, h=h: self._heater_metric_value(r, h),
+                                        f"chip{chip}-h{h}", linestyle=linestyle)
             for s in (1, 2, 3, 4):
-                self._plot_series(self._chart_ax_i, xs, spl_hist, f"adc_current_ma_s{s}", f"s{s}")
-            self._chart_ax_i.legend(fontsize=7, loc="upper left", ncol=4)
+                if visible[f"s{s}"].get():
+                    self._plot_computed(self._chart_ax_i, xs, hist,
+                                        lambda r, s=s: self._sensor_metric_value(r, s),
+                                        f"chip{chip}-s{s}", linestyle=linestyle)
+        if any_spl:
+            self._chart_ax_v.legend(fontsize=6, loc="upper left", ncol=2)
+            self._chart_ax_i.legend(fontsize=6, loc="upper left", ncol=4)
         else:
             for ax in (self._chart_ax_v, self._chart_ax_i):
                 ax.text(0.5, 0.5, "no SPL data yet (needs an active run)",
@@ -1503,12 +2031,15 @@ class NanoZPanel(ttk.Frame):
             self._chart_ax_t.text(0.5, 0.5, "no ENV data yet", ha="center", va="center",
                                   transform=self._chart_ax_t.transAxes, color="#999999")
 
-        self._chart_ax_v.set_title("Heater Voltage (mV) — SPL", fontsize=9)
-        self._chart_ax_i.set_title("Sensor Current (mA) — SPL", fontsize=9)
+        h_metric = self._chart_heater_metric_var.get()
+        s_metric = self._chart_sensor_metric_var.get()
+        self._chart_ax_v.set_title(
+            f"Heater {h_metric} ({self._HEATER_METRIC_UNITS[h_metric]}) — SPL (both chips)", fontsize=9)
+        self._chart_ax_i.set_title(
+            f"Sensor {s_metric} ({self._SENSOR_METRIC_UNITS[s_metric]}) — SPL (both chips)", fontsize=9)
         self._chart_ax_t.set_title("Temperature (°C) — ENV", fontsize=9)
         live_note = "" if self._chart_follow_live else "  [PAUSED — ▶ Jump to Live to resume auto-scroll]"
-        self._chart_ax_t.set_xlabel(
-            f"time (s, board {port or '—'} chip {chip or '—'}){live_note}")
+        self._chart_ax_t.set_xlabel(f"time (s, board {port or '—'}){live_note}")
 
         self._chart_programmatic_xlim = True
         try:

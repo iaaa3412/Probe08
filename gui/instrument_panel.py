@@ -1243,11 +1243,6 @@ class MainLayout(ttk.Frame):
         ttk.Label(resp_row, textvariable=resp_var, foreground="#0055aa",
                   font=("Consolas", 9)).pack(side="left", padx=4)
 
-    def _wafer_map_source_choices(self) -> list:
-        # GDS-derived wafer maps are GDS Parser tab territory only now —
-        # not offered as a general map source elsewhere.
-        return [k for k in WAFER_MAP_SOURCES if k.lower() == self._system]
-
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="ATA Folder")
@@ -1279,14 +1274,8 @@ class MainLayout(ttk.Frame):
         self._default_ata_lbl.pack(side="left", padx=(0, 10))
         self._update_default_ata_label()
 
-        ttk.Label(ctrl, text="Map source:").pack(side="right", padx=(4, 2))
         self._map_source_var = tk.StringVar(
             value="Accretech" if self._system == "accretech" else "Electroglas")
-        map_source_cb = ttk.Combobox(ctrl, textvariable=self._map_source_var,
-                                     values=self._wafer_map_source_choices(), state="readonly",
-                                     width=10)
-        map_source_cb.pack(side="right")
-        map_source_cb.bind("<<ComboboxSelected>>", lambda _e: self._reload_wafer_map_source())
 
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
         split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
@@ -1420,13 +1409,6 @@ class MainLayout(ttk.Frame):
                       else f"⭐ default: {os.path.basename(default_folder)}"))
         else:
             self._default_ata_lbl.config(text="")
-
-    def _reload_wafer_map_source(self):
-        if not self._ata_folder:
-            return
-        filename = WAFER_MAP_SOURCES[self._map_source_var.get()]
-        n = self.wafer_map.load_from_ata(self._ata_folder, filename=filename)
-        self.controller.log(f"[WAFER MAP] Loaded {n} dies from {filename}")
 
     def _build_alignment_panel(self):
         tab = ttk.Frame(self)
@@ -2086,8 +2068,6 @@ class MainLayout(ttk.Frame):
                    row=7, column=0, sticky="ew", padx=(0, 1), pady=(4, 0))
         ttk.Button(pos_lf, text="Reset Counts", command=self._exec2_reset_counts).grid(
                    row=7, column=1, sticky="ew", padx=(1, 0), pady=(4, 0))
-        ttk.Button(pos_lf, text="Randomize 5", command=self._exec2_randomize_sites).grid(
-                   row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         steps_lf = ttk.LabelFrame(left_col, text="Recipe Steps", padding=(6, 4))
         steps_lf.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
@@ -2123,12 +2103,6 @@ class MainLayout(ttk.Frame):
         self._exec2_map_folder = None
         self._exec2_map_source_var = tk.StringVar(
             value="Accretech" if self._system == "accretech" else "Electroglas")
-        exec2_source_cb = ttk.Combobox(map_bar, textvariable=self._exec2_map_source_var,
-                                       values=self._wafer_map_source_choices(), state="readonly",
-                                       width=10)
-        exec2_source_cb.pack(side="left", padx=(8, 0))
-        exec2_source_cb.bind("<<ComboboxSelected>>",
-                             lambda _e: self._exec2_reload_wafer_map_source())
         self._exec2_map_path_var = tk.StringVar(value="No wafer map loaded")
         ttk.Label(map_bar, textvariable=self._exec2_map_path_var,
                   foreground="#6b7280", font=("Segoe UI", 8)).pack(
@@ -2190,10 +2164,6 @@ class MainLayout(ttk.Frame):
     def _exec2_log(self, msg: str):
         ts = time.strftime("%H:%M:%S")
         self.controller.log(f"{ts}  {msg}")
-
-    def _exec2_reload_wafer_map_source(self):
-        if self._exec2_map_folder:
-            self._exec2_draw_wafer_map()
 
     def _exec2_draw_wafer_map(self, quiet_if_missing: bool = False):
         folder = self._exec2_map_folder
