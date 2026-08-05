@@ -576,16 +576,25 @@ BOARDS_MEMORY_FILENAME = "ata_nanoz_boards.json"
 
 
 def save_known_boards(folder, identities: list) -> None:
+    """Persist known boards keyed by serial number, NOT COM port - a board's
+    port is assigned by Windows on connect and can (and does) change across
+    replugs/reboots, so it's not a stable identity and isn't saved. Dedupes
+    by serial_number defensively (last one wins) so a transient in-memory
+    duplicate never gets written twice."""
+    by_sn: dict[str, dict] = {}
+    for i in identities:
+        by_sn[i.serial_number or f"(no S/N) {i.port}"] = {
+            "serial_number": i.serial_number, "firmware": i.firmware,
+            "signature": i.signature, "usb_id": i.usb_id, "slot0": i.slot0, "slot1": i.slot1,
+        }
     path = Path(folder) / BOARDS_MEMORY_FILENAME
-    rows = [
-        {"port": i.port, "serial_number": i.serial_number, "firmware": i.firmware,
-         "signature": i.signature, "usb_id": i.usb_id, "slot0": i.slot0, "slot1": i.slot1}
-        for i in identities
-    ]
-    path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(list(by_sn.values()), indent=2), encoding="utf-8")
 
 
 def load_known_boards(folder) -> list[BoardIdentity]:
+    """Returns each known board with port="" - its real port (if any) is
+    only learned by actually discovering it live on some COM port this
+    session; see save_known_boards for why port isn't persisted."""
     path = Path(folder) / BOARDS_MEMORY_FILENAME
     if not path.is_file():
         return []
@@ -595,7 +604,7 @@ def load_known_boards(folder) -> list[BoardIdentity]:
         return []
     return [
         BoardIdentity(
-            port=row.get("port", ""), serial_number=row.get("serial_number", ""),
+            port="", serial_number=row.get("serial_number", ""),
             firmware=row.get("firmware", ""), signature=row.get("signature", ""),
             raw_ver="", raw_whoami="", usb_id=row.get("usb_id", ""),
             # Legacy single-slot files (pre-two-chip-per-board) had "slot" -> migrate to slot0.

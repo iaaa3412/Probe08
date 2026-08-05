@@ -280,7 +280,8 @@ class NanoZPanel(ttk.Frame):
         board = self._boards.get(port)
         ident = board.identity if board else None
         sn = ident.serial_number if ident and ident.serial_number else ""
-        label = f"SN {sn} ({port})" if sn else port
+        real_port = (ident.port if ident else "") or "not yet connected"
+        label = f"SN {sn} ({real_port})" if sn else port
         if ident and (ident.slot0 or ident.slot1):
             s0 = ident.slot0 if ident.slot0 else "—"
             s1 = ident.slot1 if ident.slot1 else "—"
@@ -1230,25 +1231,36 @@ class NanoZPanel(ttk.Frame):
         self._chart_sensor_metric_var = tk.StringVar(value="Current")
         ttk.Combobox(pick, textvariable=self._chart_sensor_metric_var, state="readonly", width=10,
                     values=("Current", "Resistance")).pack(side="left", padx=(4, 12))
-        self._chart_sensor_metric_var.trace_add("write", lambda *_: self._redraw_charts())
+        self._chart_sensor_metric_var.trace_add(
+            "write", lambda *_: self._redraw_charts(preserve_view=True))
         ttk.Label(pick, text="Heaters:").pack(side="left")
         self._chart_heater_metric_var = tk.StringVar(value="Voltage")
         ttk.Combobox(pick, textvariable=self._chart_heater_metric_var, state="readonly", width=10,
                     values=("Voltage", "Current", "Power", "Resistance")).pack(side="left", padx=(4, 12))
-        self._chart_heater_metric_var.trace_add("write", lambda *_: self._redraw_charts())
+        self._chart_heater_metric_var.trace_add(
+            "write", lambda *_: self._redraw_charts(preserve_view=True))
         self._chart_live_btn = ttk.Button(pick, text="▶ Jump to Live",
                                           command=self._chart_resume_live)
         self._chart_live_btn.pack(side="left", padx=(12, 0))
 
         channels_row = ttk.Frame(tab)
         channels_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
-        ttk.Label(channels_row, text="Show channels (both chips: chip0=solid, chip1=dashed):").pack(side="left")
+        ttk.Label(channels_row, text="Show chips:").pack(side="left")
+        self._chart_chip_visible_vars = {}
+        for chip, text in (("0", "Chip 0 (solid)"), ("1", "Chip 1 (dashed)")):
+            var = tk.BooleanVar(value=True)
+            self._chart_chip_visible_vars[chip] = var
+            ttk.Checkbutton(channels_row, text=text, variable=var,
+                            command=lambda: self._redraw_charts(preserve_view=True)).pack(
+                            side="left", padx=(6, 0))
+        ttk.Label(channels_row, text="   Show channels:").pack(side="left")
         self._chart_visible_vars = {}
         for key in ("s1", "s2", "s3", "s4", "h1", "h2"):
             var = tk.BooleanVar(value=True)
             self._chart_visible_vars[key] = var
             ttk.Checkbutton(channels_row, text=key.upper(), variable=var,
-                            command=self._redraw_charts).pack(side="left", padx=(6, 0))
+                            command=lambda: self._redraw_charts(preserve_view=True)).pack(
+                            side="left", padx=(6, 0))
 
         if _MPL:
             self._chart_fig = Figure(figsize=(8, 7), dpi=100)
@@ -1975,7 +1987,13 @@ class NanoZPanel(ttk.Frame):
         self._chart_follow_live = True
         self._redraw_charts()
 
-    def _redraw_charts(self):
+    def _redraw_charts(self, preserve_view: bool = False):
+        # preserve_view=True is for redraws triggered by a settings toggle
+        # (channel/chip checkbox, metric dropdown) rather than by the live
+        # data loop or the Jump to Live button - those should only ever
+        # change which series are drawn, never yank the visible time
+        # window back to the live edge, even while still in live-follow
+        # mode (otherwise every checkbox click felt like an unwanted jump).
         if not _MPL:
             return
         port = self.console_board_var.get()
@@ -1995,10 +2013,11 @@ class NanoZPanel(ttk.Frame):
         t0 = min(candidates) if candidates else dt.datetime.now()
         t_max = 0.0
         visible = self._chart_visible_vars
+        chip_visible = self._chart_chip_visible_vars
 
         any_spl = False
         for chip, hist, linestyle in (("0", hist_by_chip["0"], "-"), ("1", hist_by_chip["1"], "--")):
-            if not hist:
+            if not hist or not chip_visible[chip].get():
                 continue
             any_spl = True
             xs = self._elapsed_seconds(hist, t0)
@@ -2043,7 +2062,7 @@ class NanoZPanel(ttk.Frame):
 
         self._chart_programmatic_xlim = True
         try:
-            if self._chart_follow_live:
+            if self._chart_follow_live and not preserve_view:
                 self._chart_ax_v.set_xlim(max(0.0, t_max - self._CHART_WINDOW_S), max(t_max, self._CHART_WINDOW_S))
             else:
                 self._chart_ax_v.set_xlim(prev_xlim)
@@ -2093,24 +2112,76 @@ class NanoZPanel(ttk.Frame):
         found = nzb.discover_boards(log=lambda m: self.after(0, lambda m=m: self._log(m)))
         self.after(0, lambda: self._on_discovered(found))
 
+    @staticmethod
+    def _synthetic_board_key(serial_number: str) -> str:
+        # Used for a "known" board that isn't currently reachable on any
+        # live COM port (e.g. remembered from a previous session, not yet
+        # plugged in this run) - self._boards still needs some dict key,
+        # but it can't be a real port since there isn't one yet.
+        return f"SN:{serial_number}"
+
     def _add_board(self, ident: "nzb.BoardIdentity"):
-        if ident.port in self._boards:
+        # Match by serial number first, not port - Windows can (and does)
+        # reassign a board to a different COM port across replugs/reboots,
+        # so keying purely on port equality created a second, duplicate
+        # entry (and a duplicate row in ata_nanoz_boards.json) for the same
+        # physical board every time it came back on a different port.
+        existing_key = None
+        if ident.serial_number:
+            for key, b in self._boards.items():
+                if b.identity.serial_number == ident.serial_number:
+                    existing_key = key
+                    break
+        new_key = ident.port or self._synthetic_board_key(ident.serial_number)
+
+        if existing_key is not None:
+            if existing_key == new_key:
+                return None
+            # Same physical board (by S/N), now reachable at a different
+            # key (a real port replacing a placeholder, or a genuine port
+            # change) - migrate the existing NanoZBoard object instead of
+            # creating a duplicate. Slot assignments are kept from
+            # whichever side already had them.
+            board = self._boards.pop(existing_key)
+            old_iid = self._board_rows.pop(existing_key, None)
+            old_identity = board.identity
+            board.identity = nzb.BoardIdentity(
+                port=ident.port, serial_number=ident.serial_number,
+                firmware=ident.firmware, signature=ident.signature,
+                raw_ver=ident.raw_ver, raw_whoami=ident.raw_whoami, usb_id=ident.usb_id,
+                slot0=old_identity.slot0 if old_identity.slot0 is not None else ident.slot0,
+                slot1=old_identity.slot1 if old_identity.slot1 is not None else ident.slot1,
+            )
+            board.port = ident.port
+            self._boards[new_key] = board
+            if old_iid is not None:
+                self._board_tree.item(old_iid, values=(
+                    board.identity.port or "—", board.identity.serial_number,
+                    board.identity.firmware, board.identity.signature,
+                    board.identity.slot0 if board.identity.slot0 else "—",
+                    board.identity.slot1 if board.identity.slot1 else "—",
+                    self._board_status_text(board), 0, 0))
+                self._board_rows[new_key] = old_iid
+            return board
+
+        if new_key in self._boards:
             return None
         try:
             env_interval_s = float(self.env_interval_var.get())
         except ValueError:
             env_interval_s = 1.0
-        board = nzb.NanoZBoard(
-            ident, self._queue,
-            die_provider=lambda chip, p=ident.port: self._die_provider(p, chip),
-            env_interval_s=env_interval_s)
-        self._boards[ident.port] = board
+        board = nzb.NanoZBoard(ident, self._queue, env_interval_s=env_interval_s)
+        # die_provider reads board.port live (not a value captured at
+        # creation time) so it keeps working correctly if this same board
+        # object is later migrated to a different real port above.
+        board._die_provider = lambda chip: self._die_provider(board.port, chip)
+        self._boards[new_key] = board
         iid = self._board_tree.insert("", "end", values=(
-            ident.port, ident.serial_number, ident.firmware, ident.signature,
+            ident.port or "—", ident.serial_number, ident.firmware, ident.signature,
             ident.slot0 if ident.slot0 else "—",
             ident.slot1 if ident.slot1 else "—",
             self._board_status_text(board), 0, 0))
-        self._board_rows[ident.port] = iid
+        self._board_rows[new_key] = iid
         return board
 
     def _persist_boards(self):
@@ -2204,14 +2275,19 @@ class NanoZPanel(ttk.Frame):
             return
         chip = "0" if cols[col_idx] == "slot0" else "1"
         vals_idx = 4 if chip == "0" else 5
-        port = self._board_tree.item(row_iid, "values")[0]
-        board = self._boards.get(port)
+        # Look up by the internal dict key (via the iid), not the displayed
+        # port text - a not-yet-discovered known board shows "—" in the
+        # port column (its real port isn't known yet), which wouldn't
+        # match any real self._boards key.
+        key = next((k for k, v in self._board_rows.items() if v == row_iid), None)
+        board = self._boards.get(key) if key is not None else None
         if not board:
             return
+        label = board.identity.port or f"SN {board.identity.serial_number}"
         current = board.identity.slot0 if chip == "0" else board.identity.slot1
         new_slot = simpledialog.askinteger(
             "Assign Probe-Card Slot",
-            f"Physical slot for {port}'s chip {chip} (1-20, top to bottom of the probe head):",
+            f"Physical slot for {label}'s chip {chip} (1-20, top to bottom of the probe head):",
             initialvalue=current or 1, minvalue=1, maxvalue=99, parent=self)
         if new_slot is None:
             return
@@ -2225,7 +2301,7 @@ class NanoZPanel(ttk.Frame):
         self._persist_boards()
         self._rebuild_recipe_columns()
         self._refresh_console_boards()
-        self._log_main(f"{port} chip {chip} assigned to probe-card slot {new_slot}.")
+        self._log_main(f"{label} chip {chip} assigned to probe-card slot {new_slot}.")
 
     @staticmethod
     def _error_status_text(err) -> str:
