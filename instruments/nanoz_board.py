@@ -277,6 +277,117 @@ def parse_env_data(data: bytes) -> dict:
     }
 
 
+# EEPROM "Configuration" layout — reverse-engineered live against a real
+# EK-IV board and Nanoz_EK.exe (2026-08-04), NOT from any vendor
+# documentation (neither reference PDF documents this). Nanoz_EK.exe embeds
+# named constants (EEPROM_PARAMS_ADDR, EEPROM_CYCLES_PAGE, etc.) via its own
+# Free Pascal RTTI/debug info, but those ADDR constants turned out to be
+# red herrings — the real byte address of a section is PAGE * PAGE_SIZE, not
+# the ADDR constant itself. Confirmed by diffing a real Sequence Duration
+# edit (5s -> 2s) against a live rdeep and finding it land exactly at the
+# predicted offset. Cycle-record layout confirmed against 2 real cycles
+# (32 bytes apart, matching CYCLE_RECORD_SIZE). Sequence-record layout is
+# only confirmed for Duration (offset +2) and Chip (offset +54) - only ONE
+# real sequence has ever been observed, so the exact stride between
+# consecutive sequence records, and the sub-order of the heater ramp
+# fields, are NOT yet confirmed. Read-only so far - no wreep support, since
+# writing to an unconfirmed offset could corrupt the board's stored config
+# with no way to detect or undo it (see gui/nanoz_panel.py's NanoZ_EK tab).
+EEPROM_PAGE_SIZE = 32
+EEPROM_PARAMS_ADDR = 0
+EEPROM_CYCLES_PAGE = 16
+EEPROM_CYCLES_ADDR = EEPROM_CYCLES_PAGE * EEPROM_PAGE_SIZE       # 512
+EEPROM_SEQUENCES_PAGE = 64
+EEPROM_SEQUENCES_ADDR = EEPROM_SEQUENCES_PAGE * EEPROM_PAGE_SIZE  # 2048
+EEPROM_CYCLE_RECORD_SIZE = 32
+MAX_CYCLES_NB = 48
+MAX_SEQUENCE_NB = 96
+
+
+def parse_params_block(data: bytes) -> dict:
+    """Decode the EEPROM_PARAMS_ADDR (0) region: device signature, cycle
+    count, periodicity, the board's own CAL-1/CAL-2 calibration offsets
+    (same values `calib ?` reports), and the two installed chips'
+    identity/age records. Confirmed field-for-field against Nanoz_EK.exe's
+    own display (Signature, CAL-1/CAL-2, and the "ID:"/"Age:" fields, whose
+    "D{W}L{X}-{Y}-{Z}" format matches this decode's w/x/y/z exactly)."""
+    if len(data) < 152:
+        raise NanoZError(f"PARAMS block too short: {len(data)} bytes (need >= 152)")
+    signature = struct.unpack_from("<H", data, 0)[0]
+    cycles_configured = struct.unpack_from("<H", data, 4)[0]
+    periodicity_ms = data[14]
+    cal1, cal2 = struct.unpack_from("<ff", data, 20)
+
+    def chip_record(off):
+        w, x, y, z, age_s = struct.unpack_from("<5I", data, off)
+        return {"w": w, "x": x, "y": y, "z": z, "age_s": age_s,
+               "id": f"D{w}L{x}-{y}-{z}"}
+
+    return {
+        "signature": f"0x{signature:04X}",
+        "cycles_configured": cycles_configured,
+        "periodicity_ms": periodicity_ms,
+        "cal1": cal1,
+        "cal2": cal2,
+        "chip1": chip_record(112),
+        "chip2": chip_record(132),
+    }
+
+
+def parse_cycle_record(data: bytes) -> "dict | None":
+    """Decode one EEPROM_CYCLE_RECORD_SIZE-byte (32) cycle record. Returns
+    None if it's erased/unused (all 0xFF). wire_index is 0-based - Nanoz_EK's
+    UI "Cycle 1"/"Cycle 2" are wire index 0/1 (same off-by-one as `run <nn>`,
+    confirmed against the manual's error text for an out-of-range index)."""
+    if len(data) < EEPROM_CYCLE_RECORD_SIZE:
+        raise NanoZError(f"Cycle record too short: {len(data)} bytes")
+    if all(b == 0xFF for b in data[:EEPROM_CYCLE_RECORD_SIZE]):
+        return None
+    wire_index, num_sequences = struct.unpack_from("<HH", data, 0)
+    seq_refs = []
+    off = 4
+    for _ in range(min(num_sequences, (EEPROM_CYCLE_RECORD_SIZE - 4) // 4)):
+        seq_refs.append(struct.unpack_from("<I", data, off)[0])
+        off += 4
+    return {"wire_index": wire_index, "num_sequences": num_sequences,
+           "sequence_refs": seq_refs}
+
+
+def parse_sequence_records(data: bytes) -> list:
+    """Best-effort scan of the EEPROM_SEQUENCES_ADDR region for sequence
+    records, each terminated by a 0xFFFF marker. Only Duration (int16 at
+    record offset +2) and Chip (int16 at +54) are confirmed; every other
+    field in a record is returned as raw bytes (hex) rather than guessed,
+    since the exact sub-order of the heater ramp fields and the true record
+    stride are not yet confirmed against real hardware (only 1 real
+    sequence has ever been observed)."""
+    records = []
+    start = 0
+    n = len(data)
+    while start < n:
+        if data[start] == 0xFF and (start + 1 >= n or data[start + 1] == 0xFF):
+            break  # ran into erased/unused space - no more records
+        term = data.find(b"\xff\xff", start)
+        if term == -1:
+            end = n
+        else:
+            end = term + 2
+        record = data[start:end]
+        if len(record) >= 4:
+            wire_index = struct.unpack_from("<H", record, 0)[0]
+            duration_s = struct.unpack_from("<h", record, 2)[0]
+            chip = (struct.unpack_from("<h", record, 54)[0]
+                   if len(record) >= 56 else None)
+            records.append({
+                "wire_index": wire_index,
+                "duration_s": duration_s,
+                "chip": chip,
+                "raw_hex": record.hex(),
+            })
+        start = end
+    return records
+
+
 def append_csv_row(path, row: dict) -> None:
     path = Path(path)
     exists = path.exists() and path.stat().st_size > 0

@@ -120,6 +120,7 @@ class NanoZPanel(ttk.Frame):
         self._build_console_tab(sub_nb)
         self._build_charts_tab(sub_nb)
         self._build_results_tab(sub_nb)
+        self._build_nanoz_ek_tab(sub_nb)
 
         log_frame = ttk.LabelFrame(outer, text="NanoZ Log")
         outer.add(log_frame, weight=1)
@@ -1214,6 +1215,194 @@ class NanoZPanel(ttk.Frame):
                     len(windowed), updated,
                 ))
 
+    def _build_nanoz_ek_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="NanoZ_EK")
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(2, weight=1)
+
+        ttk.Label(tab,
+                  text="Read-only replica of Nanoz_EK.exe's Configuration page, decoded "
+                       "directly from the board's EEPROM. Duration and Chip are confirmed "
+                       "field-accurate against real hardware; everything else labeled "
+                       "\"unconfirmed\" is a best-effort guess shown as raw bytes rather "
+                       "than a possibly-wrong decoded value. No write support - see the "
+                       "project notes on why.",
+                  foreground="#6b7280", wraplength=900, justify="left").grid(
+                  row=0, column=0, sticky="w", padx=8, pady=(8, 4))
+
+        pick = ttk.Frame(tab)
+        pick.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        ttk.Label(pick, text="Board:").pack(side="left")
+        self._ek_board_var = tk.StringVar(value="")
+        self._ek_board_label_var = tk.StringVar(value="")
+        self._ek_board_cb = ttk.Combobox(
+            pick, textvariable=self._ek_board_label_var, state="readonly", width=26)
+        self._ek_board_cb.pack(side="left", padx=(4, 12))
+        self._ek_board_cb.bind("<<ComboboxSelected>>", self._on_ek_board_picked)
+        self._btn_ek_read = ttk.Button(pick, text="🔄 Read Configuration",
+                                       command=self._ek_read_configuration)
+        self._btn_ek_read.pack(side="left")
+        self._ek_status_var = tk.StringVar(value="")
+        ttk.Label(pick, textvariable=self._ek_status_var, foreground="#6b7280").pack(
+                  side="left", padx=(10, 0))
+
+        split = ttk.PanedWindow(tab, orient="vertical")
+        split.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        top_lf = ttk.LabelFrame(split, text="Configuration / Chips")
+        split.add(top_lf, weight=1)
+        self._ek_config_var = tk.StringVar(value="(no data read yet)")
+        ttk.Label(top_lf, textvariable=self._ek_config_var, font=("Consolas", 9),
+                 justify="left").pack(anchor="w", padx=8, pady=6)
+
+        cyc_lf = ttk.LabelFrame(split, text="Cycles")
+        split.add(cyc_lf, weight=2)
+        cyc_cols = ("cycle_ui", "cycle_wire", "num_seq", "seq_refs")
+        self._ek_cycles_tree = ttk.Treeview(cyc_lf, columns=cyc_cols, show="headings", height=6)
+        for cid, text, width in (("cycle_ui", "Cycle (UI)", 80), ("cycle_wire", "Cycle (wire, 0-based)", 130),
+                                 ("num_seq", "# Sequences", 90), ("seq_refs", "Sequence refs (wire)", 300)):
+            self._ek_cycles_tree.heading(cid, text=text)
+            self._ek_cycles_tree.column(cid, width=width, anchor="center" if cid != "seq_refs" else "w")
+        self._ek_cycles_tree.pack(fill="both", expand=True, padx=6, pady=6)
+
+        seq_lf = ttk.LabelFrame(split, text="Sequences  (Duration/Chip confirmed; rest = raw bytes)")
+        split.add(seq_lf, weight=2)
+        seq_cols = ("seq_ui", "seq_wire", "duration", "chip", "raw")
+        self._ek_sequences_tree = ttk.Treeview(seq_lf, columns=seq_cols, show="headings", height=6)
+        for cid, text, width in (("seq_ui", "Sequence (UI)", 90), ("seq_wire", "Sequence (wire)", 100),
+                                 ("duration", "Duration (s)", 90), ("chip", "Chip", 60),
+                                 ("raw", "Raw record (hex)", 500)):
+            self._ek_sequences_tree.heading(cid, text=text)
+            self._ek_sequences_tree.column(cid, width=width, anchor="center" if cid != "raw" else "w")
+        self._ek_sequences_tree.pack(fill="both", expand=True, padx=6, pady=6)
+
+    def _ek_refresh_board_list(self):
+        ports = sorted(self._boards.keys())
+        labels = [self._board_label(p) for p in ports]
+        self._ek_board_label_to_port = dict(zip(labels, ports))
+        self._ek_board_cb.config(values=labels)
+        if self._ek_board_var.get() not in ports and ports:
+            self._ek_board_var.set(ports[0])
+        current = self._ek_board_var.get()
+        if current in self._boards:
+            self._ek_board_label_var.set(self._board_label(current))
+
+    def _on_ek_board_picked(self, _event=None):
+        port = getattr(self, "_ek_board_label_to_port", {}).get(self._ek_board_label_var.get())
+        if port:
+            self._ek_board_var.set(port)
+
+    def _ek_read_configuration(self):
+        self._ek_refresh_board_list()
+        port = self._ek_board_var.get()
+        board = self._boards.get(port)
+        if not board or board.state != "connected":
+            messagebox.showerror("No Board Connected",
+                                 "Pick a connected board first (Setup tab -> Connect All).")
+            return
+        self._btn_ek_read.config(state="disabled")
+        self._ek_status_var.set("Reading...")
+        threading.Thread(target=self._ek_read_thread, args=(board,), daemon=True).start()
+
+    def _ek_request_eeprom_sync(self, board: "nzb.NanoZBoard", addr: int, length: int,
+                                timeout_s: float = 3.0) -> "bytes | None":
+        """Send one rdeep and block (in this worker thread) until the async
+        reader thread delivers the matching #eep! response into
+        self._latest_eep, polling since the response arrives via the same
+        queue/_handle_packet path as every other packet - no separate,
+        conflicting serial connection is opened. Clears any stale prior
+        response for this port first, so a leftover response from an
+        earlier addr/len that happens to match can't be mistaken for the
+        new one."""
+        self._latest_eep.pop(board.port, None)
+        board.request_eeprom(addr, length)
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            item = self._latest_eep.get(board.port)
+            if item and item.get("addr") == addr and item.get("len") == length:
+                return bytes.fromhex(item.get("data_hex", ""))
+            time.sleep(0.05)
+        return None
+
+    def _ek_read_thread(self, board: "nzb.NanoZBoard"):
+        try:
+            params_bytes = bytearray()
+            for addr in (0, 64, 128):
+                chunk = self._ek_request_eeprom_sync(board, addr, 64)
+                if chunk is None:
+                    self.after(0, lambda a=addr: self._ek_read_failed(f"PARAMS @ {a}"))
+                    return
+                params_bytes += chunk
+                time.sleep(0.05)
+            params = nzb.parse_params_block(bytes(params_bytes))
+
+            cycles_nb = max(1, min(params["cycles_configured"], nzb.MAX_CYCLES_NB))
+            cycles = []
+            for i in range(cycles_nb):
+                addr = nzb.EEPROM_CYCLES_ADDR + i * nzb.EEPROM_CYCLE_RECORD_SIZE
+                chunk = self._ek_request_eeprom_sync(board, addr, nzb.EEPROM_CYCLE_RECORD_SIZE)
+                if chunk is None:
+                    self.after(0, lambda a=addr: self._ek_read_failed(f"CYCLES @ {a}"))
+                    return
+                rec = nzb.parse_cycle_record(chunk)
+                if rec:
+                    cycles.append(rec)
+                time.sleep(0.05)
+
+            seq_bytes = bytearray()
+            for i in range(4):
+                addr = nzb.EEPROM_SEQUENCES_ADDR + i * 64
+                chunk = self._ek_request_eeprom_sync(board, addr, 64)
+                if chunk is None:
+                    self.after(0, lambda a=addr: self._ek_read_failed(f"SEQUENCES @ {a}"))
+                    return
+                seq_bytes += chunk
+                time.sleep(0.05)
+            sequences = nzb.parse_sequence_records(bytes(seq_bytes))
+
+            self.after(0, lambda: self._ek_display_results(params, cycles, sequences))
+        except Exception as e:
+            self.after(0, lambda e=e: self._ek_read_failed(str(e)))
+
+    def _ek_read_failed(self, where: str):
+        self._btn_ek_read.config(state="normal")
+        self._ek_status_var.set(f"Read failed/timed out at {where}.")
+        self._log_main(f"NanoZ_EK: EEPROM read failed at {where}.")
+
+    def _ek_display_results(self, params: dict, cycles: list, sequences: list):
+        self._btn_ek_read.config(state="normal")
+        self._ek_status_var.set(f"Read OK — {len(cycles)} cycle(s), {len(sequences)} sequence(s).")
+
+        def age_str(seconds):
+            h, rem = divmod(int(seconds), 3600)
+            m, s = divmod(rem, 60)
+            return f"{h:02d}:{m:02d}:{s:02d}"
+
+        c1, c2 = params["chip1"], params["chip2"]
+        self._ek_config_var.set(
+            f"Signature: {params['signature']}\n"
+            f"Cycles configured: {params['cycles_configured']}\n"
+            f"Periodicity: {params['periodicity_ms']} ms\n"
+            f"CAL-1: {params['cal1']:.6f}   CAL-2: {params['cal2']:.6f}\n"
+            f"Chip 1: ID={c1['id']}  Age={age_str(c1['age_s'])}\n"
+            f"Chip 2: ID={c2['id']}  Age={age_str(c2['age_s'])}"
+        )
+
+        for iid in self._ek_cycles_tree.get_children():
+            self._ek_cycles_tree.delete(iid)
+        for c in cycles:
+            self._ek_cycles_tree.insert("", "end", values=(
+                c["wire_index"] + 1, c["wire_index"], c["num_sequences"],
+                ", ".join(str(r) for r in c["sequence_refs"]) or "—"))
+
+        for iid in self._ek_sequences_tree.get_children():
+            self._ek_sequences_tree.delete(iid)
+        for s in sequences:
+            self._ek_sequences_tree.insert("", "end", values=(
+                s["wire_index"] + 1, s["wire_index"], s["duration_s"],
+                s["chip"] if s["chip"] is not None else "—", s["raw_hex"]))
+
     def _charts_tab_visible(self):
         if not _MPL:
             return False
@@ -1623,6 +1812,8 @@ class NanoZPanel(ttk.Frame):
         if current in self._boards:
             self._console_board_label_var.set(self._board_label(current))
         self._refresh_console_reading()
+        if hasattr(self, "_ek_board_cb"):
+            self._ek_refresh_board_list()
 
     def _on_console_board_picked(self, _event=None):
         port = self._board_label_to_port.get(self._console_board_label_var.get())
