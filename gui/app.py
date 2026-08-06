@@ -4,6 +4,7 @@ from tkinter import filedialog, simpledialog, messagebox
 import os
 import csv
 import sys
+import datetime as dt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from instrument_panel import MainLayout
 from probe_routing_panel import scrollable_routing
@@ -719,7 +720,9 @@ class AtomicaDashboard(tk.Tk):
             return
         ext = "csv" if fmt_type == "csv" else "sql"
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + [
-            fmt["table"].lower() or "export"]
+            fmt["table"] or "export"]
+        if fmt.get("append_date"):
+            name_parts.append(dt.date.today().strftime("%Y%m%d"))
         filepath = os.path.join(export_dir, "_".join(name_parts) + f".{ext}")
 
         try:

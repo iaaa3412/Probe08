@@ -14,7 +14,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
 from instruments.accretech_uf200r import AccretechUF200R
-from pma_wafer_panel import parse_plain_csv_wafer_map, merge_with_accretech, centroid_offset
+from pma_wafer_panel import pma_shots_to_grid, merge_with_accretech, centroid_offset
 import instruments.nanoz_board as nzb
 
 try:
@@ -61,6 +61,8 @@ class NanoZPanel(ttk.Frame):
         self._lot_thread: threading.Thread | None = None
         self._current_rc = (None, None)
         self._current_touchdown = None  # (start_row, die_col) during a Recipe run only
+        self._position_window_items: list = []  # canvas rect ids for the 1x20 position window
+        self._position_window_dies: list = []  # [{"row","col","present","die_id"}, ...] current window
         self._touchdown_errors = 0
         self._touchdown_packets = 0
         self._spl_total = 0
@@ -88,10 +90,10 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_label_artists: list = []
         self._nzmap_view_debounce_id = None
         self._nzmap_current_labels: list = []
-        self._nzmap_csv_data: dict | None = None
-        self._nzmap_overlay_die_ids: dict[tuple[int, int], str] = {}
-        self._nzmap_overlay_row_offset = 0
-        self._nzmap_overlay_col_offset = 0
+        self._overlay_die_ids: dict[tuple[int, int], str] = {}
+        self._overlay_items: list = []
+        self._overlay_row_offset = 0
+        self._overlay_col_offset = 0
 
         self._build_ui()
         self.after(50, self._check_queue)
@@ -199,6 +201,7 @@ class NanoZPanel(ttk.Frame):
     def _build_recipe_tab(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Recipe")
+        self._recipe_tab = tab
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(3, weight=1)
 
@@ -250,9 +253,6 @@ class NanoZPanel(ttk.Frame):
                                                   command=lambda: self._set_selected_boards(False))
         self._btn_recipe_disable_all.pack(side="left", padx=4)
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        self._btn_recipe_import_plan = ttk.Button(bar, text="📥 Import Wafer Plan (.xlsx)…",
-                                                   command=self._import_wafer_plan)
-        self._btn_recipe_import_plan.pack(side="left", padx=4)
         self._recipe_boards_lbl = ttk.Label(bar, text="", foreground="#6b7280")
         self._recipe_boards_lbl.pack(side="left", padx=(12, 0))
 
@@ -389,15 +389,22 @@ class NanoZPanel(ttk.Frame):
         self._autoload_wafer_plan_for_recipe(folder, name)
 
     def _autoload_wafer_plan_for_recipe(self, folder: str, name: str):
-        """Reload the .xlsx wafer plan a recipe was generated from, if one was
-        recorded and the file is still there — keeps the Wafer Map tab in sync
-        with whichever recipe is active instead of requiring a manual re-import."""
+        """Legacy path: reload the .xlsx wafer plan an older, recipe-saved
+        wafer_plan_path points to, if one was recorded (from back when
+        Import Wafer Plan lived on the Recipe tab and always saved a recipe).
+        New imports remember their plan independent of any recipe - see
+        _autoload_wafer_plan / nzb.save_wafer_plan_path - this only still
+        matters for recipes saved before that change."""
         path = nzb.get_recipe_wafer_plan_path(folder, name)
+        if path:
+            self._autoload_wafer_plan(path, note=f"Recipe '{name}' remembers wafer plan ")
+
+    def _autoload_wafer_plan(self, path: str, note: str = "Remembered wafer plan "):
         if not path:
             return
         if not os.path.isfile(path):
-            self._log_main(f"Recipe '{name}' remembers wafer plan '{path}' but that "
-                           "file is no longer there — Wafer Map tab left as-is.")
+            self._log_main(f"{note}'{path}' but that file is no longer there — "
+                           "Wafer Map tab left as-is.")
             return
         threading.Thread(target=self._autoload_wafer_plan_thread, args=(path,),
                          daemon=True).start()
@@ -414,8 +421,7 @@ class NanoZPanel(ttk.Frame):
             self._wafer_plan = plan
             self._wafer_plan_path = path
             self._redraw_nanoz_wafer_map()
-            self._log_main(f"Wafer map auto-loaded from '{os.path.basename(path)}' "
-                           "alongside the recipe.")
+            self._log_main(f"Wafer map auto-loaded from '{os.path.basename(path)}'.")
         self.after(0, _finish)
 
     def _delete_named_recipe(self):
@@ -552,48 +558,80 @@ class NanoZPanel(ttk.Frame):
             return
         self._rename_shot(self._recipe_tree.index(row_iid))
 
+    def _compute_recipe(self):
+        if not self._wafer_plan:
+            messagebox.showerror(
+                "No Wafer Plan",
+                "Compute Recipe needs a wafer plan to tell product dies apart from "
+                "reference/alignment dies and off-wafer positions — import one first: "
+                "Wafer Map tab -> Import Wafer Plan (.xlsx).")
+            return
+        sites = sorted(self.wafer_map.get_picked(), key=lambda rc: (rc[1], rc[0]))
+        if not sites:
+            messagebox.showerror(
+                "No Dies Selected",
+                "Click one or more dies on the Run tab's wafer map to mark each as the "
+                "first die of a 1x20 touchdown window, then Compute Recipe.")
+            return
+        if self._shots and not messagebox.askyesno(
+            "Replace Recipe",
+            f"This will replace the current recipe ({len(self._shots)} shot(s)) with "
+            f"{len(sites)} shot(s) computed from the selected dies. Continue?"):
+            return
+        ports = self._recipe_ports()
+        slots_by_port = {p: self._boards[p].identity.chip_slots() for p in ports}
+        row_off, col_off = self._wafer_plan_offset()
+        shots = nzb.build_shots_from_windows(self._wafer_plan, sites, ports, slots_by_port,
+                                             row_off, col_off)
+        self._shots = shots
+        # Computed, not saved - unlike Import Wafer Plan this never calls
+        # _persist_recipe(), and clearing the active recipe name makes the
+        # Recipe tab show "(unsaved - Save As... to keep this recipe)" so
+        # nothing on disk changes until the user explicitly saves it.
+        self._current_recipe_name = None
+        self._redraw_recipe_tree()
+        self._refresh_recipe_name_cb()
+        self._sub_nb.select(self._recipe_tab)
+        self._log_main(
+            f"Compute Recipe: built {len(shots)} shot(s) from {len(sites)} selected die(s) "
+            f"— not saved yet, use Save As… on the Recipe tab to keep this.")
+
     def _import_wafer_plan(self):
         path = filedialog.askopenfilename(
             title="Import Wafer Plan",
             filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
         if not path:
             return
-        if self._shots and not messagebox.askyesno(
-            "Replace Recipe",
-            f"This will replace the current recipe ({len(self._shots)} shot(s)) with "
-            "shots generated from the wafer plan. Continue?"):
-            return
         threading.Thread(target=self._import_wafer_plan_thread, args=(path,), daemon=True).start()
 
     def _import_wafer_plan_thread(self, path: str):
+        # Just parses the plan and hands it to the Wafer Map tab's Probe Plan
+        # view - does NOT touch self._shots/build a recipe. Compute Recipe
+        # (Run tab) is what turns a wafer plan into a recipe now; this button
+        # only exists to load the plan so Select Plan/Compute Recipe have
+        # something to work from.
         try:
             plan = nzb.load_wafer_plan(path)
         except Exception as e:
             self.after(0, lambda e=e: messagebox.showerror("Import Failed", str(e)))
             return
-        ports = self._recipe_ports()
-        slots_by_port = {p: self._boards[p].identity.chip_slots() for p in ports}
-        unassigned = [p for p in ports
-                     if not (slots_by_port[p].get("0") or slots_by_port[p].get("1"))]
-        shots = nzb.build_shots_from_wafer_plan(plan, ports, slots_by_port)
         stats = nzb.wafer_plan_stats(plan)
+        folder = self._nanoz_ata_folder
 
         def _finish():
-            self._shots = shots
             self._wafer_plan = plan
             self._wafer_plan_path = path
-            self._redraw_recipe_tree()
-            self._persist_recipe()
+            if folder:
+                nzb.save_wafer_plan_path(folder, path)
+            self._nzmap_source_var.set("probe_plan")
             self._redraw_nanoz_wafer_map()
-            msg = (f"Wafer plan imported — {len(shots)} touchdown shot(s), "
-                  f"probe head {plan.probe_height} dies tall, "
-                  f"{plan.dies_per_shot}x{plan.dies_per_shot}-die shots. "
-                  f"Physical positions across the whole plan: {stats['product']} product, "
-                  f"{stats['reference']} reference (skipped), {stats['off_wafer']} off-wafer.")
-            if unassigned:
-                msg += (f" {len(unassigned)} known board(s) have no assigned slot and are "
-                       f"excluded from every shot: {', '.join(unassigned)} "
-                       f"— assign slots on the Setup tab and re-import.")
+            msg = (f"Wafer plan imported — {len(plan.dies)} die(s) on Die Map, "
+                  f"{len(plan.touchdowns)} touchdown(s), probe head {plan.probe_height} "
+                  f"dies tall. Physical positions across all touchdowns: "
+                  f"{stats['product']} product, "
+                  f"{stats['reference']} reference, {stats['off_wafer']} off-wafer. "
+                  f"Use Select Plan (Run tab) to highlight one die per touchdown, then "
+                  f"Compute Recipe to build the recipe.")
             self._log_main(msg)
         self.after(0, _finish)
 
@@ -607,9 +645,10 @@ class NanoZPanel(ttk.Frame):
                   text="Probe Plan is the wafer geometry extracted from the imported "
                        ".xlsx (Recipe tab → Import Wafer Plan) — product dies are blue, "
                        "reference/monitor dies are dark red, and it carries computed die "
-                       "serials. Accretech is the wafer map extracted on the Run tab — "
-                       "the two are independent views of the same physical wafer, not "
-                       "combined. Click a die to see its details.",
+                       "serials. Accretech is the wafer map extracted on the Run tab. CSV "
+                       "is a plain row/col die-ID grid you load below — it's also what the "
+                       "Run tab's Overlay… button uses. All are independent views of the "
+                       "same physical wafer, not combined. Click a die to see its details.",
                   foreground="#6b7280", wraplength=760, justify="left").grid(
                   row=0, column=0, sticky="w", padx=8, pady=(8, 4))
 
@@ -618,12 +657,19 @@ class NanoZPanel(ttk.Frame):
         ttk.Label(src_row, text="View:").pack(side="left", padx=(0, 4))
         ttk.Radiobutton(src_row, text="Probe Plan (.xlsx)", variable=self._nzmap_source_var,
                         value="probe_plan", command=self._redraw_nanoz_wafer_map).pack(side="left")
+        ttk.Button(src_row, text="📥 Import Wafer Plan (.xlsx)…",
+                  command=self._import_wafer_plan).pack(side="left", padx=(4, 0))
         ttk.Radiobutton(src_row, text="Accretech", variable=self._nzmap_source_var,
                         value="accretech", command=self._redraw_nanoz_wafer_map).pack(side="left")
+        ttk.Radiobutton(src_row, text="CSV", variable=self._nzmap_source_var,
+                        value="csv", command=self._redraw_nanoz_wafer_map).pack(side="left")
+        ttk.Button(src_row, text="📥  Load CSV Wafer Map…",
+                  command=self._nzmap_load_csv_dialog).pack(side="left", padx=(6, 0))
+        self._nzmap_csv_path_var = tk.StringVar(value="No CSV loaded.")
+        ttk.Label(src_row, textvariable=self._nzmap_csv_path_var,
+                 foreground="#6b7280", font=("Segoe UI", 8)).pack(side="left", padx=(6, 0))
         ttk.Checkbutton(src_row, text="🏷 Die Labels", variable=self._show_nzmap_labels_var,
                        command=self._update_visible_nzmap_labels).pack(side="left", padx=(12, 0))
-        ttk.Button(src_row, text="🖌 Overlay CSV…",
-                  command=self._nzmap_open_overlay_dialog).pack(side="left", padx=(12, 0))
 
         if _MPL:
             self._nzmap_fig = Figure(figsize=(8, 8), dpi=100)
@@ -666,10 +712,70 @@ class NanoZPanel(ttk.Frame):
             return
         self._nzmap_dies_by_rc = {}
         self._nzmap_accr_dies_by_rc = {}
-        if self._nzmap_source_var.get() == "accretech":
+        source = self._nzmap_source_var.get()
+        if source == "accretech":
             self._draw_accretech_nzmap()
+        elif source == "csv":
+            self._draw_csv_nzmap()
         else:
             self._draw_probe_plan_nzmap()
+
+    def _nzmap_pma_wafer(self):
+        # CSV wafer-map data is NOT owned by this tab - it's the same
+        # PmaWaferPanel instance (and the same ata_wafer_map_csv_import.csv
+        # persisted file) the main "Wafer Map" tab uses, so a CSV loaded
+        # from either tab, and the Overlay dialogs on either Run tab, are
+        # always looking at the identical data - never two independent
+        # copies that could drift apart.
+        return getattr(self._main_layout, "pma_wafer", None)
+
+    def _nzmap_load_csv_dialog(self):
+        pma_wafer = self._nzmap_pma_wafer()
+        if pma_wafer is None:
+            self._log_main("CSV wafer map isn't available (main Wafer Map tab not found).")
+            return
+        path = filedialog.askopenfilename(
+            title="Load CSV Wafer Map",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        pma_wafer.load_csv_path(path)
+        self._log_main(f"NanoZ Wafer Map: CSV loaded via the shared Wafer Map source — {path}. "
+                       "Also visible on the main Wafer Map tab and used by both Run tabs' "
+                       "Overlay… button.")
+        self._nzmap_source_var.set("csv")
+        self._redraw_nanoz_wafer_map()
+
+    def _draw_csv_nzmap(self):
+        pma_wafer = self._nzmap_pma_wafer()
+        data = pma_wafer._csv_shot_data if pma_wafer else None
+        if not data or not data.get("shots"):
+            self._nzmap_csv_path_var.set("No CSV loaded.")
+            self._draw_empty_nzmap(
+                "No CSV wafer map loaded yet — 📥 Load CSV Wafer Map… above, or load one "
+                "on the main Wafer Map tab (they're the same data).")
+            return
+        self._nzmap_csv_path_var.set(f"{data['path']}  ({len(data['shots'])} die(s))")
+        dies = [{"row": s["row"], "col": s["col"], "serial": "/".join(s["dies"]), "status": "csv"}
+               for s in data["shots"] if s.get("dies")]
+        self._nzmap_dies_by_rc = {(d["row"], d["col"]): d for d in dies}
+        self._nzmap_ax.clear()
+        self._nzmap_ax.set_aspect("equal")
+        patches = [Rectangle((d["col"] - 0.5, -d["row"] - 0.5), 1, 1) for d in dies]
+        coll = PatchCollection(patches, edgecolor="#1e293b", linewidths=0.4)
+        coll.set_facecolor("#7aaec8")
+        self._nzmap_ax.add_collection(coll)
+        max_col = max((d["col"] for d in dies), default=1)
+        max_row = max((d["row"] for d in dies), default=1)
+        self._nzmap_ax.set_xlim(0, max_col + 1)
+        self._nzmap_ax.set_ylim(-(max_row + 1), 0)
+        self._nzmap_ax.set_title(f"CSV — {len(dies)} die(s) — click a die to see its ID", fontsize=9)
+        self._nzmap_current_labels = [
+            {"x": d["col"], "y": -d["row"], "label": d["serial"], "color": "black"} for d in dies
+        ]
+        self._connect_nzmap_view_callbacks()
+        self._update_visible_nzmap_labels()
+        self._nzmap_canvas.draw_idle()
 
     def _draw_probe_plan_nzmap(self):
         plan = self._wafer_plan
@@ -720,16 +826,189 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_ax.set_title(f"Accretech — {len(rcs)} die(s) — click a die to see "
                                  "its row/col", fontsize=9)
         self._nzmap_current_labels = [
-            {"x": c, "y": -r,
-             "label": self._nzmap_overlay_die_ids.get((r, c)) or f"R{r}C{c}",
-             "color": "black"}
-            for r, c in rcs
+            {"x": c, "y": -r, "label": f"R{r}C{c}", "color": "black"} for r, c in rcs
         ]
         self._connect_nzmap_view_callbacks()
         self._update_visible_nzmap_labels()
         self._nzmap_canvas.draw_idle()
 
-    def _nzmap_open_overlay_dialog(self):
+    def _draw_overlay_labels_on(self, wm, die_ids_by_rc: dict) -> list:
+        # Same pattern as the Accretech Run tab's overlay
+        # (_exec2_draw_overlay_labels_on in instrument_panel.py) - draws
+        # text items directly on the WaferMapPanel canvas, not matplotlib,
+        # since self.wafer_map (this Run tab's map) is the same canvas-based
+        # WaferMapPanel class Accretech uses.
+        items = []
+        for rc, label_text in die_ids_by_rc.items():
+            item = wm.dies.get(rc)
+            if item is None:
+                continue
+            coords = wm.canvas.coords(item)
+            if len(coords) < 4:
+                continue
+            cx, cy = (coords[0] + coords[2]) / 2, (coords[1] + coords[3]) / 2
+            items.append(wm.canvas.create_text(
+                cx, cy, text=label_text, font=("Consolas", 7), fill="#1e293b"))
+        return items
+
+    def _clear_overlay_labels(self, wm, items: list):
+        for item in items:
+            try:
+                wm.canvas.delete(item)
+            except tk.TclError:
+                pass
+        items.clear()
+
+    def _clear_overlay(self):
+        self._clear_overlay_labels(self.wafer_map, self._overlay_items)
+        self._overlay_die_ids = {}
+
+    def _redraw_overlay_on_run_map(self):
+        if not self._overlay_die_ids:
+            self._overlay_items = []
+        else:
+            self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, self._overlay_die_ids)
+            self._update_overlay_visibility()
+        self._update_position_window()
+
+    def _draw_overlay(self, matched: list):
+        # Matches instrument_panel.py's _exec2_draw_overlay exactly: label
+        # the matched dies AND select them as test sites (not just draw
+        # labels) - Overlay is meant to both identify dies and pick them.
+        self._clear_overlay()
+        self._overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"]) for d in matched}
+        self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, self._overlay_die_ids)
+        picks = [(d["row"], d["col"]) for d in matched]
+        self.wafer_map.set_picked(picks)
+        self._on_sites_changed(picks)
+        self._update_overlay_visibility()
+
+    _OVERLAY_MIN_DIE_PX = 22  # below this on-screen die width, overlay text is unreadable clutter
+
+    def _update_overlay_visibility(self):
+        if not self._overlay_items:
+            return
+        wm = self.wafer_map
+        sample_rc = next(iter(self._overlay_die_ids), None)
+        item = wm.dies.get(sample_rc) if sample_rc else None
+        bbox = wm.canvas.bbox(item) if item is not None else None
+        if not bbox:
+            return
+        width_px = bbox[2] - bbox[0]
+        state = "normal" if width_px >= self._OVERLAY_MIN_DIE_PX else "hidden"
+        for it in self._overlay_items:
+            try:
+                wm.canvas.itemconfigure(it, state=state)
+            except tk.TclError:
+                pass
+
+    _POSITION_WINDOW_SIZE = 20  # matches the probe head's 20 physical slots (top to bottom)
+
+    def _clear_position_window(self):
+        wm = self.wafer_map
+        for item in self._position_window_items:
+            try:
+                wm.canvas.delete(item)
+            except tk.TclError:
+                pass
+        self._position_window_items = []
+
+    def _die_pitch(self):
+        """Canvas (dx, dy) between two adjacent-row dies, so the window can be
+        drawn/extrapolated at the map's current zoom/pan without redrawing it."""
+        wm = self.wafer_map
+        by_col: dict = {}
+        for (r, c) in wm.dies:
+            by_col.setdefault(c, []).append(r)
+        for c, rows in by_col.items():
+            rows_sorted = sorted(rows)
+            for a, b in zip(rows_sorted, rows_sorted[1:]):
+                if b - a == 1:
+                    ca = wm.canvas.coords(wm.dies[(a, c)])
+                    cb = wm.canvas.coords(wm.dies[(b, c)])
+                    if ca and cb:
+                        return (cb[0] - ca[0], cb[1] - ca[1])
+        return None
+
+    def _nearest_known_in_col(self, col: int, row: int):
+        wm = self.wafer_map
+        best_rc, best_item, best_dist = None, None, None
+        for (r, c), item in wm.dies.items():
+            if c != col:
+                continue
+            d = abs(r - row)
+            if best_dist is None or d < best_dist:
+                best_dist, best_rc, best_item = d, (r, c), item
+        return best_rc, best_item
+
+    def _update_position_window(self):
+        """Draw a 1-wide x 20-tall window on the Run tab wafer map, anchored
+        at the current die (X/Y) and extending down - the same footprint as
+        one physical touchdown on the 20-slot probe head. Also records, per
+        cell, whether a die actually exists there (self._position_window_dies)
+        so the recipe/board logic can see what is (or isn't) under the head
+        right now."""
+        self._clear_position_window()
+        self._position_window_dies = []
+        row, col = self._current_rc
+        if row is None or col is None:
+            self._position_window_var.set("Position window: XY not read yet")
+            return
+
+        wm = self.wafer_map
+        pitch = self._die_pitch()
+        present_n = 0
+        for i in range(self._POSITION_WINDOW_SIZE):
+            r, c = row + i, col
+            item = wm.dies.get((r, c))
+            coords = wm.canvas.coords(item) if item is not None else None
+            if coords is None and pitch is not None:
+                anchor_rc, anchor_item = self._nearest_known_in_col(c, r)
+                if anchor_item is not None:
+                    acoords = wm.canvas.coords(anchor_item)
+                    if acoords:
+                        dr = r - anchor_rc[0]
+                        coords = [acoords[0] + pitch[0] * dr, acoords[1] + pitch[1] * dr,
+                                  acoords[2] + pitch[0] * dr, acoords[3] + pitch[1] * dr]
+            present = item is not None
+            if present:
+                present_n += 1
+            self._position_window_dies.append({
+                "row": r, "col": c, "present": present,
+                "die_id": wm.die_ids.get((r, c), ""),
+            })
+            if coords:
+                x1, y1, x2, y2 = coords
+                color = "#2563eb" if present else "#ef4444"
+                rect = wm.canvas.create_rectangle(
+                    x1, y1, x2, y2, outline=color, width=3 if i == 0 else 2,
+                    dash=() if present else (3, 2))
+                wm.canvas.tag_raise(rect)
+                self._position_window_items.append(rect)
+
+        self._position_window_var.set(
+            f"Position window R{row}C{col} ↓{self._POSITION_WINDOW_SIZE}: "
+            f"{present_n}/{self._POSITION_WINDOW_SIZE} dies present")
+
+    _OVERLAY_SOURCE_LABELS = {"pma": "PMA touchdown", "xls": "Recipe Generator",
+                             "csv": "CSV wafer map"}
+
+    def _overlay_source_data(self, source: str):
+        # Same three sources, same underlying data, as Accretech's Run tab
+        # overlay (_exec2_overlay_source_data in instrument_panel.py) - both
+        # read the identical PmaWaferPanel instance, so an overlay set up on
+        # either Run tab is working from the same PMA/XLS/CSV data.
+        pma_wafer = self._nzmap_pma_wafer()
+        if pma_wafer is None:
+            return None
+        return {"pma": pma_wafer._pma_shot_data, "xls": pma_wafer._xls_shot_data,
+               "csv": pma_wafer._csv_shot_data}.get(source)
+
+    def _open_overlay_dialog(self):
+        pma_wafer = self._nzmap_pma_wafer()
+        if pma_wafer is None:
+            self._log_main("Overlay: main Wafer Map tab is not available.")
+            return
         accretech_rc = set(self.wafer_map.dies.keys())
         if not accretech_rc:
             self._log_main("Overlay: no Accretech wafer map loaded yet — "
@@ -737,107 +1016,92 @@ class NanoZPanel(ttk.Frame):
             return
 
         dlg = tk.Toplevel(self)
-        dlg.title("Overlay CSV Wafer Map onto Accretech")
+        dlg.title("Overlay Wafer Map")
         dlg.transient(self.winfo_toplevel())
         dlg.resizable(False, False)
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill="both", expand=True)
 
-        path_var = tk.StringVar(
-            value=self._nzmap_csv_data["path"] if self._nzmap_csv_data else "No CSV loaded.")
-        ttk.Label(frm, textvariable=path_var, foreground="#6b7280",
-                 wraplength=340, justify="left").grid(
-                 row=0, column=0, columnspan=4, sticky="w")
-        ttk.Button(frm, text="📂 Load CSV…", command=lambda: load_csv()).grid(
-            row=0, column=4, sticky="e", padx=(8, 0))
+        ttk.Label(frm, text="Source:").grid(row=0, column=0, sticky="w")
+        source_var = tk.StringVar(value="pma")
+        src_row = ttk.Frame(frm)
+        src_row.grid(row=0, column=1, columnspan=4, sticky="w")
+        for value, text in (("pma", "PMA Touchdowns"), ("xls", "Recipe Generator"),
+                           ("csv", "CSV Wafer Map")):
+            ttk.Radiobutton(src_row, text=text, variable=source_var, value=value,
+                           command=lambda: center_overlay()).pack(side="left")
 
         summary_var = tk.StringVar()
         ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
                  justify="left").grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 4))
         ttk.Label(frm, text="Centered by matching the two maps' centers (🎯 Center Overlay) "
-                 "— a CSV die counts as \"on the map\" when its (row, col), shifted by the "
+                 "— a die counts as \"on the map\" when its (row, col), shifted by the "
                  "offset below, lands on a die the Accretech prober actually walked. Nudge "
                  "the offset if dies land on the wrong physical die, then Overlay on Map.",
                  font=("Segoe UI", 8), foreground="#6b7280", wraplength=340,
                  justify="left").grid(row=2, column=0, columnspan=5, sticky="w", pady=(0, 10))
 
         ttk.Label(frm, text="Row offset:").grid(row=3, column=0, sticky="e")
-        row_var = tk.IntVar(value=self._nzmap_overlay_row_offset)
+        row_var = tk.IntVar(value=self._overlay_row_offset)
         ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
             row=3, column=1, sticky="w", padx=(4, 16))
         ttk.Label(frm, text="Col offset:").grid(row=3, column=2, sticky="e")
-        col_var = tk.IntVar(value=self._nzmap_overlay_col_offset)
+        col_var = tk.IntVar(value=self._overlay_col_offset)
         ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
             row=3, column=3, sticky="w", padx=(4, 0))
 
-        state = {"grid": []}
-
-        def csv_grid():
-            if not self._nzmap_csv_data:
-                return []
-            return [{"row": s["row"], "col": s["col"], "die_ids": s["dies"]}
-                   for s in self._nzmap_csv_data["shots"]]
+        state = {"grid": [], "matched": []}
 
         def recompute(*_a):
-            grid = csv_grid()
-            state["grid"] = grid
-            if not grid:
-                summary_var.set("No CSV loaded — click 📂 Load CSV… first.")
+            data = self._overlay_source_data(source_var.get())
+            if not data:
+                state["grid"], state["matched"] = [], []
+                summary_var.set(
+                    f"No {self._OVERLAY_SOURCE_LABELS[source_var.get()]} data loaded — "
+                    "load it on the main Wafer Map tab first.")
                 return
             try:
                 ro, co = row_var.get(), col_var.get()
             except tk.TclError:
                 return
-            matched = merge_with_accretech(grid, accretech_rc, ro, co)
-            state["matched"] = matched
+            grid = pma_shots_to_grid(data)
+            state["grid"] = grid
+            state["matched"] = merge_with_accretech(grid, accretech_rc, ro, co)
             summary_var.set(
-                f"Accretech dies on map:  {len(accretech_rc)}\n"
-                f"CSV dies (real ID):     {len(grid)}\n"
-                f"Overlaid (on both maps): {len(matched)}"
+                f"Accretech dies on map:   {len(accretech_rc)}\n"
+                f"{self._OVERLAY_SOURCE_LABELS[source_var.get()]} dies (real ID): "
+                f"{len(grid)}\n"
+                f"Overlaid (on both maps): {len(state['matched'])}"
             )
-
-        def center_overlay():
-            grid = csv_grid()
-            if not grid:
-                recompute()
-                return
-            ro, co = centroid_offset(grid, accretech_rc)
-            row_var.set(ro)
-            col_var.set(co)
-
-        def load_csv():
-            path = filedialog.askopenfilename(
-                title="Load CSV Wafer Map",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
-            if not path:
-                return
-            try:
-                self._nzmap_csv_data = parse_plain_csv_wafer_map(path)
-            except OSError as exc:
-                messagebox.showerror("Could not load CSV wafer map", str(exc))
-                return
-            path_var.set(f"{path}  ({self._nzmap_csv_data['die_count']} die(s))")
-            center_overlay()
 
         row_var.trace_add("write", recompute)
         col_var.trace_add("write", recompute)
-        recompute()
+
+        def center_overlay():
+            data = self._overlay_source_data(source_var.get())
+            if not data:
+                recompute()
+                return
+            ro, co = centroid_offset(pma_shots_to_grid(data), accretech_rc)
+            row_var.set(ro)
+            col_var.set(co)
+
+        center_overlay()
 
         def do_overlay():
-            self._nzmap_overlay_row_offset = row_var.get()
-            self._nzmap_overlay_col_offset = col_var.get()
-            matched = state.get("matched", [])
-            self._nzmap_overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"])
-                                           for d in matched}
-            self._nzmap_source_var.set("accretech")
-            self._redraw_nanoz_wafer_map()
-            self._log_main(f"NanoZ Wafer Map: overlaid {len(matched)} CSV die(s) onto Accretech.")
+            self._overlay_row_offset = row_var.get()
+            self._overlay_col_offset = col_var.get()
+            self._draw_overlay(state["matched"])
+            self._log_main(f"NanoZ Run: overlaid {len(state['matched'])} die(s) from the "
+                           f"{self._OVERLAY_SOURCE_LABELS[source_var.get()]} source onto "
+                           "the wafer map and selected them as test sites.")
 
         def do_clear():
-            self._nzmap_overlay_die_ids = {}
-            self._redraw_nanoz_wafer_map()
-            self._log_main("NanoZ Wafer Map: overlay cleared.")
+            self._clear_overlay()
+            self.wafer_map.clear_picks()
+            self._on_sites_changed([])
+            self._log_main("NanoZ Run: overlay cleared.")
 
         ttk.Button(frm, text="🎯 Center Overlay", command=center_overlay).grid(
             row=3, column=4, sticky="w", padx=(10, 0))
@@ -847,6 +1111,42 @@ class NanoZPanel(ttk.Frame):
         ttk.Button(btns, text="🖌 Overlay on Map", command=do_overlay).pack(side="left")
         ttk.Button(btns, text="✕ Clear Overlay", command=do_clear).pack(side="left", padx=6)
         ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
+
+        dlg.update_idletasks()
+        dlg.grab_set()
+
+    def _wafer_plan_offset(self) -> tuple:
+        """(row_offset, col_offset) translating the wafer plan's own Die Map
+        numbering (1-indexed, top-left origin) onto Accretech's wafer-map
+        grid (center-relative, can be negative) - the two are NOT the same
+        coordinate system despite both driving the same physical wafer, so
+        every plan lookup/pick needs this applied. There's no shared die-ID
+        to match by (Accretech's map has no die IDs), so this matches grid
+        centroids instead - same approach as the CSV/PMA overlay's
+        centroid_offset, and exact here since both grids cover the same
+        8125-die/105x105 footprint one-for-one."""
+        if not self._wafer_plan or not self.wafer_map.dies:
+            return (0, 0)
+        plan_grid = nzb.wafer_plan_die_grid(self._wafer_plan)
+        return centroid_offset(plan_grid, self.wafer_map.dies.keys())
+
+    def _select_plan(self):
+        # Pick the top die of every touchdown in the plan's own touchdown
+        # list, translated into Accretech's coordinate space so they land on
+        # the actual dies shown on this map - not the plan's own numbering.
+        if self._wafer_plan is None:
+            messagebox.showerror(
+                "No Wafer Plan",
+                "Import a wafer plan first — Wafer Map tab -> Import Wafer Plan (.xlsx).")
+            return
+        row_off, col_off = self._wafer_plan_offset()
+        picks = [(r + row_off, c + col_off) for r, c in self._wafer_plan.touchdowns]
+        self.wafer_map.set_picked(picks)
+        self._on_sites_changed(picks)
+        self._log_main(
+            f"NanoZ Run: selected {len(picks)} die(s) — the first die of each touchdown in "
+            f"the imported wafer plan (offset {row_off:+d}/{col_off:+d} onto the Accretech "
+            f"map). Press Compute Recipe to build the recipe from this.")
 
     _NZMAP_MAX_VISIBLE_LABELS = 900
 
@@ -934,153 +1234,203 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_canvas.draw_idle()
 
     def _build_run_tab(self, nb):
+        # Layout mirrors the Accretech/Electroglas "Run" tab in
+        # instrument_panel.py (_tab_execution2): a top control bar, then a
+        # horizontal split of [manual controls + status panels] | [wafer
+        # map] | [pass/fail] - same organization, same widget names/
+        # commands as before, just regrouped to match.
         tab = ttk.Frame(nb)
         nb.add(tab, text="Run")
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(0, weight=1)
+        tab.rowconfigure(1, weight=1)
 
-        split = ttk.PanedWindow(tab, orient="vertical")
-        split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        ctrl = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
+        ctrl.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
 
-        controls = ttk.Frame(split)
-        split.add(controls, weight=1)
-        controls.columnconfigure(0, weight=1)
-
-        ctrl_lf = ttk.LabelFrame(controls, text="Controls")
-        ctrl_lf.grid(row=0, column=0, sticky="ew")
-
-        rrow = ttk.Frame(ctrl_lf)
-        rrow.pack(fill="x", padx=6, pady=(6, 2))
-        ttk.Label(rrow, text="Recipe:").pack(side="left")
+        tk.Label(ctrl, text="Recipe:", bg="#f1f5f9").pack(side="left", padx=(10, 2), pady=6)
         self._run_recipe_name_cb = ttk.Combobox(
-            rrow, textvariable=self._recipe_name_var, state="readonly", width=26)
-        self._run_recipe_name_cb.pack(side="left", padx=(4, 4))
+            ctrl, textvariable=self._recipe_name_var, state="readonly", width=22)
+        self._run_recipe_name_cb.pack(side="left", pady=6)
         self._run_recipe_name_cb.bind(
             "<<ComboboxSelected>>", lambda _e: self._load_named_recipe())
-        ttk.Button(rrow, text="📂 Load", command=lambda: self._load_named_recipe()).pack(
-            side="left", padx=2)
-        self._run_recipe_active_lbl = ttk.Label(rrow, text="(no recipe saved yet)",
-                                                foreground="#6b7280")
-        self._run_recipe_active_lbl.pack(side="left", padx=(12, 0))
+        ttk.Button(ctrl, text="📂 Load", command=lambda: self._load_named_recipe()).pack(
+            side="left", padx=4, pady=5)
+        self._run_recipe_active_lbl = tk.Label(ctrl, text="(no recipe saved yet)",
+                                               bg="#f1f5f9", fg="#6b7280")
+        self._run_recipe_active_lbl.pack(side="left", padx=(4, 10))
 
-        prow = ttk.Frame(ctrl_lf)
-        prow.pack(fill="x", padx=6, pady=(6, 2))
-        ttk.Label(prow, text="Cycle #:").pack(side="left")
+        ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
+
+        tk.Label(ctrl, text="Cycle #:", bg="#f1f5f9").pack(side="left", padx=(0, 2), pady=6)
         self.cycle_var = tk.StringVar(value="0")
-        self._cycle_entry = ttk.Entry(prow, textvariable=self.cycle_var, width=6)
-        self._cycle_entry.pack(side="left", padx=(4, 12))
-        ttk.Label(prow, text="Touchdown duration (s):").pack(side="left")
+        self._cycle_entry = ttk.Entry(ctrl, textvariable=self.cycle_var, width=5)
+        self._cycle_entry.pack(side="left", pady=6)
+        tk.Label(ctrl, text="Duration (s):", bg="#f1f5f9").pack(side="left", padx=(8, 2), pady=6)
         self.duration_var = tk.StringVar(value="10")
-        self._duration_entry = ttk.Entry(prow, textvariable=self.duration_var, width=6)
-        self._duration_entry.pack(side="left", padx=(4, 0))
+        self._duration_entry = ttk.Entry(ctrl, textvariable=self.duration_var, width=5)
+        self._duration_entry.pack(side="left", pady=6)
 
-        crow = ttk.Frame(ctrl_lf)
-        crow.pack(fill="x", padx=6, pady=2)
-        self.start_btn = ttk.Button(crow, text="▶ Full Die", command=self._start_lot)
-        self.start_btn.pack(side="left", padx=(0, 4))
-        self.test_btn = ttk.Button(crow, text="▶ Test Die", command=self._start_test_die)
-        self.test_btn.pack(side="left", padx=4)
-        self.recipe_btn = ttk.Button(crow, text="▶ Run Recipe", command=self._start_recipe_run)
-        self.recipe_btn.pack(side="left", padx=4)
-        self.stop_btn = ttk.Button(crow, text="⏹ Stop Run", command=self._stop_lot, state="disabled")
-        self.stop_btn.pack(side="left", padx=4)
-        self.state_var = tk.StringVar(value="IDLE")
-        ttk.Label(crow, textvariable=self.state_var, font=("Segoe UI", 9, "bold"),
-                 foreground="#6b7280").pack(side="left", padx=(12, 4))
-        self.die_var = tk.StringVar(value="Die: —")
-        ttk.Label(crow, textvariable=self.die_var).pack(side="left", padx=(12, 4))
-        self.counts_var = tk.StringVar(value="SPL: 0   ENV: 0")
-        ttk.Label(crow, textvariable=self.counts_var, foreground="#0077cc").pack(side="left", padx=(12, 0))
+        ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
-        ttk.Separator(ctrl_lf, orient="horizontal").pack(fill="x", padx=6, pady=4)
+        self.start_btn = ttk.Button(ctrl, text="▶  Start", command=self._start_lot)
+        self.start_btn.pack(side="left", padx=4, pady=5)
+        # Not packed - Test Die and Run Recipe are no longer separate buttons
+        # (Start/Full Die will follow the probe plan directly once that's
+        # wired up). Kept unpacked, not deleted, since _start_lot/
+        # _start_test_die/_start_recipe_run/_finish_lot still toggle their
+        # state alongside start_btn/stop_btn.
+        self.test_btn = ttk.Button(ctrl, text="▶  Test Die", command=self._start_test_die)
+        self.recipe_btn = ttk.Button(ctrl, text="▶  Run Recipe", command=self._start_recipe_run)
+        self._btn_compute_recipe = ttk.Button(ctrl, text="🧮 Compute Recipe",
+                                              command=self._compute_recipe)
+        self._btn_compute_recipe.pack(side="left", padx=2, pady=5)
 
-        mrow = ttk.Frame(ctrl_lf)
-        mrow.pack(fill="x", padx=6, pady=2)
-        self._btn_manual_zup = ttk.Button(mrow, text="⬆ Z Up", command=self._manual_z_up)
-        self._btn_manual_zup.pack(side="left", padx=2)
-        self._btn_manual_zdown = ttk.Button(mrow, text="⬇ Z Down", command=self._manual_z_down)
-        self._btn_manual_zdown.pack(side="left", padx=2)
-        self._btn_manual_first_die = ttk.Button(mrow, text="⏮ First Die (G)", command=self._manual_first_die)
-        self._btn_manual_first_die.pack(side="left", padx=2)
-        self._btn_manual_next_die = ttk.Button(mrow, text="▶▶ Next Die (J)", command=self._manual_next_die)
-        self._btn_manual_next_die.pack(side="left", padx=2)
-        self._btn_manual_xy = ttk.Button(mrow, text="XY", command=self._manual_xy)
-        self._btn_manual_xy.pack(side="left", padx=2)
-        self._btn_manual_unload = ttk.Button(mrow, text="⏏ Unload (U)", command=self._manual_unload)
-        self._btn_manual_unload.pack(side="left", padx=2)
-        self._btn_measure = ttk.Button(mrow, text="Measure", command=self._manual_measure)
-        self._btn_measure.pack(side="left", padx=(12, 2))
-        self.manual_xy_var = tk.StringVar(value="X: —  Y: —")
-        ttk.Label(mrow, textvariable=self.manual_xy_var, foreground="#6b7280").pack(side="left", padx=(12, 0))
+        ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
-        ttk.Separator(ctrl_lf, orient="horizontal").pack(fill="x", padx=6, pady=4)
-
-        trow = ttk.Frame(ctrl_lf)
-        trow.pack(fill="x", padx=6, pady=2)
-        self._btn_test_active = ttk.Button(trow, text="▶ Run Cycle (Active Boards)",
+        self._btn_test_active = ttk.Button(ctrl, text="▶  Run Cycle (Active)",
                                            command=self._test_active_boards)
-        self._btn_test_active.pack(side="left", padx=(0, 4))
-        self._btn_pause_active = ttk.Button(trow, text="⏸ Pause (Active Boards)",
+        self._btn_test_active.pack(side="left", padx=2, pady=5)
+        self._btn_pause_active = ttk.Button(ctrl, text="⏸  Pause (Active)",
                                             command=self._pause_active_boards)
-        self._btn_pause_active.pack(side="left", padx=4)
+        self._btn_pause_active.pack(side="left", padx=2, pady=5)
 
-        ttk.Separator(ctrl_lf, orient="horizontal").pack(fill="x", padx=6, pady=4)
+        ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
-        urow = ttk.Frame(ctrl_lf)
-        urow.pack(fill="x", padx=6, pady=(2, 6))
-        self._btn_reset_counts = ttk.Button(urow, text="Reset Counts", command=self._reset_counts)
-        self._btn_reset_counts.pack(side="left")
-        self._btn_load_map = ttk.Button(urow, text="📂 Load Accretech Map",
-                                        command=self._load_wafer_map)
-        self._btn_load_map.pack(side="left", padx=(8, 0))
-        self._btn_randomize_sites = ttk.Button(urow, text="🎲 Randomize 5", command=self._randomize_sites)
-        self._btn_randomize_sites.pack(side="left", padx=(8, 4))
-        self.sites_var = tk.StringVar(value="Test sites: 0 picked (click dies to add/remove)")
-        ttk.Label(urow, textvariable=self.sites_var, foreground="#6b7280").pack(side="left")
+        self.stop_btn = ttk.Button(ctrl, text="⏹  Stop Run", command=self._stop_lot, state="disabled")
+        self.stop_btn.pack(side="left", padx=4, pady=5)
 
-        status_lf = ttk.LabelFrame(controls, text="Active Boards")
-        status_lf.grid(row=1, column=0, sticky="ew", pady=4)
+        self.state_var = tk.StringVar(value="IDLE")
+        tk.Label(ctrl, textvariable=self.state_var, bg="#f1f5f9", fg="#6b7280",
+                font=("Segoe UI", 11, "bold")).pack(side="right", padx=12)
+        self.counts_var = tk.StringVar(value="SPL: 0   ENV: 0")
+        tk.Label(ctrl, textvariable=self.counts_var, bg="#f1f5f9", fg="#0077cc").pack(
+                 side="right", padx=(0, 4))
+        self.die_var = tk.StringVar(value="Die: —")
+        tk.Label(ctrl, textvariable=self.die_var, bg="#f1f5f9").pack(side="right", padx=(0, 12))
+
+        body = ttk.PanedWindow(tab, orient="horizontal")
+        body.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        left_col = ttk.Frame(body)
+        body.add(left_col, weight=1)
+        left_col.rowconfigure(1, weight=1)
+        left_col.columnconfigure(0, weight=1)
+
+        pos_lf = ttk.LabelFrame(left_col, text="Manual Control", padding=6)
+        pos_lf.grid(row=0, column=0, sticky="new", pady=(0, 4))
+        pos_lf.columnconfigure(0, weight=1)
+        pos_lf.columnconfigure(1, weight=1)
+
+        self.manual_xy_var = tk.StringVar(value="X: —  Y: —")
+        ttk.Label(pos_lf, textvariable=self.manual_xy_var,
+                  font=("Consolas", 11, "bold"), foreground="#0077cc",
+                  justify="center").grid(row=0, column=0, columnspan=2, pady=(0, 4))
+
+        self._btn_manual_zup = ttk.Button(pos_lf, text="⬆ Z Up", command=self._manual_z_up)
+        self._btn_manual_zup.grid(row=1, column=0, sticky="ew", padx=(0, 1), pady=1)
+        self._btn_manual_zdown = ttk.Button(pos_lf, text="⬇ Z Down", command=self._manual_z_down)
+        self._btn_manual_zdown.grid(row=1, column=1, sticky="ew", padx=(1, 0), pady=1)
+        self._btn_manual_first_die = ttk.Button(pos_lf, text="⏮ First Die (G)", command=self._manual_first_die)
+        self._btn_manual_first_die.grid(row=2, column=0, sticky="ew", padx=(0, 1), pady=1)
+        self._btn_manual_xy = ttk.Button(pos_lf, text="↻ Refresh XY", command=self._manual_xy)
+        self._btn_manual_xy.grid(row=2, column=1, sticky="ew", padx=(1, 0), pady=1)
+        self._btn_manual_unload = ttk.Button(pos_lf, text="⏏ Unload (U)", command=self._manual_unload)
+        self._btn_manual_unload.grid(row=3, column=0, sticky="ew", padx=(0, 1), pady=1)
+        self._btn_reset_counts = ttk.Button(pos_lf, text="Reset Counts", command=self._reset_counts)
+        self._btn_reset_counts.grid(row=3, column=1, sticky="ew", padx=(1, 0), pady=1)
+        # Not gridded - Next Die and Measure are no longer separate manual
+        # controls. Kept unpacked, not deleted, since _LOCKABLE_WIDGETS still
+        # toggles their state alongside the rest of Manual Control.
+        self._btn_manual_next_die = ttk.Button(pos_lf, text="▶▶ Next Die (J)", command=self._manual_next_die)
+        self._btn_measure = ttk.Button(pos_lf, text="Measure", command=self._manual_measure)
+
+        status_lf = ttk.LabelFrame(left_col, text="Active Boards")
+        status_lf.grid(row=1, column=0, sticky="new", pady=(4, 0))
         self.active_boards_var = tk.StringVar(
             value="No boards connected yet — see the Setup tab.")
-        ttk.Label(status_lf, textvariable=self.active_boards_var, wraplength=520,
+        ttk.Label(status_lf, textvariable=self.active_boards_var, wraplength=280,
                  justify="left").pack(anchor="w", padx=6, pady=6)
 
-        shot_lf = ttk.LabelFrame(controls, text="Recipe — Current Shot")
-        shot_lf.grid(row=2, column=0, sticky="ew", pady=4)
+        shot_lf = ttk.LabelFrame(left_col, text="Recipe — Current Shot")
+        shot_lf.grid(row=2, column=0, sticky="new", pady=(4, 0))
         self.recipe_shot_var = tk.StringVar(value="No recipe run active — see the Recipe tab.")
-        ttk.Label(shot_lf, textvariable=self.recipe_shot_var, wraplength=520,
+        ttk.Label(shot_lf, textvariable=self.recipe_shot_var, wraplength=280,
                  justify="left").pack(anchor="w", padx=6, pady=(6, 2))
         sd_cols = ("port", "slots", "decision", "reason")
         self._shot_decision_tree = ttk.Treeview(shot_lf, columns=sd_cols, show="headings", height=5)
-        sd_heads = [("port", "Board", 80), ("slots", "Slots (chip0/chip1)", 110),
-                   ("decision", "Decision", 80), ("reason", "Reason", 260)]
+        sd_heads = [("port", "Board", 60), ("slots", "Slots", 70),
+                   ("decision", "Decision", 65), ("reason", "Reason", 140)]
         for cid, text, width in sd_heads:
             self._shot_decision_tree.heading(cid, text=text)
             self._shot_decision_tree.column(cid, width=width, anchor="center" if cid != "reason" else "w")
         self._shot_decision_tree.pack(fill="x", padx=6, pady=(0, 6))
 
-        stat_lf = ttk.LabelFrame(controls, text="Pass / Fail")
-        stat_lf.grid(row=3, column=0, sticky="ew", pady=(0, 0))
-        srow = ttk.Frame(stat_lf)
-        srow.pack(fill="x", padx=6, pady=6)
-        ttk.Label(srow, text="PASS:").pack(side="left")
-        self.pass_var = tk.StringVar(value="0")
-        ttk.Label(srow, textvariable=self.pass_var, font=("Consolas", 16, "bold"),
-                 foreground="#16a34a").pack(side="left", padx=(4, 16))
-        ttk.Label(srow, text="FAIL:").pack(side="left")
-        self.fail_var = tk.StringVar(value="0")
-        ttk.Label(srow, textvariable=self.fail_var, font=("Consolas", 16, "bold"),
-                 foreground="#dc2626").pack(side="left", padx=(4, 16))
-        self.yield_var = tk.StringVar(value="Yield: —")
-        ttk.Label(srow, textvariable=self.yield_var, foreground="#6b7280").pack(side="left", padx=(4, 16))
-
-        map_lf = ttk.LabelFrame(split, text="Wafer Map")
-        split.add(map_lf, weight=2)
-        map_lf.rowconfigure(0, weight=1)
+        map_lf = ttk.LabelFrame(body, text="Wafer Map")
+        body.add(map_lf, weight=2)
+        map_lf.rowconfigure(2, weight=1)
         map_lf.columnconfigure(0, weight=1)
+
+        map_bar = ttk.Frame(map_lf)
+        map_bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        self.sites_var = tk.StringVar(value="Test sites: 0 picked (click dies to add/remove)")
+        ttk.Label(map_bar, textvariable=self.sites_var, foreground="#6b7280",
+                 font=("Segoe UI", 8)).pack(side="left", padx=8)
+        ttk.Separator(map_bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(map_bar, text="Overlay…", command=self._open_overlay_dialog).pack(side="left")
+        ttk.Button(map_bar, text="💾 Save Selected Map",
+                  command=self._save_selected_map).pack(side="left", padx=(6, 0))
+        ttk.Button(map_bar, text="📥 Load Selected Map",
+                  command=lambda: self._load_selected_map(quiet_if_missing=False)).pack(
+                  side="left", padx=(6, 0))
+        self._select_all_btn = ttk.Button(
+            map_bar, text="☑ Select All", command=self._toggle_select_all)
+        self._select_all_btn.pack(side="left", padx=(6, 0))
+        ttk.Button(map_bar, text="☑ Select Plan",
+                  command=self._select_plan).pack(side="left", padx=(6, 0))
+
+        pos_bar = ttk.Frame(map_lf)
+        pos_bar.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 2))
+        self._position_window_var = tk.StringVar(value="Position window: XY not read yet")
+        ttk.Label(pos_bar, textvariable=self._position_window_var, foreground="#2563eb",
+                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=8)
+
         self.wafer_map = WaferMapPanel(map_lf)
-        self.wafer_map.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.wafer_map.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self.wafer_map.enable_picking(on_change=self._on_sites_changed)
+        self.wafer_map.on_redraw = self._redraw_overlay_on_run_map
+        # Overlay labels only make sense zoomed in enough to read - same
+        # spirit as the Wafer Map tab's viewport-driven label visibility
+        # (_update_visible_nzmap_labels), just measured off actual on-canvas
+        # die pixel size since this map is tkinter Canvas-based, not
+        # matplotlib. Bound with add="+" so the map's own pan/zoom/reset
+        # bindings (set up inside WaferMapPanel.__init__) still run first.
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<Double-Button-1>"):
+            self.wafer_map.canvas.bind(seq, lambda _e: self._update_overlay_visibility(), add="+")
+
+        stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
+        body.add(stat_lf, weight=1)
+        stat_lf.columnconfigure(0, weight=1)
+
+        self.pass_var = tk.StringVar(value="0")
+        self.fail_var = tk.StringVar(value="0")
+        for var, label, color in [
+            (self.pass_var, "PASS", "#16a34a"),
+            (self.fail_var, "FAIL", "#dc2626"),
+        ]:
+            row_f = ttk.Frame(stat_lf)
+            row_f.pack(fill="x", pady=4)
+            ttk.Label(row_f, text=label, width=6,
+                      font=("Segoe UI", 10, "bold"),
+                      foreground=color).pack(side="left")
+            ttk.Label(row_f, textvariable=var,
+                      font=("Consolas", 24, "bold"),
+                      foreground=color).pack(side="left", padx=8)
+
+        ttk.Separator(stat_lf, orient="horizontal").pack(fill="x", pady=8)
+
+        self.yield_var = tk.StringVar(value="Yield: —")
+        ttk.Label(stat_lf, textvariable=self.yield_var,
+                  font=("Consolas", 13, "bold"), foreground="#374151").pack()
 
     def _build_console_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -2072,15 +2422,14 @@ class NanoZPanel(ttk.Frame):
 
     _LOCKABLE_WIDGETS = ("_cycle_entry", "_duration_entry", "_btn_discover",
                         "_btn_connect_boards", "_btn_disconnect_boards",
-                        "_btn_connect_prober", "_btn_load_map",
+                        "_btn_connect_prober",
                         "_btn_manual_zup", "_btn_manual_zdown", "_btn_manual_first_die",
                         "_btn_manual_next_die", "_btn_manual_xy", "_btn_manual_unload",
-                        "_btn_measure", "_btn_randomize_sites",
+                        "_btn_measure",
                         "_btn_test_active", "_btn_pause_active",
                         "_btn_recipe_add", "_btn_recipe_dup", "_btn_recipe_remove",
                         "_btn_recipe_up", "_btn_recipe_down",
-                        "_btn_recipe_enable_all", "_btn_recipe_disable_all",
-                        "_btn_recipe_import_plan")
+                        "_btn_recipe_enable_all", "_btn_recipe_disable_all")
 
     _CHART_HISTORY_LEN = 300
     _CHART_GAP_THRESHOLD_S = 3.0
@@ -2366,20 +2715,18 @@ class NanoZPanel(ttk.Frame):
         else:
             self.prober_status_var.set("Prober: not connected")
 
-    def _load_wafer_map(self):
-        folder = self._nanoz_ata_folder
-        if not folder:
-            messagebox.showerror("No ATA Folder",
-                                 "Load an ATA folder from the toolbar first.")
-            return
-        n = self.wafer_map.load_from_ata(folder, filename="ata_wafer_map_accretech.csv")
-        self._log_main(f"Wafer map loaded from '{os.path.basename(folder)}' — {n} die(s).")
-
     def on_ata_folder_loaded(self, folder_path: str):
         n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
         if n:
             self._log_main(f"Wafer map auto-loaded from "
                            f"'{os.path.basename(folder_path)}' — {n} die(s).")
+        # Same sequence as the Accretech Run tab's auto-load: clear any
+        # picks left over from whatever was drawn before, then restore this
+        # folder's own saved Selected Map (picks + overlay die IDs) if one
+        # exists - _load_selected_map already re-applies the zoom-based
+        # label show/hide state to whatever it draws.
+        self.wafer_map.clear_picks()
+        self._load_selected_map(quiet_if_missing=True)
 
         remembered = nzb.load_known_boards(folder_path)
         added = sum(1 for ident in remembered if self._add_board(ident))
@@ -2401,8 +2748,12 @@ class NanoZPanel(ttk.Frame):
                            f"'{os.path.basename(folder_path)}' — {len(shots)} shot(s).")
         self._refresh_recipe_name_cb()
         self._rebuild_recipe_columns()
-        if name:
-            self._autoload_wafer_plan_for_recipe(folder_path, name)
+
+        plan_path = nzb.load_wafer_plan_path(folder_path)
+        if not plan_path and name:
+            plan_path = nzb.get_recipe_wafer_plan_path(folder_path, name)  # legacy recipes
+        if plan_path:
+            self._autoload_wafer_plan(plan_path)
         else:
             self._wafer_plan = None
             self._redraw_nanoz_wafer_map()
@@ -2732,9 +3083,11 @@ class NanoZPanel(ttk.Frame):
         try:
             raw = prober.get_xy_position()
             x, y = _parse_q_response(raw)
+            self._current_rc = (int(y), int(x))
             self.after(0, lambda: self.manual_xy_var.set(f"X: {x:.0f}  Y: {y:.0f}"))
             self.after(0, lambda: self._log(f"Q -> die X={x:.0f} Y={y:.0f}"))
             self.after(0, lambda: self.wafer_map.update_die(int(y), int(x), "CURRENT"))
+            self.after(0, self._update_position_window)
         except Exception as e:
             self.after(0, lambda e=e: self._log_main(f"XY error: {e}"))
             self.after(0, lambda: self.manual_xy_var.set("X: ERROR  Y: ERROR"))
@@ -2775,39 +3128,140 @@ class NanoZPanel(ttk.Frame):
         self.after(0, lambda: self._log(
             "Measure complete — chuck still in contact; use Z Down to release."))
 
+    def _active_boards_for_window(self) -> list:
+        """Connected boards allowed to run at the current XY's 1x20 touchdown
+        window, per the loaded wafer plan's product/reference/off-wafer
+        classification (same rule Compute Recipe uses). Falls back to every
+        connected board if there's no wafer plan or no known position yet -
+        nothing to check the window against."""
+        connected = {b.port: b for b in self._boards.values() if b.state == "connected"}
+        if not connected:
+            return []
+        row, col = self._current_rc
+        if not self._wafer_plan or row is None or col is None:
+            return list(connected.values())
+        ports = sorted(connected.keys())
+        slots_by_port = {p: connected[p].identity.chip_slots() for p in ports}
+        row_off, col_off = self._wafer_plan_offset()
+        active_ports = nzb.active_ports_for_window(self._wafer_plan, col, row, ports,
+                                                    slots_by_port, row_off, col_off)
+        return [connected[p] for p in active_ports]
+
     def _test_active_boards(self):
         if self._run_guard("Run Cycle"):
             return
-        active = [b for b in self._boards.values() if b.state == "connected"]
+        active = self._active_boards_for_window()
         if not active:
-            messagebox.showerror("No Boards Connected",
-                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
-            return
-        try:
-            cycle = int(self.cycle_var.get())
-        except ValueError:
-            messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
+            messagebox.showerror(
+                "No Active Boards",
+                "🔌 Connect All (Setup tab) — no NanoZ boards are connected and allowed to "
+                "run (per the wafer plan) at the current position window.")
             return
         self._mark_cycle_start()
         for board in active:
-            board.run_cycle(cycle)
-        self._log_main(f"Run Cycle {cycle} triggered on {len(active)} active board(s): "
-                       + ", ".join(b.port for b in active))
+            board.run_cycle(0)
+        self._log_main(f"Run Cycle 0 triggered on {len(active)} active board(s) for this "
+                       f"window: " + ", ".join(b.port for b in active))
 
     def _pause_active_boards(self):
         if self._run_guard("Pause"):
             return
-        active = [b for b in self._boards.values() if b.state == "connected"]
+        active = self._active_boards_for_window()
         if not active:
-            self._log_main("Pause (Active Boards): nothing connected.")
+            self._log_main("Pause (Active Boards): nothing connected/active for this window.")
             return
         for board in active:
             board.pause()
-        self._log_main(f"Paused {len(active)} active board(s): "
+        self._log_main(f"Paused {len(active)} active board(s) for this window: "
                        + ", ".join(b.port for b in active))
 
     def _on_sites_changed(self, picks: list):
         self.sites_var.set(f"Test sites: {len(picks)} picked (click dies to add/remove)")
+        btn = getattr(self, "_select_all_btn", None)
+        dies = self.wafer_map._last_dies
+        if btn and dies:
+            all_rc = {(d["row"], d["col"]) for d in dies}
+            is_all = bool(all_rc) and set(picks) == all_rc
+            btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
+
+    def _toggle_select_all(self):
+        dies = self.wafer_map._last_dies
+        if not dies:
+            self._log_main("No wafer map loaded — load one before selecting dies.")
+            return
+        all_rc = [(d["row"], d["col"]) for d in dies]
+        already_all = set(self.wafer_map.get_picked()) == set(all_rc)
+        if already_all:
+            self.wafer_map.set_picked([])
+            self._on_sites_changed([])
+            self._log_main("Deselected all dies.")
+        else:
+            self.wafer_map.set_picked(all_rc)
+            self._on_sites_changed(all_rc)
+            self._log_main(f"Selected all {len(all_rc)} die(s) — click any die to deselect "
+                           "it, or press again to deselect all.")
+
+    _SELECTED_MAP_FILENAME = "ata_wafer_map_selected.csv"
+
+    def _selected_map_path(self):
+        folder = self._nanoz_ata_folder
+        return os.path.join(folder, self._SELECTED_MAP_FILENAME) if folder else None
+
+    def _save_selected_map(self):
+        if not self._nanoz_ata_folder:
+            messagebox.showerror(
+                "No ATA Folder",
+                "No ATA folder is loaded — use 📁 Load ATA Folder on the top toolbar first.")
+            return
+        picks = self.wafer_map.get_picked()
+        if not picks:
+            messagebox.showinfo("No Dies Selected",
+                                "Click dies on the map to select them first.")
+            return
+        path = self._selected_map_path()
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            wr = csv.writer(f)
+            wr.writerow(["row", "col", "label"])
+            for r, c in picks:
+                wr.writerow([r, c, self._overlay_die_ids.get((r, c), "")])
+        n_labeled = sum(1 for rc in picks if rc in self._overlay_die_ids)
+        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
+        self._log_main(f"Saved {len(picks)} selected die(s){note} → {path}")
+
+    def _load_selected_map(self, quiet_if_missing: bool = False):
+        path = self._selected_map_path()
+        if not path or not os.path.exists(path):
+            if not quiet_if_missing:
+                self._log_main("No saved Selected Map for this ATA folder yet — "
+                               "click dies on the map, then 💾 Save Selected Map.")
+            return []
+        picks = []
+        die_ids_by_rc = {}
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    rc = (int(row["row"]), int(row["col"]))
+                except (KeyError, ValueError, TypeError):
+                    continue
+                picks.append(rc)
+                label = (row.get("label") or "").strip()
+                if label:
+                    die_ids_by_rc[rc] = label
+        self.wafer_map.set_picked(picks)
+        self._on_sites_changed(picks)
+        self._clear_overlay()
+        if die_ids_by_rc:
+            self._overlay_die_ids = die_ids_by_rc
+            self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, die_ids_by_rc)
+            self._update_overlay_visibility()
+        n_labeled = len(die_ids_by_rc)
+        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
+        if picks:
+            self._log_main(f"Loaded {len(picks)} selected die(s){note} from {path}")
+        elif not quiet_if_missing:
+            self._log_main(f"{path} has no valid rows.")
+        return picks
 
     def _randomize_sites(self):
         if self._run_guard("Randomize"):
@@ -2930,6 +3384,7 @@ class NanoZPanel(ttk.Frame):
                 self._current_rc = (row, col)
                 self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
                 self.after(0, lambda r=row, c=col: self.wafer_map.update_die(r, c, "CURRENT"))
+                self.after(0, self._update_position_window)
 
                 ok = self._zup_measure_zdown(prober, boards, cycle, duration_s, die_label)
                 if not self._running:
@@ -3095,6 +3550,7 @@ class NanoZPanel(ttk.Frame):
                 die_label = f"R{row}C{die_col}"
                 self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
                 self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
+                self.after(0, self._update_position_window)
 
                 self.after(0, lambda r=row, c=die_col: self._log(f">> J  (Position die X={c} Y={r})"))
                 stb = prober.move_to_die_xy(die_col, row)
@@ -3242,6 +3698,7 @@ class NanoZPanel(ttk.Frame):
         self._current_rc = (row, col)
         self.after(0, lambda: self.die_var.set(f"Die: R{row}C{col}"))
         self.after(0, lambda: self.wafer_map.update_die(row, col, "CURRENT"))
+        self.after(0, self._update_position_window)
 
     def _mark_touchdown_result(self):
         row, col = self._current_rc

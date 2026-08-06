@@ -1368,6 +1368,18 @@ class MainLayout(ttk.Frame):
             pma_wafer.load_from_ata(folder_path)
         self._exec2_map_folder = folder_path
         self._exec2_map_source_var.set("Accretech" if self._system == "accretech" else "Electroglas")
+        # An overlay (real die IDs drawn from a previous ATA folder's CSV/
+        # PMA/XLS source) has no meaning on a different folder's wafer map -
+        # clear it now rather than leaving stale IDs drawn on top of dies
+        # they were never actually matched against.
+        self._exec2_clear_overlay()
+        self._exec2_wafer_map.clear_picks()
+        self._exec2_on_sites_changed([])
+        nanoz_panel = getattr(self, "nanoz_panel", None)
+        if nanoz_panel is not None and hasattr(nanoz_panel, "_clear_overlay"):
+            nanoz_panel._clear_overlay()
+            nanoz_panel.wafer_map.clear_picks()
+            nanoz_panel._on_sites_changed([])
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._refresh_export_formats()
 
@@ -3998,6 +4010,9 @@ class MainLayout(ttk.Frame):
         ttk.Radiobutton(type_row, text="CSV (one row per die, merged)",
                        variable=type_var, value="csv",
                        command=lambda: _on_type_change()).pack(side="left", padx=(12, 0))
+        append_date_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_date", False))
+        ttk.Checkbutton(type_row, text="📅 Append date to filename (_YYYYMMDD)",
+                       variable=append_date_var).pack(side="left", padx=(20, 0))
 
         only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
         only_pma_chk = ttk.Checkbutton(
@@ -4207,7 +4222,8 @@ class MainLayout(ttk.Frame):
                 messagebox.showerror("Incomplete", "Add at least one column.")
                 return
             fmt = {"name": name, "table": table, "type": type_var.get(),
-                  "requires_die_id": only_pma_var.get(), "columns": columns}
+                  "requires_die_id": only_pma_var.get(), "append_date": append_date_var.get(),
+                  "columns": columns}
             xfmt.add_format(self._ata_folder, fmt, system=self._system)
             self._refresh_export_formats(select_name=name)
             self.controller.log(f"[RESULTS] Saved export format '{name}' ({table}, "
