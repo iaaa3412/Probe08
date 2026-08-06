@@ -478,6 +478,40 @@ class NanoZPanel(ttk.Frame):
             vals = [str(i), shot["label"] or f"Shot {i}", f"{active_n}/{len(ports)}"]
             vals += ["·" if p in excluded else "✓" for p in ports]
             self._recipe_tree.insert("", "end", values=vals)
+        self._redraw_touchdown_list()
+
+    def _redraw_touchdown_list(self):
+        """Run tab mirror of the Recipe tab's shot list - same underlying
+        self._shots, just a compact # / label / active-count view meant for
+        double-clicking a row to jump the prober straight to that touchdown
+        (see _on_touchdown_double_click/_goto_shot), not for editing."""
+        tree = getattr(self, "_touchdown_tree", None)
+        if tree is None:
+            return
+        for iid in tree.get_children():
+            tree.delete(iid)
+        ports = self._recipe_ports()
+        for i, shot in enumerate(self._shots):
+            excluded = shot["excluded_boards"]
+            active_n = sum(1 for p in ports if p not in excluded)
+            tree.insert("", "end", iid=str(i), values=(
+                str(i + 1), shot["label"] or f"Shot {i + 1}", f"{active_n}/{len(ports)}"))
+
+    def _select_touchdown_row(self, idx: int):
+        tree = getattr(self, "_touchdown_tree", None)
+        if tree is None:
+            return
+        iid = str(idx)
+        if tree.exists(iid):
+            tree.selection_set(iid)
+            tree.see(iid)
+
+    def _on_touchdown_double_click(self, event):
+        tree = self._touchdown_tree
+        iid = tree.identify_row(event.y)
+        if not iid:
+            return
+        self._goto_shot(int(iid))
 
     def _selected_shot_indices(self) -> list:
         return sorted(self._recipe_tree.index(iid) for iid in self._recipe_tree.selection())
@@ -729,7 +763,9 @@ class NanoZPanel(ttk.Frame):
                 "reference/alignment dies and off-wafer positions — import one first: "
                 "Wafer Map tab -> Import Wafer Plan (.xlsx).")
             return
-        sites = sorted(self.wafer_map.get_picked(), key=lambda rc: (rc[1], rc[0]))
+        # Left to right, then top to bottom across the wafer map - i.e. row
+        # order first (top to bottom), columns within a row left to right.
+        sites = sorted(self.wafer_map.get_picked(), key=lambda rc: (rc[0], rc[1]))
         if not sites:
             messagebox.showerror(
                 "No Dies Selected",
@@ -1524,12 +1560,20 @@ class NanoZPanel(ttk.Frame):
         # state alongside the rest of Manual Control.
         self._btn_measure = ttk.Button(pos_lf, text="Measure", command=self._manual_measure)
 
-        status_lf = ttk.LabelFrame(left_col, text="Active Boards")
-        status_lf.grid(row=1, column=0, sticky="new", pady=(4, 0))
-        self.active_boards_var = tk.StringVar(
-            value="No boards connected yet — see the Setup tab.")
-        ttk.Label(status_lf, textvariable=self.active_boards_var, wraplength=280,
-                 justify="left").pack(anchor="w", padx=6, pady=6)
+        td_lf = ttk.LabelFrame(left_col, text="Recipe — Touchdown List "
+                               "(double-click to move there)")
+        td_lf.grid(row=1, column=0, sticky="new", pady=(4, 0))
+        td_cols = ("seq", "label", "active")
+        self._touchdown_tree = ttk.Treeview(td_lf, columns=td_cols, show="headings", height=6)
+        td_heads = [("seq", "#", 32), ("label", "Touchdown", 190), ("active", "Active", 55)]
+        for cid, text, width in td_heads:
+            self._touchdown_tree.heading(cid, text=text)
+            self._touchdown_tree.column(cid, width=width, anchor="w" if cid == "label" else "center")
+        td_sb = ttk.Scrollbar(td_lf, orient="vertical", command=self._touchdown_tree.yview)
+        self._touchdown_tree.configure(yscrollcommand=td_sb.set)
+        self._touchdown_tree.pack(side="left", fill="x", expand=True, padx=(6, 0), pady=6)
+        td_sb.pack(side="left", fill="y", pady=6, padx=(0, 6))
+        self._touchdown_tree.bind("<Double-1>", self._on_touchdown_double_click)
 
         shot_lf = ttk.LabelFrame(left_col, text="Recipe — Current Shot")
         shot_lf.grid(row=2, column=0, sticky="new", pady=(4, 0))
@@ -1713,10 +1757,11 @@ class NanoZPanel(ttk.Frame):
 
         top = ttk.Frame(tab)
         top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        ttk.Label(top, text="Latest current/voltage per board, chip, sensor (S1-S4) and heater "
-                            "(H1-H2). Avg is over readings since the last Reset Counts / run "
-                            "start. Every raw reading (not just this average) is logged to the "
-                            "SPL CSV, tagged with the die it was taken on.",
+        ttk.Label(top, text="Latest current/voltage/resistance per board, chip, sensor (S1-S4) "
+                            "and heater (H1-H2). Resistance = V/I. Avg is over readings since "
+                            "the last Reset Counts / run start. Every raw reading (not just "
+                            "this average) is logged to the SPL CSV, tagged with the die it "
+                            "was taken on.",
                  foreground="#6b7280", wraplength=700, justify="left").pack(side="left")
 
         export_frame = ttk.LabelFrame(tab, text="Data Export")
@@ -1747,17 +1792,33 @@ class NanoZPanel(ttk.Frame):
         ttk.Button(path_row, text="Save to CSV", command=self._nz_save_results_csv).pack(
             side="left", padx=10)
 
-        cols = ("port", "chip", "die", "channel", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
-        self._results_tree = ttk.Treeview(tab, columns=cols, show="headings", height=16)
+        results_frame = ttk.Frame(tab)
+        results_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        results_frame.rowconfigure(0, weight=1)
+        results_frame.columnconfigure(0, weight=1)
+
+        cols = ("port", "chip", "die", "channel", "v_now", "i_now", "r_now",
+               "v_avg", "i_avg", "r_avg", "n", "updated")
+        self._results_tree = ttk.Treeview(results_frame, columns=cols, show="headings", height=16)
         heads = [("port", "Port", 70), ("chip", "Chip", 50), ("die", "Die (row,col)", 90),
                  ("channel", "Channel", 60),
                  ("v_now", "V now (mV)", 100), ("i_now", "I now (mA)", 100),
+                 ("r_now", "R now (Ω)", 100),
                  ("v_avg", "V avg (mV)", 100), ("i_avg", "I avg (mA)", 100),
+                 ("r_avg", "R avg (Ω)", 100),
                  ("n", "N", 50), ("updated", "Updated", 140)]
         for cid, text, width in heads:
             self._results_tree.heading(cid, text=text)
             self._results_tree.column(cid, width=width, anchor="center")
-        self._results_tree.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        self._results_tree.grid(row=0, column=0, sticky="nsew")
+        results_vsb = ttk.Scrollbar(results_frame, orient="vertical",
+                                    command=self._results_tree.yview)
+        results_vsb.grid(row=0, column=1, sticky="ns")
+        results_hsb = ttk.Scrollbar(results_frame, orient="horizontal",
+                                    command=self._results_tree.xview)
+        results_hsb.grid(row=1, column=0, sticky="ew")
+        self._results_tree.configure(yscrollcommand=results_vsb.set,
+                                     xscrollcommand=results_hsb.set)
 
     def _nz_browse_export_path(self):
         path = filedialog.askdirectory(title="Choose Export Folder")
@@ -1774,7 +1835,8 @@ class NanoZPanel(ttk.Frame):
         name_parts = [p for p in (lot_id, wafer_id) if p] or ["nanoz"]
         filename = "_".join(name_parts) + "_nanoz_results.csv"
         path = os.path.join(folder, filename)
-        cols = ("port", "chip", "die", "channel", "v_now", "i_now", "v_avg", "i_avg", "n", "updated")
+        cols = ("port", "chip", "die", "channel", "v_now", "i_now", "r_now",
+                "v_avg", "i_avg", "r_avg", "n", "updated")
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -1823,12 +1885,18 @@ class NanoZPanel(ttk.Frame):
                 i_vals = [h[i_field] for h in windowed if i_field in h]
                 v_avg = sum(v_vals) / len(v_vals) if v_vals else None
                 i_avg = sum(i_vals) / len(i_vals) if i_vals else None
+                # Resistance(Ohm) = V(mV)/I(mA) - units cancel (mV/mA = V/A = Ohm),
+                # same formula the Charts tab and Pass/Fail Limits use.
+                r_now = v_now / i_now if (v_now is not None and i_now) else None
+                r_avg = v_avg / i_avg if (v_avg is not None and i_avg) else None
                 self._results_tree.insert("", "end", values=(
                     port, chip, die, label,
                     f"{v_now:.2f}" if v_now is not None else "—",
                     f"{i_now:.5f}" if i_now is not None else "—",
+                    f"{r_now:.3g}" if r_now is not None else "—",
                     f"{v_avg:.2f}" if v_avg is not None else "—",
                     f"{i_avg:.5f}" if i_avg is not None else "—",
+                    f"{r_avg:.3g}" if r_avg is not None else "—",
                     len(windowed), updated,
                 ))
 
@@ -2626,7 +2694,6 @@ class NanoZPanel(ttk.Frame):
         self._log_main(f"Discovery complete — {len(found)} board(s) found, "
                        f"{added} new, {len(self._boards)} total known.")
         self._refresh_console_boards()
-        self._refresh_active_boards_label()
         self._rebuild_recipe_columns()
         self._persist_boards()
 
@@ -2639,7 +2706,37 @@ class NanoZPanel(ttk.Frame):
         threading.Thread(target=self._connect_boards_thread, args=(targets,), daemon=True).start()
 
     def _connect_boards_thread(self, targets: list):
+        # Known boards with no live port yet this session (remembered from a
+        # previous ATA folder load, not seen via Discover Boards this run) -
+        # try each one's last-known COM port directly first, so Connect All
+        # works without a full port-by-port Discover scan as long as nothing
+        # actually moved. Only probes those specific ports, same identify
+        # handshake as a real discover, so a board that's no longer there
+        # (or a different device now on that port) is simply left unfound.
+        no_port = [b for b in targets if not b.port and b.identity.last_port]
+        if no_port:
+            last_ports = sorted({b.identity.last_port for b in no_port})
+            self.after(0, lambda n=len(no_port), lp=last_ports: self._log_main(
+                f"Connect All: trying last-known port(s) for {n} known board(s) with no "
+                f"live port yet — {', '.join(lp)}."))
+            found = nzb.discover_boards(
+                ports=last_ports, log=lambda m: self.after(0, lambda m=m: self._log(m)))
+            found_by_sn = {f.serial_number: f for f in found if f.serial_number}
+            for board in no_port:
+                ident = found_by_sn.get(board.identity.serial_number)
+                if ident:
+                    board.port = ident.port
+                    self.after(0, lambda ident=ident: self._add_board(ident))
+                else:
+                    self.after(0, lambda b=board: self._log_main(
+                        f"Connect All: {b.identity.serial_number or '(no S/N)'} not found on "
+                        f"its last-known port {b.identity.last_port} — run Discover Boards to "
+                        f"relocate it."))
+            self.after(0, self._persist_boards)
+
         for board in targets:
+            if not board.port:
+                continue  # no live port - already logged above, needs Discover Boards
             was_error = board.state == "error"
             try:
                 board.reconnect() if was_error else board.start()
@@ -2653,7 +2750,6 @@ class NanoZPanel(ttk.Frame):
                 self.after(0, lambda p=board.port, e=e: self._log(f"{p}: connect failed — {e}"))
         self.after(0, lambda: self._log_main(
             f"{sum(1 for b in targets if b.state == 'connected')}/{len(targets)} board(s) connected."))
-        self.after(0, self._refresh_active_boards_label)
 
     def _disconnect_boards(self):
         if self._running:
@@ -2672,7 +2768,6 @@ class NanoZPanel(ttk.Frame):
                 p, self._board_status_text(b)))
         self.after(0, lambda: self._log_main(
             f"{len(targets)} board(s) disconnected (ports closed)."))
-        self.after(0, self._refresh_active_boards_label)
 
     def _set_board_status(self, port: str, status: str):
         iid = self._board_rows.get(port)
@@ -2759,14 +2854,6 @@ class NanoZPanel(ttk.Frame):
         self._log_main(f"Refresh Status — {connected} connected, {errored} error(s), "
                        f"{idle} not connected ({len(self._boards)} known).")
 
-    def _refresh_active_boards_label(self):
-        active = [b for b in self._boards.values() if b.state == "connected"]
-        if not active:
-            self.active_boards_var.set("No boards connected yet — see the Setup tab.")
-        else:
-            self.active_boards_var.set(
-                f"{len(active)} board(s) ready: " + ", ".join(b.port for b in active))
-
     def on_ata_folder_loaded(self, folder_path: str):
         n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
         if n:
@@ -2786,7 +2873,6 @@ class NanoZPanel(ttk.Frame):
             self._log_main(f"Remembered {added} NanoZ board(s) from this ATA folder "
                            f"— Connect All once they're plugged in.")
             self._refresh_console_boards()
-            self._refresh_active_boards_label()
 
         migrated = nzb.migrate_legacy_recipe(folder_path)
         if migrated:
@@ -3134,19 +3220,36 @@ class NanoZPanel(ttk.Frame):
     def _manual_next_die_thread(self):
         # Unlike the old plain "J" (cassette next-die) command, this moves
         # to the next touchdown's actual (die_column, td_start_row) as
-        # computed by Compute Recipe/the imported recipe - same movement
-        # step _recipe_thread_body takes per shot, just one shot at a time
-        # without running any boards.
-        prober = self.controller.drivers.get("prober")
+        # computed by Compute Recipe/the imported recipe.
         idx = self._next_recipe_shot_index()
+        self._move_to_shot_thread(idx, label="Next Die")
+
+    def _goto_shot(self, idx: int):
+        """Jump straight to a specific recipe shot's touchdown position -
+        used by double-clicking a row in the Run tab's Touchdown List."""
+        if self._run_guard("Go to Touchdown"):
+            return
+        if not (0 <= idx < len(self._shots)):
+            return
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
+            return
+        threading.Thread(target=self._move_to_shot_thread, args=(idx,),
+                         kwargs={"label": "Go to Touchdown"}, daemon=True).start()
+
+    def _move_to_shot_thread(self, idx: int, label: str = "Next Die"):
+        # Same movement step _recipe_thread_body takes per shot, just one
+        # shot at a time without running any boards.
+        prober = self.controller.drivers.get("prober")
         if idx >= len(self._shots):
-            self.after(0, lambda: self._log_main("Next Die: already at the last recipe shot."))
+            self.after(0, lambda: self._log_main(f"{label}: already at the last recipe shot."))
             return
         shot = self._shots[idx]
         row, die_col = shot.get("td_start_row"), shot.get("die_column")
         if row is None or die_col is None:
             self.after(0, lambda: self._log_main(
-                f"Next Die: shot {idx + 1} ('{shot.get('label', '')}') has no touchdown "
+                f"{label}: shot {idx + 1} ('{shot.get('label', '')}') has no touchdown "
                 "position."))
             return
         self.after(0, lambda i=idx, s=shot: self._show_current_shot(i, s))
@@ -3163,10 +3266,10 @@ class NanoZPanel(ttk.Frame):
                 self.after(0, lambda: self._log_main(
                     "STB=90 — probing stop (<STOP> pushed), stopping."))
                 return
-            self.after(0, lambda stb=stb: self._log(f"<< STB={stb}  (Next Die complete)"))
+            self.after(0, lambda stb=stb: self._log(f"<< STB={stb}  ({label} complete)"))
             self._ensure_separated(prober, stb)
         except Exception as e:
-            self.after(0, lambda e=e: self._log_main(f"Next Die error: {e}"))
+            self.after(0, lambda e=e: self._log_main(f"{label} error: {e}"))
             return
         self._current_rc = (row, die_col)
         self._current_touchdown = (row, die_col)
@@ -3174,6 +3277,7 @@ class NanoZPanel(ttk.Frame):
         self.after(0, lambda: self.manual_xy_var.set(f"X: {die_col:.0f}  Y: {row:.0f}"))
         self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
         self.after(0, self._update_position_window)
+        self.after(0, lambda i=idx: self._select_touchdown_row(i))
 
     def _manual_unload(self):
         if self._run_guard("Unload"):

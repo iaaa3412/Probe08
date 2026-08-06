@@ -52,6 +52,12 @@ class BoardIdentity:
     usb_id: str
     slot0: Optional[int] = None  # physical probe-head slot (1..N) wired to chip 0
     slot1: Optional[int] = None  # physical probe-head slot (1..N) wired to chip 1
+    # Last COM port this board was actually found on, persisted purely as a
+    # hint so Connect All can try it directly instead of requiring a full
+    # Discover Boards scan every session - NOT identity (see save_known_boards),
+    # since Windows can still reassign it; if the board isn't there anymore
+    # this hint just fails quietly and the user re-runs Discover Boards.
+    last_port: Optional[str] = None
 
     def chip_slots(self) -> dict:
         return {"0": self.slot0, "1": self.slot1}
@@ -580,23 +586,27 @@ BOARDS_MEMORY_FILENAME = "ata_nanoz_boards.json"
 def save_known_boards(folder, identities: list) -> None:
     """Persist known boards keyed by serial number, NOT COM port - a board's
     port is assigned by Windows on connect and can (and does) change across
-    replugs/reboots, so it's not a stable identity and isn't saved. Dedupes
-    by serial_number defensively (last one wins) so a transient in-memory
-    duplicate never gets written twice."""
+    replugs/reboots, so it's not a stable identity and isn't saved. The
+    current port IS saved separately as "last_port" though - purely a hint
+    (see BoardIdentity.last_port), not identity. Dedupes by serial_number
+    defensively (last one wins) so a transient in-memory duplicate never
+    gets written twice."""
     by_sn: dict[str, dict] = {}
     for i in identities:
         by_sn[i.serial_number or f"(no S/N) {i.port}"] = {
             "serial_number": i.serial_number, "firmware": i.firmware,
             "signature": i.signature, "usb_id": i.usb_id, "slot0": i.slot0, "slot1": i.slot1,
+            "last_port": i.port or i.last_port or None,
         }
     path = Path(folder) / BOARDS_MEMORY_FILENAME
     path.write_text(json.dumps(list(by_sn.values()), indent=2), encoding="utf-8")
 
 
 def load_known_boards(folder) -> list[BoardIdentity]:
-    """Returns each known board with port="" - its real port (if any) is
-    only learned by actually discovering it live on some COM port this
-    session; see save_known_boards for why port isn't persisted."""
+    """Returns each known board with port="" - its real, LIVE port (if any)
+    is only confirmed by actually finding it this session (Discover Boards,
+    or Connect All trying last_port directly); see save_known_boards for why
+    port itself isn't persisted, only last_port as a hint."""
     path = Path(folder) / BOARDS_MEMORY_FILENAME
     if not path.is_file():
         return []
@@ -612,6 +622,7 @@ def load_known_boards(folder) -> list[BoardIdentity]:
             # Legacy single-slot files (pre-two-chip-per-board) had "slot" -> migrate to slot0.
             slot0=row.get("slot0", row.get("slot")),
             slot1=row.get("slot1"),
+            last_port=row.get("last_port"),
         )
         for row in rows
     ]
