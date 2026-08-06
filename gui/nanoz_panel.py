@@ -83,6 +83,8 @@ class NanoZPanel(ttk.Frame):
         self._spl_history: dict[tuple[str, str], "collections.deque"] = {}
         self._env_history: dict[str, "collections.deque"] = {}
         self._cycle_start_time: "dt.datetime | None" = None
+        self._chart_follow_live = True
+        self._chart_pinned_time: "dt.datetime | None" = None
         self._mark_cycle_start()
         self._shots: list[dict] = []
         self._recipe_name_var = tk.StringVar(value="")
@@ -2470,8 +2472,11 @@ class NanoZPanel(ttk.Frame):
         if self._chart_programmatic_xlim:
             return
         # A real user pan/zoom (toolbar) moved the view - stop auto-scrolling
-        # so _redraw_charts doesn't yank it back to the live edge every cycle.
+        # so _redraw_charts doesn't yank it back to the live edge every cycle,
+        # and drop any cycle-start pin too so it doesn't fight the user by
+        # snapping back on the next 300ms redraw.
         self._chart_follow_live = False
+        self._chart_pinned_time = None
 
     def _on_chart_button_press(self, _event):
         # Fires on any mouse-down inside the chart canvas, including the
@@ -2480,9 +2485,11 @@ class NanoZPanel(ttk.Frame):
         # sneak in a redraw mid-drag and snap the view back to live before
         # the drag itself has moved anything yet.
         self._chart_follow_live = False
+        self._chart_pinned_time = None
 
     def _chart_resume_live(self):
         self._chart_follow_live = True
+        self._chart_pinned_time = None
         self._redraw_charts()
 
     def _redraw_charts(self, preserve_view: bool = False):
@@ -2555,13 +2562,24 @@ class NanoZPanel(ttk.Frame):
         self._chart_ax_i.set_title(
             f"Sensor {s_metric} ({self._SENSOR_METRIC_UNITS[s_metric]}) — SPL (both chips)", fontsize=9)
         self._chart_ax_t.set_title("Temperature (°C) — ENV", fontsize=9)
-        live_note = "" if self._chart_follow_live else "  [PAUSED — ▶ Jump to Live to resume auto-scroll]"
+        if self._chart_follow_live:
+            live_note = ""
+        elif self._chart_pinned_time is not None:
+            live_note = "  [PAUSED at cycle start — ▶ Jump to Live to resume auto-scroll]"
+        else:
+            live_note = "  [PAUSED — ▶ Jump to Live to resume auto-scroll]"
         self._chart_ax_t.set_xlabel(f"time (s, board {port or '—'}){live_note}")
 
         self._chart_programmatic_xlim = True
         try:
             if self._chart_follow_live and not preserve_view:
                 self._chart_ax_v.set_xlim(max(0.0, t_max - self._CHART_WINDOW_S), max(t_max, self._CHART_WINDOW_S))
+            elif self._chart_pinned_time is not None and not preserve_view:
+                # Stay put at whichever cycle most recently started, instead
+                # of drifting with new data or snapping back to wherever the
+                # view happened to be before - only Jump to Live moves it.
+                pin_elapsed = max(0.0, (self._chart_pinned_time - t0).total_seconds())
+                self._chart_ax_v.set_xlim(pin_elapsed, pin_elapsed + self._CHART_WINDOW_S)
             else:
                 self._chart_ax_v.set_xlim(prev_xlim)
         finally:
@@ -2949,6 +2967,7 @@ class NanoZPanel(ttk.Frame):
         except ValueError:
             messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
             return
+        self._mark_cycle_start(pin_chart=True)
         self._console_send(f"run {cycle}")
 
     def _console_calib_bang(self):
@@ -3383,7 +3402,7 @@ class NanoZPanel(ttk.Frame):
                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected and allowed to "
                 "run (per the wafer plan) at the current position window.")
             return
-        self._mark_cycle_start()
+        self._mark_cycle_start(pin_chart=True)
         for board in active:
             board.run_cycle(0)
         self._log_main(f"Run Cycle 0 triggered on {len(active)} active board(s) for this "
@@ -3887,7 +3906,7 @@ class NanoZPanel(ttk.Frame):
     def _trigger_cycle_and_wait(self, boards: list, cycle: int, duration_s: float, label: str) -> bool:
         self._touchdown_errors = 0
         self._touchdown_packets = 0
-        self._mark_cycle_start()
+        self._mark_cycle_start(pin_chart=True)
         for board in boards:
             board.run_cycle(cycle)
         self.after(0, lambda: self._log_main(
@@ -3949,8 +3968,17 @@ class NanoZPanel(ttk.Frame):
         self.after(0, self._update_pass_fail_display)
         self.after(0, lambda: self.wafer_map.update_die(row, col, status))
 
-    def _mark_cycle_start(self):
+    def _mark_cycle_start(self, pin_chart: bool = False):
         self._cycle_start_time = dt.datetime.now() - dt.timedelta(milliseconds=5)
+        if pin_chart:
+            # A real cycle just started on some board - freeze the Charts
+            # tab there (stop live-scrolling, stop drifting) so the user can
+            # actually watch this cycle instead of the view running away
+            # from it; only Jump to Live moves it again.
+            self._chart_follow_live = False
+            self._chart_pinned_time = self._cycle_start_time
+            if hasattr(self, "_chart_canvas"):
+                self.after(0, self._redraw_charts)
 
     def _reset_counts(self):
         self._pass_count = 0
