@@ -2750,6 +2750,12 @@ class NanoZPanel(ttk.Frame):
                 self.after(0, lambda p=board.port, e=e: self._log(f"{p}: connect failed — {e}"))
         self.after(0, lambda: self._log_main(
             f"{sum(1 for b in targets if b.state == 'connected')}/{len(targets)} board(s) connected."))
+        # Other tabs (Console/board picker, Charts, NanoZ_EK, Recipe) all
+        # read live board state (port, connected/not) off self._boards - none
+        # of that changes shape here, but the labels/status text they show
+        # do, so they need an explicit refresh, same as after Discover.
+        self.after(0, self._refresh_console_boards)
+        self.after(0, self._rebuild_recipe_columns)
 
     def _disconnect_boards(self):
         if self._running:
@@ -2768,6 +2774,8 @@ class NanoZPanel(ttk.Frame):
                 p, self._board_status_text(b)))
         self.after(0, lambda: self._log_main(
             f"{len(targets)} board(s) disconnected (ports closed)."))
+        self.after(0, self._refresh_console_boards)
+        self.after(0, self._rebuild_recipe_columns)
 
     def _set_board_status(self, port: str, status: str):
         iid = self._board_rows.get(port)
