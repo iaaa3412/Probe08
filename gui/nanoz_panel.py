@@ -85,6 +85,7 @@ class NanoZPanel(ttk.Frame):
         self._cycle_start_time: "dt.datetime | None" = None
         self._chart_follow_live = True
         self._chart_pinned_time: "dt.datetime | None" = None
+        self._chart_t0_by_port: dict[str, "dt.datetime"] = {}
         self._mark_cycle_start()
         self._shots: list[dict] = []
         self._recipe_name_var = tk.StringVar(value="")
@@ -2513,9 +2514,22 @@ class NanoZPanel(ttk.Frame):
         self._chart_ax_i.clear()
         self._chart_ax_t.clear()
 
-        candidates = [self._pkt_time(h[0]) for h in (*hist_by_chip.values(), env_hist) if h]
-        candidates = [t for t in candidates if t is not None]
-        t0 = min(candidates) if candidates else dt.datetime.now()
+        # t0 is cached per port and set ONCE, from the first packet ever seen
+        # for it - NOT recomputed from history[0] every redraw, since
+        # _spl_history/_env_history are rolling deques (maxlen=300) whose
+        # oldest entry keeps advancing as new data evicts old. Recomputing
+        # t0 from that rolling oldest-entry made "elapsed seconds" measure
+        # roughly "how deep the rolling window currently is" instead of
+        # actual time since data started - constant-ish once the buffer is
+        # full, which is why a cycle-start pin (elapsed_seconds(pinned_time,
+        # t0)) kept landing at the same spot no matter when the cycle
+        # actually ran.
+        if port and port not in self._chart_t0_by_port:
+            candidates = [self._pkt_time(h[0]) for h in (*hist_by_chip.values(), env_hist) if h]
+            candidates = [t for t in candidates if t is not None]
+            if candidates:
+                self._chart_t0_by_port[port] = min(candidates)
+        t0 = self._chart_t0_by_port.get(port, dt.datetime.now())
         t_max = 0.0
         visible = self._chart_visible_vars
         chip_visible = self._chart_chip_visible_vars
