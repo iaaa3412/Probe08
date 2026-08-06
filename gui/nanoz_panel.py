@@ -13,7 +13,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
-from instruments.accretech_uf200r import AccretechUF200R
 from pma_wafer_panel import pma_shots_to_grid, merge_with_accretech, centroid_offset
 import instruments.nanoz_board as nzb
 
@@ -72,6 +71,13 @@ class NanoZPanel(ttk.Frame):
         self._spl_path: str | None = None
         self._env_path: str | None = None
         self._latest_spl: dict[tuple[str, str], dict] = {}
+        # Global Pass/Fail Limits (Setup tab) - one metric + one min/max per
+        # sensor (S1-S4), applied to every die's own S1-S4 readings during a
+        # Recipe run. Blank bound = that side isn't checked for that sensor.
+        self._pf_metric_var = tk.StringVar(value="Current")
+        self._pf_limit_vars: dict[int, tuple] = {
+            s: (tk.StringVar(value=""), tk.StringVar(value="")) for s in (1, 2, 3, 4)
+        }
         self._latest_env: dict[str, dict] = {}
         self._latest_eep: dict[str, dict] = {}
         self._spl_history: dict[tuple[str, str], "collections.deque"] = {}
@@ -124,7 +130,6 @@ class NanoZPanel(ttk.Frame):
         self._build_recipe_tab(sub_nb)
         self._build_wafer_map_tab(sub_nb)
         self._build_run_tab(sub_nb)
-        self._build_console_tab(sub_nb)
         self._build_charts_tab(sub_nb)
         self._build_results_tab(sub_nb)
         self._build_nanoz_ek_tab(sub_nb)
@@ -140,17 +145,41 @@ class NanoZPanel(ttk.Frame):
         log_sb.grid(row=0, column=1, sticky="ns", pady=2)
         self.log_text.grid(row=0, column=0, sticky="nsew", padx=(2, 0), pady=2)
 
+    def _make_scrollable_tab(self, nb, title: str) -> ttk.Frame:
+        """Adds a tab to nb that scrolls vertically (mouse wheel or the
+        scrollbar) once its content is taller than the window - same Canvas
+        + Scrollbar + inner-Frame pattern as build_address_panel in
+        instrument_connection_panel.py. Returns the inner frame to build
+        the tab's actual content into."""
+        outer = ttk.Frame(nb)
+        nb.add(outer, text=title)
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        inner = ttk.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
+
+        def _wheel(e):
+            canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        canvas.bind("<MouseWheel>", _wheel)
+        inner.bind("<MouseWheel>", _wheel)
+        inner.nb_page = outer  # the actual notebook page, for nb.select(...)
+        return inner
+
     def _build_setup_tab(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Setup")
+        tab = self._make_scrollable_tab(nb, "Setup")
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(0, weight=1)
 
-        split = ttk.PanedWindow(tab, orient="vertical")
-        split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-
-        boards_lf = ttk.LabelFrame(split, text="NanoZ Boards  (all connected boards are always live)")
-        split.add(boards_lf, weight=3)
+        boards_lf = ttk.LabelFrame(tab, text="NanoZ Boards  (all connected boards are always live)")
+        boards_lf.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
 
         brow = ttk.Frame(boards_lf)
         brow.pack(fill="x", padx=6, pady=(6, 2))
@@ -170,7 +199,8 @@ class NanoZPanel(ttk.Frame):
         ttk.Entry(brow, textvariable=self.env_interval_var, width=6).pack(side="left", padx=(4, 0))
 
         cols = ("port", "sn", "fw", "sig", "slot0", "slot1", "status", "spl", "env")
-        self._board_tree = ttk.Treeview(boards_lf, columns=cols, show="headings", height=6)
+        # height=11 - all 10 boards visible at once with no internal scroll needed.
+        self._board_tree = ttk.Treeview(boards_lf, columns=cols, show="headings", height=11)
         heads = [("port", "Port", 70), ("sn", "S/N", 100), ("fw", "Firmware", 80),
                  ("sig", "Signature", 70), ("slot0", "Slot (chip 0)", 90),
                  ("slot1", "Slot (chip 1)", 90), ("status", "Status", 280),
@@ -189,21 +219,131 @@ class NanoZPanel(ttk.Frame):
                   anchor="w", padx=6, pady=(0, 6))
         self._board_tree.bind("<Double-1>", self._on_board_tree_double_click)
 
-        prober_lf = ttk.LabelFrame(split, text="Prober")
-        split.add(prober_lf, weight=1)
-        prow = ttk.Frame(prober_lf)
-        prow.pack(fill="x", padx=6, pady=6)
-        self._btn_connect_prober = ttk.Button(prow, text="🔌 Connect Prober", command=self._connect_prober)
-        self._btn_connect_prober.pack(side="left", padx=(0, 8))
-        self.prober_status_var = tk.StringVar(value="Prober: not connected")
-        ttk.Label(prow, textvariable=self.prober_status_var, foreground="#6b7280").pack(side="left")
+        # Board Console - was its own tab; Connect Prober lived here too but
+        # is redundant (the Instruments tab already connects the same shared
+        # prober driver), so this section replaces it entirely.
+        console_lf = ttk.LabelFrame(tab, text="Board Console")
+        console_lf.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 8))
+        console_lf.columnconfigure(0, weight=1)
+
+        pick = ttk.Frame(console_lf)
+        pick.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 4))
+        ttk.Label(pick, text="Board:").pack(side="left")
+        self.console_board_var = tk.StringVar(value="")
+        self._console_board_label_var = tk.StringVar(value="")
+        self._console_board_cb = ttk.Combobox(
+            pick, textvariable=self._console_board_label_var, state="readonly", width=26)
+        self._console_board_cb.pack(side="left", padx=(4, 12))
+        self._console_board_cb.bind("<<ComboboxSelected>>", self._on_console_board_picked)
+        ttk.Label(pick, text="Chip:").pack(side="left")
+        self.console_chip_var = tk.StringVar(value="0")
+        self._console_chip_cb = ttk.Combobox(
+            pick, textvariable=self.console_chip_var, state="readonly", width=3,
+            values=("0", "1"))
+        self._console_chip_cb.pack(side="left", padx=(4, 2))
+        self._console_chip_cb.bind("<<ComboboxSelected>>",
+                                   lambda _e: self._refresh_console_reading())
+        ttk.Label(pick, text="(0=right, 1=left, per board's NANOZ-logo-up orientation)",
+                 foreground="#6b7280").pack(side="left", padx=(0, 12))
+
+        cmds = ttk.LabelFrame(console_lf, text="Commands")
+        cmds.grid(row=1, column=0, sticky="ew", padx=6)
+        crow1 = ttk.Frame(cmds)
+        crow1.pack(fill="x", padx=6, pady=(6, 2))
+        ttk.Button(crow1, text="ver", width=10,
+                  command=lambda: self._console_send("ver")).pack(side="left", padx=2)
+        ttk.Button(crow1, text="whoami", width=10,
+                  command=lambda: self._console_send("whoami")).pack(side="left", padx=2)
+        ttk.Button(crow1, text="#env?", width=10,
+                  command=lambda: self._console_send("#env?")).pack(side="left", padx=2)
+        ttk.Button(crow1, text="calib ?", width=10,
+                  command=lambda: self._console_send("calib ?")).pack(side="left", padx=2)
+        ttk.Button(crow1, text="⚠ calib!", width=10,
+                  command=self._console_calib_bang).pack(side="left", padx=2)
+        ttk.Button(crow1, text="⚠ cleep", width=10,
+                  command=self._console_cleep).pack(side="left", padx=2)
+
+        crow2 = ttk.Frame(cmds)
+        crow2.pack(fill="x", padx=6, pady=(2, 6))
+        ttk.Label(crow2, text="Cycle #:").pack(side="left")
+        self.console_cycle_var = tk.StringVar(value="0")
+        ttk.Entry(crow2, textvariable=self.console_cycle_var, width=5).pack(side="left", padx=(4, 8))
+        ttk.Button(crow2, text="▶ run", command=self._console_run).pack(side="left", padx=2)
+        ttk.Button(crow2, text="⏸ pause",
+                  command=lambda: self._console_send("pause")).pack(side="left", padx=2)
+        ttk.Separator(crow2, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(crow2, text="Raw command:").pack(side="left")
+        self.console_raw_var = tk.StringVar(value="")
+        ttk.Entry(crow2, textvariable=self.console_raw_var, width=16).pack(side="left", padx=(4, 4))
+        ttk.Button(crow2, text="Send", command=self._console_send_raw).pack(side="left", padx=2)
+
+        crow3 = ttk.Frame(cmds)
+        crow3.pack(fill="x", padx=6, pady=(0, 6))
+        ttk.Label(crow3, text="Read EEPROM — addr:").pack(side="left")
+        self.console_eep_addr_var = tk.StringVar(value="0")
+        ttk.Entry(crow3, textvariable=self.console_eep_addr_var, width=8).pack(
+            side="left", padx=(4, 8))
+        ttk.Label(crow3, text="len:").pack(side="left")
+        self.console_eep_len_var = tk.StringVar(value="64")
+        ttk.Entry(crow3, textvariable=self.console_eep_len_var, width=6).pack(
+            side="left", padx=(4, 8))
+        ttk.Button(crow3, text="Read", command=self._console_read_eeprom).pack(side="left", padx=2)
+        ttk.Label(crow3, text="Read-only — rdeep does not run or change anything on the "
+                             "board. No known map of what cycle/sequence data lives at "
+                             "which address yet.",
+                 foreground="#6b7280", font=("Segoe UI", 8), wraplength=420,
+                 justify="left").pack(side="left", padx=(10, 0))
+
+        reading_lf = ttk.LabelFrame(console_lf, text="Latest Reading")
+        reading_lf.grid(row=2, column=0, sticky="ew", padx=6, pady=6)
+        reading_lf.columnconfigure(0, weight=1)
+
+        reading_split = ttk.PanedWindow(reading_lf, orient="horizontal")
+        reading_split.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+
+        spl_frame = ttk.Frame(reading_split)
+        reading_split.add(spl_frame, weight=1)
+        spl_frame.rowconfigure(1, weight=1)
+        spl_frame.columnconfigure(0, weight=1)
+        ttk.Label(spl_frame, text="SPL", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w")
+        self.console_spl_text = tk.Text(spl_frame, wrap="none", state="disabled",
+                                        height=14, font=("Consolas", 9))
+        self.console_spl_text.grid(row=1, column=0, sticky="nsew")
+        spl_sb = ttk.Scrollbar(spl_frame, orient="vertical", command=self.console_spl_text.yview)
+        spl_sb.grid(row=1, column=1, sticky="ns")
+        self.console_spl_text.configure(yscrollcommand=spl_sb.set)
+
+        env_frame = ttk.Frame(reading_split)
+        reading_split.add(env_frame, weight=1)
+        env_frame.rowconfigure(1, weight=1)
+        env_frame.columnconfigure(0, weight=1)
+        ttk.Label(env_frame, text="ENV", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w")
+        self.console_env_text = tk.Text(env_frame, wrap="none", state="disabled",
+                                        height=14, font=("Consolas", 9))
+        self.console_env_text.grid(row=1, column=0, sticky="nsew")
+        env_sb = ttk.Scrollbar(env_frame, orient="vertical", command=self.console_env_text.yview)
+        env_sb.grid(row=1, column=1, sticky="ns")
+        self.console_env_text.configure(yscrollcommand=env_sb.set)
+
+        eep_frame = ttk.Frame(reading_split)
+        reading_split.add(eep_frame, weight=1)
+        eep_frame.rowconfigure(1, weight=1)
+        eep_frame.columnconfigure(0, weight=1)
+        ttk.Label(eep_frame, text="EEPROM (hex)", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky="w")
+        self.console_eep_text = tk.Text(eep_frame, wrap="word", state="disabled",
+                                        height=14, font=("Consolas", 9))
+        self.console_eep_text.grid(row=1, column=0, sticky="nsew")
+        eep_sb = ttk.Scrollbar(eep_frame, orient="vertical", command=self.console_eep_text.yview)
+        eep_sb.grid(row=1, column=1, sticky="ns")
+        self.console_eep_text.configure(yscrollcommand=eep_sb.set)
 
     def _build_recipe_tab(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Recipe")
-        self._recipe_tab = tab
+        tab = self._make_scrollable_tab(nb, "Recipe")
+        self._recipe_tab = tab.nb_page
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(3, weight=1)
 
         ttk.Label(tab,
                   text="Each row is one prober shot (a single touchdown that contacts several "
@@ -257,12 +397,13 @@ class NanoZPanel(ttk.Frame):
         self._recipe_boards_lbl.pack(side="left", padx=(12, 0))
 
         tree_frame = ttk.Frame(tab)
-        tree_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         tree_frame.columnconfigure(0, weight=1)
-        self._recipe_tree = ttk.Treeview(tree_frame, columns=("seq",), show="headings", height=16,
+        # Shrunk from 16 to make room for Pass/Fail Limits below - the tab
+        # scrolls now, and the tree has its own scrollbar for longer recipes.
+        self._recipe_tree = ttk.Treeview(tree_frame, columns=("seq",), show="headings", height=8,
                                          selectmode="extended")
-        self._recipe_tree.grid(row=0, column=0, sticky="nsew")
+        self._recipe_tree.grid(row=0, column=0, sticky="ew")
         rvsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._recipe_tree.yview)
         rvsb.grid(row=0, column=1, sticky="ns")
         rhsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self._recipe_tree.xview)
@@ -270,6 +411,28 @@ class NanoZPanel(ttk.Frame):
         self._recipe_tree.configure(yscrollcommand=rvsb.set, xscrollcommand=rhsb.set)
         self._recipe_tree.bind("<Button-1>", self._on_recipe_click)
         self._recipe_tree.bind("<Double-1>", self._on_recipe_double_click)
+
+        pf_lf = ttk.LabelFrame(tab, text="Pass/Fail Limits")
+        pf_lf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        pf_row = ttk.Frame(pf_lf)
+        pf_row.pack(fill="x", padx=6, pady=6)
+        ttk.Label(pf_row, text="Metric:").pack(side="left")
+        ttk.Combobox(pf_row, textvariable=self._pf_metric_var, state="readonly", width=10,
+                    values=("Current", "Resistance")).pack(side="left", padx=(4, 16))
+        for s in (1, 2, 3, 4):
+            ttk.Label(pf_row, text=f"S{s}:").pack(side="left", padx=(0, 2))
+            mn_var, mx_var = self._pf_limit_vars[s]
+            ttk.Entry(pf_row, textvariable=mn_var, width=7).pack(side="left")
+            ttk.Label(pf_row, text="–").pack(side="left", padx=2)
+            ttk.Entry(pf_row, textvariable=mx_var, width=7).pack(side="left", padx=(0, 12))
+        ttk.Label(pf_lf,
+                  text="Each die under test has its own S1-S4 sensor pads — a die only PASSes "
+                       "if every sensor value (in the chosen metric) falls within its min/max "
+                       "here. Leave a bound blank to not check it for that sensor. Applied per "
+                       "die during Recipe runs; raw S1-S4 readings are always in the SPL CSV "
+                       "export regardless of pass/fail.",
+                  foreground="#6b7280", wraplength=760, justify="left").pack(
+                  anchor="w", padx=6, pady=(0, 6))
 
         self._rebuild_recipe_columns()
 
@@ -392,9 +555,9 @@ class NanoZPanel(ttk.Frame):
         """Legacy path: reload the .xlsx wafer plan an older, recipe-saved
         wafer_plan_path points to, if one was recorded (from back when
         Import Wafer Plan lived on the Recipe tab and always saved a recipe).
-        New imports remember their plan independent of any recipe - see
-        _autoload_wafer_plan / nzb.save_wafer_plan_path - this only still
-        matters for recipes saved before that change."""
+        New imports copy themselves into the ATA folder at a fixed name
+        instead (nzb.wafer_plan_path_in_folder) - this only still matters
+        for recipes saved before that change."""
         path = nzb.get_recipe_wafer_plan_path(folder, name)
         if path:
             self._autoload_wafer_plan(path, note=f"Recipe '{name}' remembers wafer plan ")
@@ -597,35 +760,44 @@ class NanoZPanel(ttk.Frame):
             f"— not saved yet, use Save As… on the Recipe tab to keep this.")
 
     def _import_wafer_plan(self):
+        folder = self._nanoz_ata_folder
+        if not folder:
+            messagebox.showerror("No ATA Folder",
+                                 "Load an ATA folder from the toolbar first — the imported "
+                                 "wafer plan is copied into that folder so it doesn't depend "
+                                 "on wherever the source .xlsx happens to be.")
+            return
         path = filedialog.askopenfilename(
             title="Import Wafer Plan",
             filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
         if not path:
             return
-        threading.Thread(target=self._import_wafer_plan_thread, args=(path,), daemon=True).start()
+        threading.Thread(target=self._import_wafer_plan_thread, args=(folder, path),
+                         daemon=True).start()
 
-    def _import_wafer_plan_thread(self, path: str):
-        # Just parses the plan and hands it to the Wafer Map tab's Probe Plan
-        # view - does NOT touch self._shots/build a recipe. Compute Recipe
-        # (Run tab) is what turns a wafer plan into a recipe now; this button
-        # only exists to load the plan so Select Plan/Compute Recipe have
-        # something to work from.
+    def _import_wafer_plan_thread(self, folder: str, path: str):
+        # Copies the picked .xlsx into the ATA folder at a fixed name first,
+        # then parses/uses THAT copy - the source the user picked (e.g.
+        # references/nautilusprobeplan.xlsx) is only ever a template/example,
+        # the folder's own copy is the one Select Plan/Compute Recipe and
+        # future folder reloads actually work from. Does NOT touch
+        # self._shots/build a recipe - Compute Recipe (Run tab) is what
+        # turns a wafer plan into a recipe now.
         try:
-            plan = nzb.load_wafer_plan(path)
+            dest = nzb.import_wafer_plan_into_folder(folder, path)
+            plan = nzb.load_wafer_plan(dest)
         except Exception as e:
             self.after(0, lambda e=e: messagebox.showerror("Import Failed", str(e)))
             return
         stats = nzb.wafer_plan_stats(plan)
-        folder = self._nanoz_ata_folder
 
         def _finish():
             self._wafer_plan = plan
-            self._wafer_plan_path = path
-            if folder:
-                nzb.save_wafer_plan_path(folder, path)
+            self._wafer_plan_path = dest
             self._nzmap_source_var.set("probe_plan")
             self._redraw_nanoz_wafer_map()
-            msg = (f"Wafer plan imported — {len(plan.dies)} die(s) on Die Map, "
+            msg = (f"Wafer plan imported into this ATA folder ({nzb.WAFER_PLAN_XLSX_FILENAME}) "
+                  f"— {len(plan.dies)} die(s) on Die Map, "
                   f"{len(plan.touchdowns)} touchdown(s), probe head {plan.probe_height} "
                   f"dies tall. Physical positions across all touchdowns: "
                   f"{stats['product']} product, "
@@ -942,12 +1114,14 @@ class NanoZPanel(ttk.Frame):
         return best_rc, best_item
 
     def _update_position_window(self):
-        """Draw a 1-wide x 20-tall window on the Run tab wafer map, anchored
-        at the current die (X/Y) and extending down - the same footprint as
-        one physical touchdown on the 20-slot probe head. Also records, per
-        cell, whether a die actually exists there (self._position_window_dies)
-        so the recipe/board logic can see what is (or isn't) under the head
-        right now."""
+        """Draw a single rectangle spanning a 1-wide x 20-tall window on the
+        Run tab wafer map, anchored at the current die (X/Y) and extending
+        down - the same footprint as one physical touchdown on the 20-slot
+        probe head. One outline instead of 20 individual cell outlines is
+        much easier to read at a glance. Also records, per cell, whether a
+        die actually exists there (self._position_window_dies) so the
+        recipe/board logic can see what is (or isn't) under the head right
+        now, even though only the overall box is drawn."""
         self._clear_position_window()
         self._position_window_dies = []
         row, col = self._current_rc
@@ -958,6 +1132,7 @@ class NanoZPanel(ttk.Frame):
         wm = self.wafer_map
         pitch = self._die_pitch()
         present_n = 0
+        all_coords = []
         for i in range(self._POSITION_WINDOW_SIZE):
             r, c = row + i, col
             item = wm.dies.get((r, c))
@@ -978,13 +1153,16 @@ class NanoZPanel(ttk.Frame):
                 "die_id": wm.die_ids.get((r, c), ""),
             })
             if coords:
-                x1, y1, x2, y2 = coords
-                color = "#2563eb" if present else "#ef4444"
-                rect = wm.canvas.create_rectangle(
-                    x1, y1, x2, y2, outline=color, width=3 if i == 0 else 2,
-                    dash=() if present else (3, 2))
-                wm.canvas.tag_raise(rect)
-                self._position_window_items.append(rect)
+                all_coords.append(coords)
+
+        if all_coords:
+            x1 = min(c[0] for c in all_coords)
+            y1 = min(c[1] for c in all_coords)
+            x2 = max(c[2] for c in all_coords)
+            y2 = max(c[3] for c in all_coords)
+            rect = wm.canvas.create_rectangle(x1, y1, x2, y2, outline="#2563eb", width=3)
+            wm.canvas.tag_raise(rect)
+            self._position_window_items.append(rect)
 
         self._position_window_var.set(
             f"Position window R{row}C{col} ↓{self._POSITION_WINDOW_SIZE}: "
@@ -1338,10 +1516,12 @@ class NanoZPanel(ttk.Frame):
         self._btn_manual_unload.grid(row=3, column=0, sticky="ew", padx=(0, 1), pady=1)
         self._btn_reset_counts = ttk.Button(pos_lf, text="Reset Counts", command=self._reset_counts)
         self._btn_reset_counts.grid(row=3, column=1, sticky="ew", padx=(1, 0), pady=1)
-        # Not gridded - Next Die and Measure are no longer separate manual
-        # controls. Kept unpacked, not deleted, since _LOCKABLE_WIDGETS still
-        # toggles their state alongside the rest of Manual Control.
-        self._btn_manual_next_die = ttk.Button(pos_lf, text="▶▶ Next Die (J)", command=self._manual_next_die)
+        self._btn_manual_next_die = ttk.Button(pos_lf, text="▶▶ Next Die (Recipe)",
+                                               command=self._manual_next_die)
+        self._btn_manual_next_die.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(1, 0))
+        # Not gridded - Measure is no longer a separate manual control. Kept
+        # unpacked, not deleted, since _LOCKABLE_WIDGETS still toggles its
+        # state alongside the rest of Manual Control.
         self._btn_measure = ttk.Button(pos_lf, text="Measure", command=self._manual_measure)
 
         status_lf = ttk.LabelFrame(left_col, text="Active Boards")
@@ -1431,135 +1611,6 @@ class NanoZPanel(ttk.Frame):
         self.yield_var = tk.StringVar(value="Yield: —")
         ttk.Label(stat_lf, textvariable=self.yield_var,
                   font=("Consolas", 13, "bold"), foreground="#374151").pack()
-
-    def _build_console_tab(self, nb):
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Board Console")
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(0, weight=1)
-
-        split = ttk.PanedWindow(tab, orient="vertical")
-        split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-
-        top = ttk.Frame(split)
-        split.add(top, weight=1)
-        top.columnconfigure(0, weight=1)
-
-        pick = ttk.Frame(top)
-        pick.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(pick, text="Board:").pack(side="left")
-        self.console_board_var = tk.StringVar(value="")
-        self._console_board_label_var = tk.StringVar(value="")
-        self._console_board_cb = ttk.Combobox(
-            pick, textvariable=self._console_board_label_var, state="readonly", width=26)
-        self._console_board_cb.pack(side="left", padx=(4, 12))
-        self._console_board_cb.bind("<<ComboboxSelected>>", self._on_console_board_picked)
-        ttk.Label(pick, text="Chip:").pack(side="left")
-        self.console_chip_var = tk.StringVar(value="0")
-        self._console_chip_cb = ttk.Combobox(
-            pick, textvariable=self.console_chip_var, state="readonly", width=3,
-            values=("0", "1"))
-        self._console_chip_cb.pack(side="left", padx=(4, 2))
-        self._console_chip_cb.bind("<<ComboboxSelected>>",
-                                   lambda _e: self._refresh_console_reading())
-        ttk.Label(pick, text="(0=right, 1=left, per board's NANOZ-logo-up orientation)",
-                 foreground="#6b7280").pack(side="left", padx=(0, 12))
-
-        cmds = ttk.LabelFrame(
-            top, text="Commands")
-        cmds.grid(row=1, column=0, sticky="ew")
-        crow1 = ttk.Frame(cmds)
-        crow1.pack(fill="x", padx=6, pady=(6, 2))
-        ttk.Button(crow1, text="ver", width=10,
-                  command=lambda: self._console_send("ver")).pack(side="left", padx=2)
-        ttk.Button(crow1, text="whoami", width=10,
-                  command=lambda: self._console_send("whoami")).pack(side="left", padx=2)
-        ttk.Button(crow1, text="#env?", width=10,
-                  command=lambda: self._console_send("#env?")).pack(side="left", padx=2)
-        ttk.Button(crow1, text="calib ?", width=10,
-                  command=lambda: self._console_send("calib ?")).pack(side="left", padx=2)
-        ttk.Button(crow1, text="⚠ calib!", width=10,
-                  command=self._console_calib_bang).pack(side="left", padx=2)
-        ttk.Button(crow1, text="⚠ cleep", width=10,
-                  command=self._console_cleep).pack(side="left", padx=2)
-
-        crow2 = ttk.Frame(cmds)
-        crow2.pack(fill="x", padx=6, pady=(2, 6))
-        ttk.Label(crow2, text="Cycle #:").pack(side="left")
-        self.console_cycle_var = tk.StringVar(value="0")
-        ttk.Entry(crow2, textvariable=self.console_cycle_var, width=5).pack(side="left", padx=(4, 8))
-        ttk.Button(crow2, text="▶ run", command=self._console_run).pack(side="left", padx=2)
-        ttk.Button(crow2, text="⏸ pause",
-                  command=lambda: self._console_send("pause")).pack(side="left", padx=2)
-        ttk.Separator(crow2, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Label(crow2, text="Raw command:").pack(side="left")
-        self.console_raw_var = tk.StringVar(value="")
-        ttk.Entry(crow2, textvariable=self.console_raw_var, width=16).pack(side="left", padx=(4, 4))
-        ttk.Button(crow2, text="Send", command=self._console_send_raw).pack(side="left", padx=2)
-
-        crow3 = ttk.Frame(cmds)
-        crow3.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Label(crow3, text="Read EEPROM — addr:").pack(side="left")
-        self.console_eep_addr_var = tk.StringVar(value="0")
-        ttk.Entry(crow3, textvariable=self.console_eep_addr_var, width=8).pack(
-            side="left", padx=(4, 8))
-        ttk.Label(crow3, text="len:").pack(side="left")
-        self.console_eep_len_var = tk.StringVar(value="64")
-        ttk.Entry(crow3, textvariable=self.console_eep_len_var, width=6).pack(
-            side="left", padx=(4, 8))
-        ttk.Button(crow3, text="Read", command=self._console_read_eeprom).pack(side="left", padx=2)
-        ttk.Label(crow3, text="Read-only — rdeep does not run or change anything on the "
-                             "board. No known map of what cycle/sequence data lives at "
-                             "which address yet.",
-                 foreground="#6b7280", font=("Segoe UI", 8), wraplength=420,
-                 justify="left").pack(side="left", padx=(10, 0))
-
-        reading_lf = ttk.LabelFrame(split, text="Latest Reading")
-        split.add(reading_lf, weight=2)
-        reading_lf.rowconfigure(0, weight=1)
-        reading_lf.columnconfigure(0, weight=1)
-
-        reading_split = ttk.PanedWindow(reading_lf, orient="horizontal")
-        reading_split.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-
-        spl_frame = ttk.Frame(reading_split)
-        reading_split.add(spl_frame, weight=1)
-        spl_frame.rowconfigure(1, weight=1)
-        spl_frame.columnconfigure(0, weight=1)
-        ttk.Label(spl_frame, text="SPL", font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=0, sticky="w")
-        self.console_spl_text = tk.Text(spl_frame, wrap="none", state="disabled",
-                                        height=14, font=("Consolas", 9))
-        self.console_spl_text.grid(row=1, column=0, sticky="nsew")
-        spl_sb = ttk.Scrollbar(spl_frame, orient="vertical", command=self.console_spl_text.yview)
-        spl_sb.grid(row=1, column=1, sticky="ns")
-        self.console_spl_text.configure(yscrollcommand=spl_sb.set)
-
-        env_frame = ttk.Frame(reading_split)
-        reading_split.add(env_frame, weight=1)
-        env_frame.rowconfigure(1, weight=1)
-        env_frame.columnconfigure(0, weight=1)
-        ttk.Label(env_frame, text="ENV", font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=0, sticky="w")
-        self.console_env_text = tk.Text(env_frame, wrap="none", state="disabled",
-                                        height=14, font=("Consolas", 9))
-        self.console_env_text.grid(row=1, column=0, sticky="nsew")
-        env_sb = ttk.Scrollbar(env_frame, orient="vertical", command=self.console_env_text.yview)
-        env_sb.grid(row=1, column=1, sticky="ns")
-        self.console_env_text.configure(yscrollcommand=env_sb.set)
-
-        eep_frame = ttk.Frame(reading_split)
-        reading_split.add(eep_frame, weight=1)
-        eep_frame.rowconfigure(1, weight=1)
-        eep_frame.columnconfigure(0, weight=1)
-        ttk.Label(eep_frame, text="EEPROM (hex)", font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=0, sticky="w")
-        self.console_eep_text = tk.Text(eep_frame, wrap="word", state="disabled",
-                                        height=14, font=("Consolas", 9))
-        self.console_eep_text.grid(row=1, column=0, sticky="nsew")
-        eep_sb = ttk.Scrollbar(eep_frame, orient="vertical", command=self.console_eep_text.yview)
-        eep_sb.grid(row=1, column=1, sticky="ns")
-        self.console_eep_text.configure(yscrollcommand=eep_sb.set)
 
     def _build_charts_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -2298,12 +2349,41 @@ class NanoZPanel(ttk.Frame):
     _SENSOR_METRIC_UNITS = {"Current": "mA", "Resistance": "Ω"}
     _HEATER_METRIC_UNITS = {"Voltage": "mV", "Current": "mA", "Power": "mW", "Resistance": "Ω"}
 
-    def _sensor_metric_value(self, rec: dict, s: int):
-        metric = self._chart_sensor_metric_var.get()
+    @staticmethod
+    def _sensor_metric_value_for(rec: dict, s: int, metric: str):
         if metric == "Resistance":
             v, i = rec.get(f"dac_mv_s{s}"), rec.get(f"adc_current_ma_s{s}")
             return v / i if (v is not None and i) else None
         return rec.get(f"adc_current_ma_s{s}")
+
+    def _sensor_metric_value(self, rec: dict, s: int):
+        return self._sensor_metric_value_for(rec, s, self._chart_sensor_metric_var.get())
+
+    def _evaluate_die_pass_fail(self, port: str, chip: str) -> "bool | None":
+        """AND all 4 sensors' (S1-S4) most recent reading for this board+chip
+        (i.e. this one physical die - each die has its own S1-S4 pads) against
+        the global Pass/Fail Limits (Setup tab). Returns None if there's no
+        SPL reading yet for this board+chip to check."""
+        rec = self._latest_spl.get((port, chip))
+        if rec is None:
+            return None
+        metric = self._pf_metric_var.get()
+        for s in (1, 2, 3, 4):
+            mn_var, mx_var = self._pf_limit_vars[s]
+            mn, mx = mn_var.get().strip(), mx_var.get().strip()
+            if not mn and not mx:
+                continue
+            value = self._sensor_metric_value_for(rec, s, metric)
+            if value is None:
+                return False
+            try:
+                if mn and value < float(mn):
+                    return False
+                if mx and value > float(mx):
+                    return False
+            except ValueError:
+                continue
+        return True
 
     def _heater_metric_value(self, rec: dict, h: int):
         metric = self._chart_heater_metric_var.get()
@@ -2422,7 +2502,6 @@ class NanoZPanel(ttk.Frame):
 
     _LOCKABLE_WIDGETS = ("_cycle_entry", "_duration_entry", "_btn_discover",
                         "_btn_connect_boards", "_btn_disconnect_boards",
-                        "_btn_connect_prober",
                         "_btn_manual_zup", "_btn_manual_zdown", "_btn_manual_first_die",
                         "_btn_manual_next_die", "_btn_manual_xy", "_btn_manual_unload",
                         "_btn_measure",
@@ -2688,33 +2767,6 @@ class NanoZPanel(ttk.Frame):
             self.active_boards_var.set(
                 f"{len(active)} board(s) ready: " + ", ".join(b.port for b in active))
 
-    def _connect_prober(self):
-        existing = self.controller.drivers.get("prober")
-        if existing and existing.inst:
-            self._log_main("Prober already connected (shared with the Instruments tab).")
-            self._update_prober_status()
-            return
-        threading.Thread(target=self._connect_prober_thread, daemon=True).start()
-
-    def _connect_prober_thread(self):
-        self.after(0, lambda: self._log("Connecting to prober (GPIB)..."))
-        drv = AccretechUF200R()
-        def _finish():
-            if drv.inst:
-                self.controller.drivers["prober"] = drv
-                self._log_main("Prober connected.")
-            else:
-                self._log_main("Prober connection FAILED — check GPIB address/cabling.")
-            self._update_prober_status()
-        self.after(0, _finish)
-
-    def _update_prober_status(self):
-        drv = self.controller.drivers.get("prober")
-        if drv and drv.inst:
-            self.prober_status_var.set("Prober: connected")
-        else:
-            self.prober_status_var.set("Prober: not connected")
-
     def on_ata_folder_loaded(self, folder_path: str):
         n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
         if n:
@@ -2749,10 +2801,10 @@ class NanoZPanel(ttk.Frame):
         self._refresh_recipe_name_cb()
         self._rebuild_recipe_columns()
 
-        plan_path = nzb.load_wafer_plan_path(folder_path)
-        if not plan_path and name:
+        plan_path = nzb.wafer_plan_path_in_folder(folder_path)
+        if not os.path.isfile(plan_path) and name:
             plan_path = nzb.get_recipe_wafer_plan_path(folder_path, name)  # legacy recipes
-        if plan_path:
+        if plan_path and os.path.isfile(plan_path):
             self._autoload_wafer_plan(plan_path)
         else:
             self._wafer_plan = None
@@ -3055,11 +3107,73 @@ class NanoZPanel(ttk.Frame):
     def _manual_next_die(self):
         if self._run_guard("Next Die"):
             return
+        if not self._shots:
+            messagebox.showerror(
+                "No Recipe",
+                "No recipe shots to step through — Compute Recipe (or import a recipe) "
+                "first.")
+            return
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
+            return
         threading.Thread(target=self._manual_next_die_thread, daemon=True).start()
 
+    def _next_recipe_shot_index(self) -> int:
+        """Index into self._shots of the touchdown Next Die should move to:
+        the one after whichever shot _current_rc is currently sitting on, or
+        the first shot if the current position isn't a recognized shot
+        (fresh start, or last move was manual/from a different recipe)."""
+        row, col = self._current_rc
+        if row is not None and col is not None:
+            for i, shot in enumerate(self._shots):
+                if shot.get("td_start_row") == row and shot.get("die_column") == col:
+                    return i + 1
+        return 0
+
     def _manual_next_die_thread(self):
-        self._do_manual_call("Next Die", lambda p: p.next_die(),
-                             ">> J  (Next Die)", refresh_xy=True)
+        # Unlike the old plain "J" (cassette next-die) command, this moves
+        # to the next touchdown's actual (die_column, td_start_row) as
+        # computed by Compute Recipe/the imported recipe - same movement
+        # step _recipe_thread_body takes per shot, just one shot at a time
+        # without running any boards.
+        prober = self.controller.drivers.get("prober")
+        idx = self._next_recipe_shot_index()
+        if idx >= len(self._shots):
+            self.after(0, lambda: self._log_main("Next Die: already at the last recipe shot."))
+            return
+        shot = self._shots[idx]
+        row, die_col = shot.get("td_start_row"), shot.get("die_column")
+        if row is None or die_col is None:
+            self.after(0, lambda: self._log_main(
+                f"Next Die: shot {idx + 1} ('{shot.get('label', '')}') has no touchdown "
+                "position."))
+            return
+        self.after(0, lambda i=idx, s=shot: self._show_current_shot(i, s))
+        try:
+            self.after(0, lambda: self._log(">> D  (Separate)"))
+            prober.z_down()
+            self.after(0, lambda r=row, c=die_col: self._log(
+                f">> J  (Position die X={c} Y={r})"))
+            stb = prober.move_to_die_xy(die_col, row)
+            if stb == 81:
+                self.after(0, lambda: self._log_main("STB=81 — wafer end, stopping."))
+                return
+            if stb == 90:
+                self.after(0, lambda: self._log_main(
+                    "STB=90 — probing stop (<STOP> pushed), stopping."))
+                return
+            self.after(0, lambda stb=stb: self._log(f"<< STB={stb}  (Next Die complete)"))
+            self._ensure_separated(prober, stb)
+        except Exception as e:
+            self.after(0, lambda e=e: self._log_main(f"Next Die error: {e}"))
+            return
+        self._current_rc = (row, die_col)
+        self._current_touchdown = (row, die_col)
+        self.after(0, lambda: self.die_var.set(f"Die: R{row}C{die_col}"))
+        self.after(0, lambda: self.manual_xy_var.set(f"X: {die_col:.0f}  Y: {row:.0f}"))
+        self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
+        self.after(0, self._update_position_window)
 
     def _manual_unload(self):
         if self._run_guard("Unload"):
@@ -3567,13 +3681,24 @@ class NanoZPanel(ttk.Frame):
                 ok = self._zup_measure_zdown(prober, active_boards, cycle, duration_s, shot["label"])
                 if not self._running:
                     break
-                status = "PASS" if ok else "FAIL"
-                if status == "PASS":
-                    self._pass_count += 1
-                else:
-                    self._fail_count += 1
+                # Comms have to have worked at all (ok) - beyond that, each
+                # board+chip in this touchdown is its own physical die with
+                # its own S1-S4 pads, so each gets its own PASS/FAIL against
+                # the global Pass/Fail Limits (Setup tab), not one verdict
+                # for the whole touchdown.
+                for board in active_boards:
+                    for chip, slot in board.identity.chip_slots().items():
+                        if not slot:
+                            continue
+                        r, c = row + slot - 1, die_col
+                        verdict = self._evaluate_die_pass_fail(board.port, chip)
+                        status = "PASS" if (ok and verdict is True) else "FAIL"
+                        if status == "PASS":
+                            self._pass_count += 1
+                        else:
+                            self._fail_count += 1
+                        self.after(0, lambda r=r, c=c, s=status: self.wafer_map.update_die(r, c, s))
                 self.after(0, self._update_pass_fail_display)
-                self.after(0, lambda r=row, c=die_col, s=status: self.wafer_map.update_die(r, c, s))
 
                 idx += 1
         except Exception as e:

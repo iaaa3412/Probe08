@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
+import os
 import re
+import shutil
 import struct
 import threading
 import time
@@ -615,27 +617,26 @@ def load_known_boards(folder) -> list[BoardIdentity]:
     ]
 
 
-WAFER_PLAN_MEMORY_FILENAME = "ata_nanoz_wafer_plan.json"
+WAFER_PLAN_XLSX_FILENAME = "ata_nanoz_wafer_plan.xlsx"
 
 
-def save_wafer_plan_path(folder, path: str) -> None:
-    """Remember which .xlsx wafer plan was imported for this ATA folder,
-    independent of any recipe - Compute Recipe/Select Plan use whatever plan
-    is loaded without ever saving a recipe, so the plan needs its own place
-    to survive a folder close/reopen instead of piggybacking on recipe JSON."""
-    p = Path(folder) / WAFER_PLAN_MEMORY_FILENAME
-    p.write_text(json.dumps({"path": path}, indent=2), encoding="utf-8")
+def wafer_plan_path_in_folder(folder) -> str:
+    """The fixed path a wafer plan .xlsx lives at once imported into this ATA
+    folder - see import_wafer_plan_into_folder. Whatever the user originally
+    picked from disk (e.g. references/nautilusprobeplan.xlsx, which is only
+    an example/template) is copied here so the folder is self-contained and
+    doesn't depend on that source file still existing at its original path."""
+    return str(Path(folder) / WAFER_PLAN_XLSX_FILENAME)
 
 
-def load_wafer_plan_path(folder) -> "str | None":
-    p = Path(folder) / WAFER_PLAN_MEMORY_FILENAME
-    if not p.is_file():
-        return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data.get("path")
+def import_wafer_plan_into_folder(folder, source_path: str) -> str:
+    """Copies source_path into the ATA folder at its fixed name (overwriting
+    any previous import) and returns that new path. Does not parse it -
+    caller should load_wafer_plan the returned path to validate/use it."""
+    dest = wafer_plan_path_in_folder(folder)
+    if os.path.abspath(source_path) != os.path.abspath(dest):
+        shutil.copyfile(source_path, dest)
+    return dest
 
 
 LEGACY_RECIPE_FILENAME = "ata_nanoz_recipe.json"
