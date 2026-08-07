@@ -1685,6 +1685,8 @@ class NanoZPanel(ttk.Frame):
         self._chart_board_cb.bind(
             "<<ComboboxSelected>>",
             lambda _e: (self._on_console_board_picked(_e), self._redraw_charts()))
+        ttk.Button(pick, text="▶ Run Cycle", command=self._chart_run_cycle).pack(
+            side="left", padx=(0, 12))
         ttk.Label(pick, text="Sensors:").pack(side="left", padx=(12, 0))
         self._chart_sensor_metric_var = tk.StringVar(value="Current")
         ttk.Combobox(pick, textvariable=self._chart_sensor_metric_var, state="readonly", width=10,
@@ -3815,13 +3817,14 @@ class NanoZPanel(ttk.Frame):
         port = tree.identify_row(event.y)
         if not port:
             return
-        self._run_single_board_cycle(port)
+        self._run_single_board_cycle(port, context=" (double-clicked in current shot)")
 
-    def _run_single_board_cycle(self, port: str):
-        """Double-click a board in the Recipe - Current Shot table to fire a
-        cycle on just that board, using the Run tab's Cycle # field - same
-        one-board diagnostic convenience as Console's ▶ run, just scoped by
-        clicking the board in context instead of picking it from a dropdown."""
+    def _run_single_board_cycle(self, port: str, context: str = ""):
+        """Fire a cycle on just one board, using the Run tab's Cycle # field
+        - same one-board diagnostic convenience as Console's ▶ run, just
+        triggered from wherever that board is already in view (double-
+        clicked in Recipe - Current Shot, or ▶ Run Cycle on the Charts tab)
+        instead of picking it from a separate dropdown."""
         if self._run_guard("Run Cycle"):
             return
         board = self._boards.get(port)
@@ -3837,7 +3840,14 @@ class NanoZPanel(ttk.Frame):
         self._mark_cycle_start(pin_chart=True)
         self._arm_settling_skip([board])
         board.run_cycle(cycle)
-        self._log_main(f"Run Cycle {cycle} triggered on {port} (double-clicked in current shot).")
+        self._log_main(f"Run Cycle {cycle} triggered on {port}{context}.")
+
+    def _chart_run_cycle(self):
+        port = self.console_board_var.get()
+        if not port:
+            messagebox.showerror("No Board Selected", "Pick a board first.")
+            return
+        self._run_single_board_cycle(port, context=" (Charts tab)")
 
     def _start_recipe_run(self):
         if self._running:
