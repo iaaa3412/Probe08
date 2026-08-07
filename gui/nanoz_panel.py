@@ -82,6 +82,14 @@ class NanoZPanel(ttk.Frame):
         self._latest_eep: dict[str, dict] = {}
         self._spl_history: dict[tuple[str, str], "collections.deque"] = {}
         self._env_history: dict[str, "collections.deque"] = {}
+        # Settling: the first _SETTLING_SKIP_COUNT SPL packets after a cycle
+        # starts on a given board+chip are still charted (raw, unfiltered -
+        # useful to actually see the settling transient) but excluded from
+        # everything else "of record": _latest_spl (so Results/pass-fail
+        # never judge off a settling reading), the Results tab's averages,
+        # and the SPL CSV export.
+        self._SETTLING_SKIP_COUNT = 2
+        self._skip_spl_count: dict[tuple[str, str], int] = {}
         self._cycle_start_time: "dt.datetime | None" = None
         self._chart_follow_live = True
         self._chart_pinned_time: "dt.datetime | None" = None
@@ -1873,7 +1881,7 @@ class NanoZPanel(ttk.Frame):
         for port, chip in sorted(self._latest_spl.keys()):
             key = (port, chip)
             latest = self._latest_spl[key]
-            hist = list(self._spl_history.get(key, ()))
+            hist = [h for h in self._spl_history.get(key, ()) if h.get("_settled", True)]
             windowed = [h for h in hist if cutoff and (self._pkt_time(h) or cutoff) >= cutoff]
             if not windowed:
                 windowed = hist
@@ -1891,9 +1899,11 @@ class NanoZPanel(ttk.Frame):
                 v_avg = sum(v_vals) / len(v_vals) if v_vals else None
                 i_avg = sum(i_vals) / len(i_vals) if i_vals else None
                 # Resistance(Ohm) = V(mV)/I(mA) - units cancel (mV/mA = V/A = Ohm),
-                # same formula the Charts tab and Pass/Fail Limits use.
-                r_now = v_now / i_now if (v_now is not None and i_now) else None
-                r_avg = v_avg / i_avg if (v_avg is not None and i_avg) else None
+                # same formula the Charts tab and Pass/Fail Limits use. Sensors
+                # only - not meaningful/wanted here for H1/H2 (heaters).
+                is_sensor = label.startswith("s")
+                r_now = v_now / i_now if (is_sensor and v_now is not None and i_now) else None
+                r_avg = v_avg / i_avg if (is_sensor and v_avg is not None and i_avg) else None
                 self._results_tree.insert("", "end", values=(
                     port, chip, die, label,
                     f"{v_now:.2f}" if v_now is not None else "—",
@@ -3083,6 +3093,15 @@ class NanoZPanel(ttk.Frame):
             self.counts_var.set(f"SPL: {self._spl_total}   ENV: {self._env_total}")
         self.after(50, self._check_queue)
 
+    def _arm_settling_skip(self, boards: list):
+        """Call right when a cycle is triggered on these boards - their next
+        _SETTLING_SKIP_COUNT SPL packets (both chips) will still show up on
+        the Charts tab, but won't update _latest_spl, won't count toward the
+        Results tab's averages, and won't be written to the SPL CSV."""
+        for board in boards:
+            self._skip_spl_count[(board.port, "0")] = self._SETTLING_SKIP_COUNT
+            self._skip_spl_count[(board.port, "1")] = self._SETTLING_SKIP_COUNT
+
     def _handle_packet(self, item: dict):
         kind = item.get("kind")
         port = item.get("port")
@@ -3094,11 +3113,19 @@ class NanoZPanel(ttk.Frame):
             self._touchdown_packets += 1
             if "parse_error" in item:
                 self._touchdown_errors += 1
-            self._latest_spl[key] = item
+            remaining = self._skip_spl_count.get(key, 0)
+            settled = remaining <= 0
+            if not settled:
+                self._skip_spl_count[key] = remaining - 1
+            item["_settled"] = settled
+            # Always charted, raw - the settling transient itself is useful
+            # to see. Only "of record" data (latest/avg/CSV) skips it.
             self._spl_history.setdefault(
                 key, collections.deque(maxlen=self._CHART_HISTORY_LEN)).append(item)
-            if self._spl_path:
-                row = {k: v for k, v in item.items() if k != "kind"}
+            if settled:
+                self._latest_spl[key] = item
+            if settled and self._spl_path:
+                row = {k: v for k, v in item.items() if k not in ("kind", "_settled")}
                 try:
                     nzb.append_csv_row(self._spl_path, row)
                 except OSError as e:
@@ -3419,6 +3446,7 @@ class NanoZPanel(ttk.Frame):
                 "run (per the wafer plan) at the current position window.")
             return
         self._mark_cycle_start(pin_chart=True)
+        self._arm_settling_skip(active)
         for board in active:
             board.run_cycle(0)
         self._log_main(f"Run Cycle 0 triggered on {len(active)} active board(s) for this "
@@ -3775,6 +3803,7 @@ class NanoZPanel(ttk.Frame):
             messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
             return
         self._mark_cycle_start(pin_chart=True)
+        self._arm_settling_skip([board])
         board.run_cycle(cycle)
         self._log_main(f"Run Cycle {cycle} triggered on {port} (double-clicked in current shot).")
 
@@ -3961,6 +3990,7 @@ class NanoZPanel(ttk.Frame):
         self._touchdown_errors = 0
         self._touchdown_packets = 0
         self._mark_cycle_start(pin_chart=True)
+        self._arm_settling_skip(boards)
         for board in boards:
             board.run_cycle(cycle)
         self.after(0, lambda: self._log_main(
