@@ -1899,11 +1899,9 @@ class NanoZPanel(ttk.Frame):
                 v_avg = sum(v_vals) / len(v_vals) if v_vals else None
                 i_avg = sum(i_vals) / len(i_vals) if i_vals else None
                 # Resistance(Ohm) = V(mV)/I(mA) - units cancel (mV/mA = V/A = Ohm),
-                # same formula the Charts tab and Pass/Fail Limits use. Sensors
-                # only - not meaningful/wanted here for H1/H2 (heaters).
-                is_sensor = label.startswith("s")
-                r_now = v_now / i_now if (is_sensor and v_now is not None and i_now) else None
-                r_avg = v_avg / i_avg if (is_sensor and v_avg is not None and i_avg) else None
+                # same formula the Charts tab and Pass/Fail Limits use.
+                r_now = v_now / i_now if (v_now is not None and i_now) else None
+                r_avg = v_avg / i_avg if (v_avg is not None and i_avg) else None
                 self._results_tree.insert("", "end", values=(
                     port, chip, die, label,
                     f"{v_now:.2f}" if v_now is not None else "—",
@@ -2376,12 +2374,17 @@ class NanoZPanel(ttk.Frame):
             return False
 
     def _refresh_charts_loop(self):
-        # Only auto-redraw while following live data. A manual pan/zoom (or
-        # an in-progress drag) sets _chart_follow_live False; redrawing then
-        # would clear+replot the axes out from under the user's drag every
-        # 300ms, visually snapping the view back mid-gesture. Once paused,
-        # nothing redraws until "Jump to Live" is pressed.
-        if self._charts_tab_visible() and self._chart_follow_live:
+        # Auto-redraw while following live data, OR while pinned to a cycle
+        # start - the pin only freezes WHERE the view sits (_redraw_charts'
+        # xlim logic), it shouldn't freeze the data itself, otherwise a
+        # pinned chart would show nothing new until something else happened
+        # to trigger a redraw. A genuine manual pan/zoom (or an in-progress
+        # drag) sets both _chart_follow_live False and clears the pin;
+        # redrawing then would clear+replot the axes out from under the
+        # user's drag every 300ms, snapping the view back mid-gesture - only
+        # that state (paused, unpinned) skips redrawing until "Jump to Live".
+        if self._charts_tab_visible() and (self._chart_follow_live
+                                           or self._chart_pinned_time is not None):
             self._redraw_charts()
         self.after(300, self._refresh_charts_loop)
 
@@ -2516,8 +2519,8 @@ class NanoZPanel(ttk.Frame):
             return
         port = self.console_board_var.get()
         hist_by_chip = {
-            "0": list(self._spl_history.get((port, "0"), ())),
-            "1": list(self._spl_history.get((port, "1"), ())),
+            "0": [h for h in self._spl_history.get((port, "0"), ()) if h.get("_settled", True)],
+            "1": [h for h in self._spl_history.get((port, "1"), ()) if h.get("_settled", True)],
         }
         env_hist = list(self._env_history.get(port, ()))
 
@@ -3095,9 +3098,11 @@ class NanoZPanel(ttk.Frame):
 
     def _arm_settling_skip(self, boards: list):
         """Call right when a cycle is triggered on these boards - their next
-        _SETTLING_SKIP_COUNT SPL packets (both chips) will still show up on
-        the Charts tab, but won't update _latest_spl, won't count toward the
-        Results tab's averages, and won't be written to the SPL CSV."""
+        _SETTLING_SKIP_COUNT SPL packets (both chips) are excluded from the
+        Charts tab, _latest_spl, the Results tab's averages, and the SPL CSV
+        export - lets the sensor settle before anything treats it as real
+        data. Still stored in _spl_history itself (just filtered out when
+        read), so nothing here is actually lost."""
         for board in boards:
             self._skip_spl_count[(board.port, "0")] = self._SETTLING_SKIP_COUNT
             self._skip_spl_count[(board.port, "1")] = self._SETTLING_SKIP_COUNT
@@ -3118,8 +3123,9 @@ class NanoZPanel(ttk.Frame):
             if not settled:
                 self._skip_spl_count[key] = remaining - 1
             item["_settled"] = settled
-            # Always charted, raw - the settling transient itself is useful
-            # to see. Only "of record" data (latest/avg/CSV) skips it.
+            # Tagged (not dropped) here - _spl_history keeps every packet so
+            # nothing's lost, but Charts/_latest_spl/Results/CSV all filter
+            # on this flag so settling data never shows up anywhere.
             self._spl_history.setdefault(
                 key, collections.deque(maxlen=self._CHART_HISTORY_LEN)).append(item)
             if settled:
