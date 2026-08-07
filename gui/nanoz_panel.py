@@ -45,6 +45,14 @@ def _parse_q_response(raw: str):
 
 
 class NanoZPanel(ttk.Frame):
+    # Raw wire-protocol header chip (0/1, what's actually keyed/stored
+    # everywhere internally) -> display label matching Nanoz_EK.exe's own
+    # 1/2 numbering + confirmed physical side (see nanoz-board-protocol
+    # memory, 2026-08-03: header chip=0 -> Nanoz_EK "Chip 1" -> right side;
+    # header chip=1 -> "Chip 2" -> left side).
+    _CHIP_LABELS = {"0": "1 (right)", "1": "2 (left)"}
+    _CHIP_LABEL_TO_VALUE = {v: k for k, v in _CHIP_LABELS.items()}
+
     def __init__(self, parent, controller, main_layout):
         super().__init__(parent)
         self.controller = controller
@@ -247,15 +255,18 @@ class NanoZPanel(ttk.Frame):
         self._console_board_cb.pack(side="left", padx=(4, 12))
         self._console_board_cb.bind("<<ComboboxSelected>>", self._on_console_board_picked)
         ttk.Label(pick, text="Chip:").pack(side="left")
+        # console_chip_var stays the raw "0"/"1" wire-protocol header value -
+        # it's read as a dict key in several places (_latest_spl, history).
+        # Only the Combobox's own display text uses Nanoz_EK.exe's 1/2
+        # numbering + physical side, via the same label<->value decoupling
+        # already used for the board S/N picker.
         self.console_chip_var = tk.StringVar(value="0")
+        self._console_chip_label_var = tk.StringVar(value=self._CHIP_LABELS["0"])
         self._console_chip_cb = ttk.Combobox(
-            pick, textvariable=self.console_chip_var, state="readonly", width=3,
-            values=("0", "1"))
+            pick, textvariable=self._console_chip_label_var, state="readonly", width=14,
+            values=list(self._CHIP_LABELS.values()))
         self._console_chip_cb.pack(side="left", padx=(4, 2))
-        self._console_chip_cb.bind("<<ComboboxSelected>>",
-                                   lambda _e: self._refresh_console_reading())
-        ttk.Label(pick, text="(0=right, 1=left, per board's NANOZ-logo-up orientation)",
-                 foreground="#6b7280").pack(side="left", padx=(0, 12))
+        self._console_chip_cb.bind("<<ComboboxSelected>>", self._on_console_chip_picked)
 
         cmds = ttk.LabelFrame(console_lf, text="Commands")
         cmds.grid(row=1, column=0, sticky="ew", padx=6)
@@ -1707,7 +1718,8 @@ class NanoZPanel(ttk.Frame):
         channels_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
         ttk.Label(channels_row, text="Show chips:").pack(side="left")
         self._chart_chip_visible_vars = {}
-        for chip, text in (("0", "Chip 0 (solid)"), ("1", "Chip 1 (dashed)")):
+        for chip, text in (("0", f"Chip {self._CHIP_LABELS['0']} (solid)"),
+                          ("1", f"Chip {self._CHIP_LABELS['1']} (dashed)")):
             var = tk.BooleanVar(value=True)
             self._chart_chip_visible_vars[chip] = var
             ttk.Checkbutton(channels_row, text=text, variable=var,
@@ -2558,16 +2570,17 @@ class NanoZPanel(ttk.Frame):
             any_spl = True
             xs = self._elapsed_seconds(hist, t0)
             t_max = max(t_max, max(xs, default=0.0))
+            chip_disp = self._CHIP_LABELS[chip].split()[0]  # "1"/"2" (Nanoz_EK numbering)
             for h in (1, 2):
                 if visible[f"h{h}"].get():
                     self._plot_computed(self._chart_ax_v, xs, hist,
                                         lambda r, h=h: self._heater_metric_value(r, h),
-                                        f"chip{chip}-h{h}", linestyle=linestyle)
+                                        f"chip{chip_disp}-h{h}", linestyle=linestyle)
             for s in (1, 2, 3, 4):
                 if visible[f"s{s}"].get():
                     self._plot_computed(self._chart_ax_i, xs, hist,
                                         lambda r, s=s: self._sensor_metric_value(r, s),
-                                        f"chip{chip}-s{s}", linestyle=linestyle)
+                                        f"chip{chip_disp}-s{s}", linestyle=linestyle)
         if any_spl:
             self._chart_ax_v.legend(fontsize=6, loc="upper left", ncol=2)
             self._chart_ax_i.legend(fontsize=6, loc="upper left", ncol=4)
@@ -3004,6 +3017,12 @@ class NanoZPanel(ttk.Frame):
         port = self._board_label_to_port.get(self._console_board_label_var.get())
         if port:
             self.console_board_var.set(port)
+        self._refresh_console_reading()
+
+    def _on_console_chip_picked(self, _event=None):
+        value = self._CHIP_LABEL_TO_VALUE.get(self._console_chip_label_var.get())
+        if value:
+            self.console_chip_var.set(value)
         self._refresh_console_reading()
 
     def _console_selected_board(self):
