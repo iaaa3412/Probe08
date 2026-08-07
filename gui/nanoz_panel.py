@@ -67,7 +67,6 @@ class NanoZPanel(ttk.Frame):
         self._run_mode: str | None = None
         self._lot_thread: threading.Thread | None = None
         self._current_rc = (None, None)
-        self._current_touchdown = None  # (start_row, die_col) during a Recipe run only
         self._position_window_items: list = []  # canvas rect ids for the 1x20 position window
         self._position_window_dies: list = []  # [{"row","col","present","die_id"}, ...] current window
         self._touchdown_errors = 0
@@ -3401,7 +3400,6 @@ class NanoZPanel(ttk.Frame):
             self.after(0, lambda e=e: self._log_main(f"{label} error: {e}"))
             return
         self._current_rc = (row, die_col)
-        self._current_touchdown = (row, die_col)
         self.after(0, lambda: self.die_var.set(f"Die: R{row}C{die_col}"))
         self.after(0, lambda: self.manual_xy_var.set(f"X: {die_col:.0f}  Y: {row:.0f}"))
         self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
@@ -3774,24 +3772,27 @@ class NanoZPanel(ttk.Frame):
             self.after(0, lambda: self._finish_lot("TEST DIE COMPLETE"))
 
     def _die_provider(self, port: str, chip: "str | None"):
-        """(row, col) to tag a reading with. During a Recipe run, each board's
-        two chips sit at different physical probe-head slots on the same
-        touchdown — use that board's slot0/slot1 offset from the touchdown's
-        top row so SPL readings get the die that chip actually contacted,
-        not just the touchdown's anchor die. Falls back to the single
-        manually-tracked _current_rc for Test Die / Full Die / manual modes,
-        which probe one die at a time and have no per-chip slot concept."""
-        anchor = self._current_touchdown
-        if not anchor:
-            return self._current_rc
-        start_row, die_col = anchor
+        """(row, col) to tag a reading with - the physical die a board+chip
+        was actually testing when it produced this measurement. Anchored at
+        _current_rc, the top of whatever 1x20 position window is/was
+        current - kept in sync by every XY-moving action (manual jog, First/
+        Next Die, Recipe Run's per-shot moves, ...), not just Recipe Run -
+        offset by that board's assigned slot (physical position within the
+        window, 1-20 top to bottom, see the Setup tab's Slot columns) so
+        each chip's reading is tagged with the die it actually contacted,
+        not just the window's anchor die, for ANY cycle trigger (Run Cycle
+        (Active), a double-clicked board, Console's run, Recipe Run, ...) as
+        long as the XY position is known and that board+chip has a slot."""
+        row, col = self._current_rc
+        if row is None or col is None:
+            return (None, None)
         board = self._boards.get(port)
         slot = None
         if board and chip in ("0", "1"):
             slot = board.identity.slot0 if chip == "0" else board.identity.slot1
         if slot:
-            return (start_row + slot - 1, die_col)
-        return (start_row, die_col)
+            return (row + slot - 1, col)
+        return (row, col)
 
     def _shot_active_boards(self, shot: dict) -> list:
         excluded = shot.get("excluded_boards", set())
@@ -3941,7 +3942,6 @@ class NanoZPanel(ttk.Frame):
                     continue
 
                 self._current_rc = (row, die_col)
-                self._current_touchdown = (row, die_col)
                 die_label = f"R{row}C{die_col}"
                 self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
                 self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
@@ -3992,7 +3992,6 @@ class NanoZPanel(ttk.Frame):
                     pass
             self._running = False
             self._run_mode = None
-            self._current_touchdown = None
             self.after(0, lambda: self._finish_lot("RECIPE RUN COMPLETE"))
 
     _WAFER_READY_TIMEOUT_S = 60.0
