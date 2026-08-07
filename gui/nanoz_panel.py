@@ -2663,6 +2663,14 @@ class NanoZPanel(ttk.Frame):
         # but it can't be a real port since there isn't one yet.
         return f"SN:{serial_number}"
 
+    @staticmethod
+    def _board_port_display(ident: "nzb.BoardIdentity") -> str:
+        if ident.port:
+            return ident.port
+        if ident.last_port:
+            return f"{ident.last_port} (last known)"
+        return "—"
+
     def _add_board(self, ident: "nzb.BoardIdentity"):
         # Match by serial number first, not port - Windows can (and does)
         # reassign a board to a different COM port across replugs/reboots,
@@ -2694,12 +2702,13 @@ class NanoZPanel(ttk.Frame):
                 raw_ver=ident.raw_ver, raw_whoami=ident.raw_whoami, usb_id=ident.usb_id,
                 slot0=old_identity.slot0 if old_identity.slot0 is not None else ident.slot0,
                 slot1=old_identity.slot1 if old_identity.slot1 is not None else ident.slot1,
+                last_port=ident.port or old_identity.last_port or ident.last_port,
             )
             board.port = ident.port
             self._boards[new_key] = board
             if old_iid is not None:
                 self._board_tree.item(old_iid, values=(
-                    board.identity.port or "—", board.identity.serial_number,
+                    self._board_port_display(board.identity), board.identity.serial_number,
                     board.identity.firmware, board.identity.signature,
                     board.identity.slot0 if board.identity.slot0 else "—",
                     board.identity.slot1 if board.identity.slot1 else "—",
@@ -2720,7 +2729,7 @@ class NanoZPanel(ttk.Frame):
         board._die_provider = lambda chip: self._die_provider(board.port, chip)
         self._boards[new_key] = board
         iid = self._board_tree.insert("", "end", values=(
-            ident.port or "—", ident.serial_number, ident.firmware, ident.signature,
+            self._board_port_display(ident), ident.serial_number, ident.firmware, ident.signature,
             ident.slot0 if ident.slot0 else "—",
             ident.slot1 if ident.slot1 else "—",
             self._board_status_text(board), 0, 0))
@@ -2754,36 +2763,20 @@ class NanoZPanel(ttk.Frame):
 
     def _connect_boards_thread(self, targets: list):
         # Known boards with no live port yet this session (remembered from a
-        # previous ATA folder load, not seen via Discover Boards this run) -
-        # try each one's last-known COM port directly first, so Connect All
-        # works without a full port-by-port Discover scan as long as nothing
-        # actually moved. Only probes those specific ports, same identify
-        # handshake as a real discover, so a board that's no longer there
-        # (or a different device now on that port) is simply left unfound.
+        # previous ATA folder load) - try connecting on their last-known COM
+        # port directly FIRST, exactly like any other board (no separate
+        # identify/probe pass up front). Only the ones where that actually
+        # fails fall back to a full Discover Boards scan afterward, so
+        # Connect All stays fast in the common case (nothing moved) and only
+        # pays for a real scan when something did.
         no_port = [b for b in targets if not b.port and b.identity.last_port]
-        if no_port:
-            last_ports = sorted({b.identity.last_port for b in no_port})
-            self.after(0, lambda n=len(no_port), lp=last_ports: self._log_main(
-                f"Connect All: trying last-known port(s) for {n} known board(s) with no "
-                f"live port yet — {', '.join(lp)}."))
-            found = nzb.discover_boards(
-                ports=last_ports, log=lambda m: self.after(0, lambda m=m: self._log(m)))
-            found_by_sn = {f.serial_number: f for f in found if f.serial_number}
-            for board in no_port:
-                ident = found_by_sn.get(board.identity.serial_number)
-                if ident:
-                    board.port = ident.port
-                    self.after(0, lambda ident=ident: self._add_board(ident))
-                else:
-                    self.after(0, lambda b=board: self._log_main(
-                        f"Connect All: {b.identity.serial_number or '(no S/N)'} not found on "
-                        f"its last-known port {b.identity.last_port} — run Discover Boards to "
-                        f"relocate it."))
-            self.after(0, self._persist_boards)
+        for board in no_port:
+            board.port = board.identity.last_port
 
+        still_missing = []
         for board in targets:
             if not board.port:
-                continue  # no live port - already logged above, needs Discover Boards
+                continue  # known board with no live port and no last-known hint either
             was_error = board.state == "error"
             try:
                 board.reconnect() if was_error else board.start()
@@ -2791,10 +2784,43 @@ class NanoZPanel(ttk.Frame):
                 self.after(0, lambda p=board.port, b=board: self._set_board_status(
                     p, self._board_status_text(b)))
                 self.after(0, lambda p=board.port, v=verb: self._log(f"{p}: {v}, reader running"))
+                if board in no_port:
+                    self.after(0, lambda ident=board.identity: self._add_board(ident))
             except Exception as e:
                 self.after(0, lambda p=board.port, e=e: self._set_board_status(
                     p, self._error_status_text(e)))
                 self.after(0, lambda p=board.port, e=e: self._log(f"{p}: connect failed — {e}"))
+                if board in no_port:
+                    still_missing.append(board)
+                    board.port = ""
+
+        if still_missing:
+            self.after(0, lambda n=len(still_missing): self._log_main(
+                f"Connect All: {n} known board(s) didn't respond on their last-known port — "
+                f"scanning all COM ports to relocate them."))
+            found = nzb.discover_boards(
+                log=lambda m: self.after(0, lambda m=m: self._log(m)))
+            found_by_sn = {f.serial_number: f for f in found if f.serial_number}
+            for board in still_missing:
+                ident = found_by_sn.get(board.identity.serial_number)
+                if not ident:
+                    self.after(0, lambda b=board: self._log_main(
+                        f"Connect All: {b.identity.serial_number or '(no S/N)'} not found on "
+                        f"any COM port — check it's plugged in and powered."))
+                    continue
+                board.port = ident.port
+                self.after(0, lambda ident=ident: self._add_board(ident))
+                try:
+                    board.reconnect() if board.state == "error" else board.start()
+                    self.after(0, lambda p=board.port, b=board: self._set_board_status(
+                        p, self._board_status_text(b)))
+                    self.after(0, lambda p=board.port: self._log(f"{p}: connected, reader running"))
+                except Exception as e:
+                    self.after(0, lambda p=board.port, e=e: self._set_board_status(
+                        p, self._error_status_text(e)))
+                    self.after(0, lambda p=board.port, e=e: self._log(f"{p}: connect failed — {e}"))
+            self.after(0, self._persist_boards)
+
         self.after(0, lambda: self._log_main(
             f"{sum(1 for b in targets if b.state == 'connected')}/{len(targets)} board(s) connected."))
         # Other tabs (Console/board picker, Charts, NanoZ_EK, Recipe) all
