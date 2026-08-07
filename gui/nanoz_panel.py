@@ -1591,6 +1591,7 @@ class NanoZPanel(ttk.Frame):
             self._shot_decision_tree.heading(cid, text=text)
             self._shot_decision_tree.column(cid, width=width, anchor="center" if cid != "reason" else "w")
         self._shot_decision_tree.pack(fill="x", padx=6, pady=(0, 6))
+        self._shot_decision_tree.bind("<Double-1>", self._on_shot_decision_double_click)
 
         map_lf = ttk.LabelFrame(body, text="Wafer Map")
         body.add(map_lf, weight=2)
@@ -3716,7 +3717,16 @@ class NanoZPanel(ttk.Frame):
         excluded = shot.get("excluded_boards", set())
         reasons = shot.get("board_reasons") or {}
         chip_reasons = shot.get("chip_reasons") or {}
-        for port in self._recipe_ports():
+
+        def _top_slot(port: str):
+            ident = self._boards[port].identity if port in self._boards else None
+            slots = [s for s in ((ident.slot0, ident.slot1) if ident else ()) if s is not None]
+            return min(slots) if slots else float("inf")
+
+        # Top to bottom of the die they represent - i.e. by physical probe-
+        # head slot (1..20), not by port string. Boards with no slot
+        # assigned yet (nothing to order by) sort last.
+        for port in sorted(self._recipe_ports(), key=_top_slot):
             board = self._boards.get(port)
             ident = board.identity if board else None
             s0 = ident.slot0 if ident and ident.slot0 else "—"
@@ -3736,7 +3746,36 @@ class NanoZPanel(ttk.Frame):
                         f"chip{c}: {r or 'product'}" for c, r in per_chip.items())
                 else:
                     reason = "—"
-            self._shot_decision_tree.insert("", "end", values=(port, slots, decision, reason))
+            self._shot_decision_tree.insert("", "end", iid=port,
+                                            values=(port, slots, decision, reason))
+
+    def _on_shot_decision_double_click(self, event):
+        tree = self._shot_decision_tree
+        port = tree.identify_row(event.y)
+        if not port:
+            return
+        self._run_single_board_cycle(port)
+
+    def _run_single_board_cycle(self, port: str):
+        """Double-click a board in the Recipe - Current Shot table to fire a
+        cycle on just that board, using the Run tab's Cycle # field - same
+        one-board diagnostic convenience as Console's ▶ run, just scoped by
+        clicking the board in context instead of picking it from a dropdown."""
+        if self._run_guard("Run Cycle"):
+            return
+        board = self._boards.get(port)
+        if not board or board.state != "connected":
+            messagebox.showerror("Board Not Connected",
+                                 f"{port}: not connected — Connect All (Setup tab) first.")
+            return
+        try:
+            cycle = int(self.cycle_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
+            return
+        self._mark_cycle_start(pin_chart=True)
+        board.run_cycle(cycle)
+        self._log_main(f"Run Cycle {cycle} triggered on {port} (double-clicked in current shot).")
 
     def _start_recipe_run(self):
         if self._running:
