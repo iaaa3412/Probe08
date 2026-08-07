@@ -1516,6 +1516,9 @@ class NanoZPanel(ttk.Frame):
         self.stop_btn = ttk.Button(ctrl, text="⏹  Stop Run", command=self._stop_lot, state="disabled")
         self.stop_btn.pack(side="left", padx=4, pady=5)
 
+        self._btn_manual_unload = ttk.Button(ctrl, text="⏏  Unload (U)", command=self._manual_unload)
+        self._btn_manual_unload.pack(side="left", padx=4, pady=5)
+
         self.state_var = tk.StringVar(value="IDLE")
         tk.Label(ctrl, textvariable=self.state_var, bg="#f1f5f9", fg="#6b7280",
                 font=("Segoe UI", 11, "bold")).pack(side="right", padx=12)
@@ -1551,10 +1554,8 @@ class NanoZPanel(ttk.Frame):
         self._btn_manual_first_die.grid(row=2, column=0, sticky="ew", padx=(0, 1), pady=1)
         self._btn_manual_xy = ttk.Button(pos_lf, text="↻ Refresh XY", command=self._manual_xy)
         self._btn_manual_xy.grid(row=2, column=1, sticky="ew", padx=(1, 0), pady=1)
-        self._btn_manual_unload = ttk.Button(pos_lf, text="⏏ Unload (U)", command=self._manual_unload)
-        self._btn_manual_unload.grid(row=3, column=0, sticky="ew", padx=(0, 1), pady=1)
         self._btn_reset_counts = ttk.Button(pos_lf, text="Reset Counts", command=self._reset_counts)
-        self._btn_reset_counts.grid(row=3, column=1, sticky="ew", padx=(1, 0), pady=1)
+        self._btn_reset_counts.grid(row=3, column=0, columnspan=2, sticky="ew", pady=1)
         self._btn_manual_next_die = ttk.Button(pos_lf, text="▶▶ Next Die (Recipe)",
                                                command=self._manual_next_die)
         self._btn_manual_next_die.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(1, 0))
