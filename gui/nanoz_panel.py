@@ -2774,6 +2774,14 @@ class NanoZPanel(ttk.Frame):
         no_port = [b for b in targets if not b.port and b.identity.last_port]
         for board in no_port:
             board.port = board.identity.last_port
+            board.identity.port = board.identity.last_port
+            # Migrate self._boards/self._board_rows onto the real port key
+            # BEFORE the connect attempt below queues any _set_board_status/
+            # _log calls for that port - those look up self._board_rows by
+            # port, and would silently find nothing (row still under the old
+            # "SN:..." placeholder key) if queued ahead of this migration,
+            # since Tk runs after(0,...) callbacks in the order queued.
+            self.after(0, lambda ident=board.identity: self._add_board(ident))
 
         still_missing = []
         for board in targets:
@@ -2786,8 +2794,6 @@ class NanoZPanel(ttk.Frame):
                 self.after(0, lambda p=board.port, b=board: self._set_board_status(
                     p, self._board_status_text(b)))
                 self.after(0, lambda p=board.port, v=verb: self._log(f"{p}: {v}, reader running"))
-                if board in no_port:
-                    self.after(0, lambda ident=board.identity: self._add_board(ident))
             except Exception as e:
                 self.after(0, lambda p=board.port, e=e: self._set_board_status(
                     p, self._error_status_text(e)))
