@@ -1,88 +1,66 @@
 instruments:
   prober:
-    name: "Accretech UF200R"
-    protocol: "GPIB"
-    address: "GPIB0::5::INSTR"
+    name: Accretech UF200R
+    protocol: GPIB
+    address: GPIB0::5::INSTR
     timeout_ms: 3000
-
   switch_matrix:
-    name: "Keithley 707B"
-    protocol: "GPIB"
-    address: "GPIB0::16::INSTR" 
+    name: Keithley 707B
+    protocol: GPIB
+    address: GPIB0::16::INSTR
     timeout_ms: 3000
-
   smu:
-    name: "Keithley 2636B"
-    protocol: "GPIB"
-    address: "GPIB0::10::INSTR" 
+    name: Keithley 2636B
+    protocol: GPIB
+    address: GPIB0::10::INSTR
     timeout_ms: 3000
-
   dmm:
-    name: "Keysight 34461A"
-    protocol: "USB_TMC"
-    address: "USB0::0x2A8D::0x1301::MY57216618::INSTR" 
+    name: Keysight 34461A
+    protocol: USB_TMC
+    address: USB0::0x2A8D::0x1301::MY57216618::INSTR
     timeout_ms: 3000
-
   wave_gen:
-    name: "Keysight 33512B"
-    protocol: "GPIB"
-    address: "GPIB0::12::INSTR" 
+    name: Keysight 33512B
+    protocol: GPIB
+    address: GPIB0::12::INSTR
     timeout_ms: 3000
-    
   prober_eg:
-    name: "Electroglas 2001X"
-    protocol: "GPIB"
-    address: "GPIB0::29::INSTR"
+    name: Electroglas 2001X
+    protocol: GPIB
+    address: GPIB0::29::INSTR
     timeout_ms: 3000
-
   smu_eg:
-    name: "Keithley 2400"
-    protocol: "GPIB"
-    address: "GPIB0::24::INSTR"
+    name: Keithley 2400 (SMU)
+    protocol: GPIB
+    address: GPIB0::24::INSTR
     timeout_ms: 3000
-
   dmm_eg:
-    name: "HP 3458A"
-    protocol: "GPIB"
-    address: "GPIB0::23::INSTR"
+    name: HP 3458A (DMM)
+    protocol: GPIB
+    address: GPIB0::23::INSTR
     timeout_ms: 3000
-
   power_supply_eg:
-    name: "Agilent 6634B"
-    protocol: "GPIB"
-    address: "GPIB0::25::INSTR"
+    name: Agilent 6634B (Power Supply)
+    protocol: GPIB
+    address: GPIB0::25::INSTR
     timeout_ms: 3000
-
-  # E1326B 5.5-digit multimeter installed internally in the E1300A mainframe -
-  # the meter the probe03 relay wiring actually lands on. Secondary address is
-  # the module's VXI logical address / 8; the factory setting is 24, i.e. 03.
-  # Nothing answers there yet: see references/find_vxi_instruments.py, which
-  # sweeps all 31 secondary addresses and says what to do if it finds none.
   dmm_vxi_eg:
-    name: "HP E1326B (VXI DMM)"
-    protocol: "GPIB"
-    address: "GPIB0::9::3::INSTR"
+    name: HP E1326B (VXI DMM)
+    protocol: GPIB
+    address: GPIB0::9::3::INSTR
     timeout_ms: 5000
-
   relay1_eg:
-    name: "HP Switchbox 1"
-    protocol: "GPIB"
-    address: "GPIB0::9::15::INSTR"
+    name: "HP Switchbox 1 \u2014 E1345A"
+    protocol: GPIB
+    address: GPIB0::9::15::INSTR
     timeout_ms: 3000
-
-  # Was GPIB0::9::12::INSTR (inherited from LaMP's tblInstruments, see
-  # references/electroglasgpib.csv). Nothing answers at secondary address 12 on
-  # the live bus. An ADLINK bus scan finds exactly three SWITCHBOX units, at
-  # PA 9 / SA 10, 14 and 15 - 14 and 15 are already claimed by relay3 and
-  # relay1, so switchbox 2 is the one at secondary address 10.
   relay2_eg:
-    name: "HP Switchbox 2"
-    protocol: "GPIB"
-    address: "GPIB0::9::10::INSTR"
+    name: "HP Switchbox 2 \u2014 E1343A"
+    protocol: GPIB
+    address: GPIB0::9::9::INSTR
     timeout_ms: 3000
-
   relay3_eg:
-    name: "HP Switchbox 3"
-    protocol: "GPIB"
-    address: "GPIB0::9::14::INSTR"
+    name: "HP Switchbox 3 \u2014 E1364A"
+    protocol: GPIB
+    address: GPIB0::9::14::INSTR
     timeout_ms: 3000

@@ -229,6 +229,61 @@ Corollary: the prober's SET PRMTR die size must match the recipe in use. A
 reference prober showing `3.52100 MM` is the HP LaMP **single-die** value, not
 a different product.
 
+### The benches differ — profiles, not assumptions
+
+`instruments/eg_probers.yaml` records each EG bench from a live bus scan;
+`instruments/eg_profiles.py` selects between them and rewrites the `*_eg`
+entries of `instruments.yaml` so every existing driver keeps working unchanged.
+Switch benches from the **Instruments** tab; **Scan bus & match** says which
+profile the hardware actually looks like. Adding probe01 = adding a YAML block.
+
+| | probe02 (LaMP bench) | probe03 |
+|---|---|---|
+| 2001X | `29` | `29` |
+| Keithley 2400 | **`24` ✓** | not fitted |
+| HP 3458A | `23` (TERM? = REAR) | `23` (TERM? = FRONT) |
+| E1326B | **`9::3`, LADDR 24, self-test passes ✓** | `9::7`, LADDR 56, **FAILED** |
+| relay1 | `9::15` **E1345A** | `9::15` E1343A |
+| relay2 | `9::9` E1343A | `9::10` E1364A *(wired)* |
+| relay3 | `9::14` E1364A | `9::14` E1364A |
+
+Same secondary address, different card — that is why nothing may be assumed.
+probe02 matches LaMP's own instrument table on every address except RELAY2.
+
+### Multiplexer architecture (E1343A / E1345A) — confirmed on hardware
+
+Each channel carries **H, L and G**. Channels split into **Bank 0 (00–07)** and
+**Bank 1 (08–15)**, and reach the outside world through *tree switches*, which
+are themselves addressable channels:
+
+| Channel | Tree switch | Connects |
+|---|---|---|
+| **90** | AT | Bank 0 → AT terminals **and analog bus H / L / G** (sense) |
+| **91** | BT | Bank 1 → BT terminals **and analog bus I+ / I− / IG** (source) |
+| **92** | AT2 | Bank 1 → AT terminals |
+
+So a channel alone connects nothing — **the tree switch is what completes the
+path.** Verified on both muxes: 90/91/92 close and read back, `SCAN:PORT ABUS`
+is accepted, `*RST` opens everything.
+
+- **2-wire on channel N:** close `(@190)` + `(@1NN)`, N in 00–07.
+- **4-wire:** channel N (sense, Bank 0) **+ channel N+8** (source, Bank 1) with
+  both 90 and 91 closed. That is the `SCAN:MODE FRES` n / n+8 pairing.
+
+Every common, tree and analog-bus line has a **100 Ω series resistor** for relay
+protection — it sits in any 2-wire measurement.
+
+For the 10 V isolation test the natural wiring is the Keithley 2400 to the **AT
+tree switch terminals**, then `(@190)` + one Bank 0 channel per die.
+
+> **The analog bus is NOT cabled to the E1326B on probe02.** Readings appeared
+> to track mux state until a control run showed the same state drifting
+> 6516 → 8337 → 5834 Ω on its own, and interleaved A/B tests decayed straight
+> through both states into *negative* resistance. That is a floating input
+> settling, not switching. The first reading of a fresh reset was `9.9e37` —
+> overload, i.e. open. Always run the repeat-the-same-state control before
+> believing a switching effect.
+
 ### Driving a recipe — verified on the bench
 
 **The LaMP recipes are not in `pma/`.** The real ones live in
