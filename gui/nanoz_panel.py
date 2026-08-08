@@ -1826,7 +1826,7 @@ class NanoZPanel(ttk.Frame):
         cols = ("port", "chip", "die", "channel", "v_now", "i_now", "r_now",
                "v_avg", "i_avg", "r_avg", "n", "updated")
         self._results_tree = ttk.Treeview(results_frame, columns=cols, show="headings", height=16)
-        heads = [("port", "Port", 70), ("chip", "Chip", 50), ("die", "Die (row,col)", 90),
+        heads = [("port", "Port", 70), ("chip", "Chip", 50), ("die", "Die ID", 100),
                  ("channel", "Channel", 60),
                  ("v_now", "V now (mV)", 100), ("i_now", "I now (mA)", 100),
                  ("r_now", "R now (Ω)", 100),
@@ -1900,8 +1900,13 @@ class NanoZPanel(ttk.Frame):
                 windowed = hist
             updated = latest.get("host_timestamp", "")
             updated = updated.split("T")[-1] if "T" in updated else updated
+            # Die ID (the physical die's real identifier, from whichever
+            # source knows it - Overlay/wafer map/wafer plan) is what
+            # actually matters here, not the prober's own row/col numbering
+            # - fall back to row/col only when no ID is known for this die.
             die_row, die_col = latest.get("die_row"), latest.get("die_col")
-            die = f"{die_row},{die_col}" if die_row is not None and die_col is not None else "—"
+            die = latest.get("die_id") or (
+                f"R{die_row}C{die_col}" if die_row is not None and die_col is not None else "—")
             channels = ([(f"s{s}", f"dac_mv_s{s}", f"adc_current_ma_s{s}") for s in (1, 2, 3, 4)]
                        + [(f"h{h}", f"heater{h}_voltage_mv", f"heater{h}_current_ma")
                           for h in (1, 2)])
@@ -3771,28 +3776,54 @@ class NanoZPanel(ttk.Frame):
             self._run_mode = None
             self.after(0, lambda: self._finish_lot("TEST DIE COMPLETE"))
 
+    def _die_id_for(self, row: int, col: int) -> "str | None":
+        """Real die ID for a physical (row, col), if any source knows one -
+        preferred over the prober's own row/col numbering everywhere a
+        measurement is displayed/exported, since that's what the user
+        actually identifies dies by. Checked in priority order: an Overlay
+        match (real IDs matched onto the Accretech grid), then whatever's
+        loaded on the Run tab's own wafer map (CSV/Accretech), then the
+        imported wafer plan's Die Map (translated through the same
+        centroid offset Select Plan/Compute Recipe use) - same priority
+        Accretech's own die-ID resolution uses. None if nothing knows an
+        ID for this die; row/col are still recorded either way, this only
+        ever adds an ID on top."""
+        die_id = self._overlay_die_ids.get((row, col))
+        if die_id:
+            return die_id
+        die_id = self.wafer_map.die_ids.get((row, col))
+        if die_id:
+            return die_id
+        if self._wafer_plan:
+            row_off, col_off = self._wafer_plan_offset()
+            plan_die = self._wafer_plan.dies.get((row - row_off, col - col_off))
+            if plan_die:
+                return plan_die.get("serial")
+        return None
+
     def _die_provider(self, port: str, chip: "str | None"):
-        """(row, col) to tag a reading with - the physical die a board+chip
-        was actually testing when it produced this measurement. Anchored at
-        _current_rc, the top of whatever 1x20 position window is/was
-        current - kept in sync by every XY-moving action (manual jog, First/
-        Next Die, Recipe Run's per-shot moves, ...), not just Recipe Run -
-        offset by that board's assigned slot (physical position within the
-        window, 1-20 top to bottom, see the Setup tab's Slot columns) so
-        each chip's reading is tagged with the die it actually contacted,
-        not just the window's anchor die, for ANY cycle trigger (Run Cycle
-        (Active), a double-clicked board, Console's run, Recipe Run, ...) as
-        long as the XY position is known and that board+chip has a slot."""
+        """(row, col, die_id) to tag a reading with - the physical die a
+        board+chip was actually testing when it produced this measurement.
+        Anchored at _current_rc, the top of whatever 1x20 position window
+        is/was current - kept in sync by every XY-moving action (manual
+        jog, First/Next Die, Recipe Run's per-shot moves, ...), not just
+        Recipe Run - offset by that board's assigned slot (physical
+        position within the window, 1-20 top to bottom, see the Setup
+        tab's Slot columns) so each chip's reading is tagged with the die
+        it actually contacted, not just the window's anchor die, for ANY
+        cycle trigger (Run Cycle (Active), a double-clicked board,
+        Console's run, Recipe Run, ...) as long as the XY position is
+        known and that board+chip has a slot."""
         row, col = self._current_rc
         if row is None or col is None:
-            return (None, None)
+            return (None, None, None)
         board = self._boards.get(port)
         slot = None
         if board and chip in ("0", "1"):
             slot = board.identity.slot0 if chip == "0" else board.identity.slot1
         if slot:
-            return (row + slot - 1, col)
-        return (row, col)
+            row = row + slot - 1
+        return (row, col, self._die_id_for(row, col))
 
     def _shot_active_boards(self, shot: dict) -> list:
         excluded = shot.get("excluded_boards", set())

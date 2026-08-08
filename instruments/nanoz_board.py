@@ -998,9 +998,9 @@ class NanoZBoard:
         self.identity = identity
         self.port = identity.port
         self.out_queue = out_queue
-        # die_provider(chip) -> (row, col); chip is "0"/"1" for a per-chip SPL
-        # reading, or None for a board-wide ENV reading.
-        self._die_provider = die_provider or (lambda chip: (None, None))
+        # die_provider(chip) -> (row, col, die_id); chip is "0"/"1" for a
+        # per-chip SPL reading, or None for a board-wide ENV reading.
+        self._die_provider = die_provider or (lambda chip: (None, None, None))
         self.env_interval_s = env_interval_s
         self.ser: Optional[serial.Serial] = None
         self._buffer = bytearray()
@@ -1155,12 +1155,12 @@ class NanoZBoard:
             parsed = parse_spl_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col = self._die_provider(str(header_chip))
+        row, col, die_id = self._die_provider(str(header_chip))
         self.spl_count += 1
         self.out_queue.put({
             "kind": "spl", "host_timestamp": now_stamp(),
             "board_sn": self.identity.serial_number, "port": self.port,
-            "die_row": row, "die_col": col,
+            "die_row": row, "die_col": col, "die_id": die_id,
             "header_chip": header_chip, "header_time_ms": header_time,
             "header_bfr": header_bfr, "len": length,
             "checksum_expected": expected_cs,
@@ -1181,12 +1181,12 @@ class NanoZBoard:
             parsed = parse_env_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col = self._die_provider(None)
+        row, col, die_id = self._die_provider(None)
         self.env_count += 1
         self.out_queue.put({
             "kind": "env", "host_timestamp": now_stamp(),
             "board_sn": self.identity.serial_number, "port": self.port,
-            "die_row": row, "die_col": col,
+            "die_row": row, "die_col": col, "die_id": die_id,
             "env_x": env_x, "header_time_ms": header_time, "header_bfr": header_bfr,
             "len": length, "checksum_expected": expected_cs,
             **parsed,
