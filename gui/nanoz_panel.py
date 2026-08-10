@@ -1520,17 +1520,17 @@ class NanoZPanel(ttk.Frame):
         self._cycle_entry = ttk.Entry(ctrl, textvariable=self.cycle_var, width=5)
         self._cycle_entry.pack(side="left", pady=6)
         tk.Label(ctrl, text="Duration (s):", bg="#f1f5f9").pack(side="left", padx=(8, 2), pady=6)
-        self.duration_var = tk.StringVar(value="10")
+        self.duration_var = tk.StringVar(value="7")
         self._duration_entry = ttk.Entry(ctrl, textvariable=self.duration_var, width=5)
         self._duration_entry.pack(side="left", pady=6)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
-        self.start_btn = ttk.Button(ctrl, text="▶  Start", command=self._start_lot)
+        self.start_btn = ttk.Button(ctrl, text="▶  Start", command=self._start_recipe_run)
         self.start_btn.pack(side="left", padx=4, pady=5)
-        # Not packed - Test Die and Run Recipe are no longer separate buttons
-        # (Start/Full Die will follow the probe plan directly once that's
-        # wired up). Kept unpacked, not deleted, since _start_lot/
+        # Not packed - Test Die and Run Recipe are no longer separate
+        # buttons; Start follows the computed recipe directly
+        # (_start_recipe_run). Kept unpacked, not deleted, since
         # _start_test_die/_start_recipe_run/_finish_lot still toggle their
         # state alongside start_btn/stop_btn.
         self.test_btn = ttk.Button(ctrl, text="▶  Test Die", command=self._start_test_die)
@@ -3842,45 +3842,6 @@ class NanoZPanel(ttk.Frame):
             if port == self.console_board_var.get():
                 self._refresh_console_eep_display()
 
-    def _start_lot(self):
-        if self._running:
-            self._log_main("A run is already active.")
-            return
-        prober = self.controller.drivers.get("prober")
-        if not prober or not prober.inst:
-            messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
-            return
-        active = [b for b in self._boards.values() if b.state == "connected"]
-        if not active:
-            messagebox.showerror("No Boards Connected",
-                                 "🔌 Connect All (Setup tab) — no NanoZ boards are connected.")
-            return
-        try:
-            cycle = int(self.cycle_var.get())
-            duration_s = float(self.duration_var.get())
-        except ValueError:
-            messagebox.showerror("Invalid Parameters", "Cycle # and duration must be numeric.")
-            return
-
-        self._spl_path, self._env_path = self._new_csv_paths()
-        self._log_main(f"Starting Full Die — cycle {cycle}, {duration_s:g}s/touchdown, "
-                       f"{len(active)} board(s): {', '.join(b.port for b in active)}")
-        self._log(f"SPL CSV: {self._spl_path}")
-        self._log(f"ENV CSV: {self._env_path}")
-
-        self._reset_counts()
-        self._running = True
-        self._run_mode = "full"
-        self.start_btn.config(state="disabled")
-        self.test_btn.config(state="disabled")
-        self.recipe_btn.config(state="disabled")
-        self.stop_btn.config(state="normal")
-        self.state_var.set("RUNNING (Full Die)")
-        self._set_locked(True)
-        self._lot_thread = threading.Thread(
-            target=self._lot_thread_body, args=(prober, active, cycle, duration_s), daemon=True)
-        self._lot_thread.start()
-
     def _stop_lot(self):
         if not self._running:
             return
@@ -4706,54 +4667,6 @@ class NanoZPanel(ttk.Frame):
                 hook = self._on_wafer_finished
                 self.after(0, lambda: hook(p, f, aborted))
 
-    _WAFER_READY_TIMEOUT_S = 60.0
-    _NEXT_DIE_TIMEOUT_S = 60.0
-    _UNLOAD_LOAD_TIMEOUT_S = 180.0
-
-    def _lot_thread_body(self, prober, boards: list, cycle: int, duration_s: float):
-        try:
-            while self._running:
-                self.after(0, lambda: self.state_var.set("WAITING (STB=65)"))
-                self.after(0, lambda: self._log_main("Waiting for STB=65 (wafer ready)..."))
-                stb = prober.cassette_wait_for_wafer_ready(timeout_s=self._WAFER_READY_TIMEOUT_S)
-                if stb != 65:
-                    self.after(0, lambda: self._log_main(
-                        "No STB=65 — treating as idle / lot complete."))
-                    break
-                self.after(0, lambda: self.state_var.set("RUNNING"))
-                self.after(0, lambda: self._log_main("Wafer ready — needles on Die 1."))
-
-                stb = self._run_wafer(prober, boards, cycle, duration_s)
-                if not self._running or stb != 67:
-                    break
-
-                self.after(0, lambda: self.state_var.set("SWAPPING CASSETTE"))
-                self.after(0, lambda: self._log_main(
-                    "End of wafer map — unloading and loading next wafer..."))
-                stb = prober.cassette_unload_and_load_next(timeout_s=self._UNLOAD_LOAD_TIMEOUT_S)
-                if stb != 65:
-                    self.after(0, lambda: self._log_main(
-                        "No next wafer (cassette empty / idle) — Lot Complete."))
-                    break
-        except Exception as e:
-            self.after(0, lambda e=e: self._log_main(f"ERROR: {e}"))
-            if "STB=76" in str(e):
-                try:
-                    prober.send_es()
-                    self.after(0, lambda: self._log_main(
-                        "Alarm buzzer cleared (es sent)."))
-                except Exception:
-                    pass
-        finally:
-            for board in boards:
-                try:
-                    board.pause()
-                except Exception:
-                    pass
-            self._running = False
-            self._run_mode = None
-            self.after(0, lambda: self._finish_lot("LOT COMPLETE"))
-
     def _finish_lot(self, msg: str = "LOT COMPLETE"):
         self.start_btn.config(state="normal")
         self.test_btn.config(state="normal")
@@ -4782,53 +4695,6 @@ class NanoZPanel(ttk.Frame):
             board.pause()
         self.after(0, lambda: self._log(f"{label}: heaters paused."))
         return self._touchdown_packets > 0 and self._touchdown_errors == 0
-
-    def _run_wafer(self, prober, boards: list, cycle: int, duration_s: float):
-        while self._running:
-            self._update_current_die(prober)
-            self._trigger_cycle_and_wait(boards, cycle, duration_s, f"Die {self._current_rc}")
-            self._mark_touchdown_result()
-
-            if not self._running:
-                return None
-
-            self.after(0, lambda: self._log(">> J  (Next Die)"))
-            stb = prober.cassette_next_die(timeout_s=self._NEXT_DIE_TIMEOUT_S)
-            if stb == 66:
-                self.after(0, lambda: self._log("<< STB=66 — next die arrived."))
-                continue
-            if stb == 67:
-                self.after(0, lambda: self._log("<< STB=67 — end of wafer map."))
-                return 67
-            self.after(0, lambda stb=stb: self._log_main(
-                f"Unexpected result ({stb}) waiting for STB=66/67 — stopping."))
-            self._running = False
-            return None
-        return None
-
-    def _update_current_die(self, prober):
-        try:
-            raw = prober.get_xy_position()
-            x_die, y_die = _parse_q_response(raw)
-            row, col = int(y_die), int(x_die)
-        except Exception:
-            row, col = self._current_rc
-        self._current_rc = (row, col)
-        self.after(0, lambda: self.die_var.set(f"Die: R{row}C{col}"))
-        self.after(0, lambda: self.wafer_map.update_die(row, col, "CURRENT"))
-        self.after(0, self._update_position_window)
-
-    def _mark_touchdown_result(self):
-        row, col = self._current_rc
-        if row is None:
-            return
-        status = "PASS" if (self._touchdown_packets > 0 and self._touchdown_errors == 0) else "FAIL"
-        if status == "PASS":
-            self._pass_count += 1
-        else:
-            self._fail_count += 1
-        self.after(0, self._update_pass_fail_display)
-        self.after(0, lambda: self.wafer_map.update_die(row, col, status))
 
     def _mark_cycle_start(self, pin_chart: bool = False):
         self._cycle_start_time = dt.datetime.now() - dt.timedelta(milliseconds=5)
