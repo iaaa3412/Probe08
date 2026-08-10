@@ -47,7 +47,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from electroglas_pma import (parse_pma_file, load_touchdowns, align_site_info,
-                             format_quad)
+                             format_quad, expand_touchdowns_to_dies, die_grid_index)
 
 # Where LaMP kept its recipes, then the repo's own copies.
 _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
@@ -96,12 +96,14 @@ class EgPmaRunPanel(ttk.Frame):
         self._size_confirmed = False
         self._running = False
         self._abort = False
-        self._rc = {}               # touchdown seq -> (row, col) on the Run map
+        self._rc = {}               # touchdown seq -> one representative (row, col)
+        self._cells = {}            # touchdown seq -> every map cell it covers
         self._results = {}          # touchdown seq -> "PASS" / "FAIL"
         self._last_seq = None       # which square currently holds CURRENT
 
         self._selected = None
         self._seq_at_rc = {}        # (row, col) -> touchdown seq, for map clicks
+        self._shot_window_items = []   # canvas ids for the 2x2 "you are here" box
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(5, weight=1)
@@ -202,6 +204,10 @@ class EgPmaRunPanel(ttk.Frame):
         self._pos_var = tk.StringVar(value="—")
         ttk.Label(lf, textvariable=self._pos_var, font=("Consolas", 9),
                   foreground="#0077cc").pack(anchor="w")
+        self._shot_window_var = tk.StringVar(value="Shot window: chuck not set")
+        ttk.Label(lf, textvariable=self._shot_window_var, font=("Consolas", 8),
+                  foreground="#2563eb", wraplength=430, justify="left").pack(
+                  anchor="w", pady=(2, 0))
 
     def _build_selection(self):
         lf = ttk.LabelFrame(self, text="Selected die", padding=6)
@@ -305,6 +311,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._anchored = False
         self._size_confirmed = False
         self._rc = {}
+        self._cells = {}
         self._results = {}
         self._last_seq = None
         self._build_rc_index()
@@ -511,13 +518,28 @@ class EgPmaRunPanel(ttk.Frame):
     # UNTESTED / CURRENT / CONTACT / TESTING / PASS / FAIL / SKIP / CONTACT_FAIL.
 
     def _build_rc_index(self):
-        xs = sorted({round(t["x"]) for t in self._touchdowns})
-        ys = sorted({round(t["y"]) for t in self._touchdowns})
-        x_to_col = {x: i for i, x in enumerate(xs)}
-        y_to_row = {y: i for i, y in enumerate(ys)}
-        self._rc = {t["seq"]: (y_to_row[round(t["y"])], x_to_col[round(t["x"])])
-                    for t in self._touchdowns}
-        self._seq_at_rc = {rc: seq for seq, rc in self._rc.items()}
+        """seq -> the map cells that touchdown covers.
+
+        The map now carries one cell per DIE, so a 2x2 shot owns four of them
+        and a single-die recipe owns one. The row/col derivation has to match
+        WaferMapPanel._parse_die_list exactly - sorted unique x/y, densely
+        indexed - because that is what decides the cell keys it draws under.
+        """
+        dies = expand_touchdowns_to_dies(self._touchdowns, *self._die_um)
+        x_to_col, y_to_row = die_grid_index(dies)
+
+        self._cells = {}
+        self._rc = {}
+        self._seq_at_rc = {}
+        for d in dies:
+            rc = (y_to_row[round(d["y"])], x_to_col[round(d["x"])])
+            self._cells.setdefault(d["seq"], []).append(rc)
+            # Only real dies get a reverse mapping - clicking an NA corner
+            # should not select the shot, since nothing is probed there.
+            if d["enabled"]:
+                self._seq_at_rc[rc] = d["seq"]
+        # Kept for anything that still wants a single representative cell.
+        self._rc = {seq: cells[0] for seq, cells in self._cells.items()}
 
     def _run_map(self):
         return getattr(self._main_layout, "_exec2_wafer_map", None)
@@ -532,10 +554,8 @@ class EgPmaRunPanel(ttk.Frame):
         Accretech flow does for verdicts only - that map is about outcomes,
         so the transient PROBING highlight does not belong on it.
         """
-        if not self._rc:
-            return
-        rc = self._rc.get(seq)
-        if not rc:
+        cells = self._cells.get(seq)
+        if not cells:
             return
         maps = [self._run_map()]
         if also_results:
@@ -543,11 +563,105 @@ class EgPmaRunPanel(ttk.Frame):
         for wmap in maps:
             if wmap is None:
                 continue
+            for rc in cells:
+                try:
+                    if rc in wmap.dies:
+                        wmap.update_die(rc[0], rc[1], status)
+                except Exception:
+                    pass
+
+    # -- 2x2 position window ------------------------------------------------
+    #
+    # Modelled on NanoZ's 1x20 window (nanoz_panel._update_position_window):
+    # one outline over the block the head covers rather than per-cell
+    # decoration, positions taken from the map's own canvas coords so it
+    # follows pan/zoom, and extrapolated from the die pitch when a corner of
+    # the block has no die drawn (an NA position, or the wafer edge).
+
+    def _clear_shot_window(self):
+        wmap = self._run_map()
+        for item in self._shot_window_items:
             try:
-                if rc in wmap.dies:
-                    wmap.update_die(rc[0], rc[1], status)
+                wmap.canvas.delete(item)
             except Exception:
                 pass
+        self._shot_window_items = []
+
+    def _cell_pitch(self, wmap):
+        """Canvas (dx, dy) between horizontally and vertically adjacent cells."""
+        px = py = None
+        for (r, c) in wmap.dies:
+            if px is None and (r, c + 1) in wmap.dies:
+                a = wmap.canvas.coords(wmap.dies[(r, c)])
+                b = wmap.canvas.coords(wmap.dies[(r, c + 1)])
+                if a and b:
+                    px = b[0] - a[0]
+            if py is None and (r + 1, c) in wmap.dies:
+                a = wmap.canvas.coords(wmap.dies[(r, c)])
+                b = wmap.canvas.coords(wmap.dies[(r + 1, c)])
+                if a and b:
+                    py = b[1] - a[1]
+            if px is not None and py is not None:
+                break
+        return px, py
+
+    def _cell_box(self, wmap, rc, pitch):
+        """Canvas box for a cell, extrapolated from a neighbour if not drawn."""
+        item = wmap.dies.get(rc)
+        if item is not None:
+            coords = wmap.canvas.coords(item)
+            if len(coords) >= 4:
+                return coords
+        px, py = pitch
+        if px is None or py is None:
+            return None
+        # Nearest drawn cell, then step over by whole pitches.
+        best = None
+        for (r, c), it in wmap.dies.items():
+            d = abs(r - rc[0]) + abs(c - rc[1])
+            if best is None or d < best[0]:
+                best = (d, (r, c), it)
+        if best is None:
+            return None
+        _d, (br, bc), it = best
+        base = wmap.canvas.coords(it)
+        if len(base) < 4:
+            return None
+        ox, oy = (rc[1] - bc) * px, (rc[0] - br) * py
+        return [base[0] + ox, base[1] + oy, base[2] + ox, base[3] + oy]
+
+    def update_shot_window(self):
+        """Outline the 2x2 (or 1x1) block the chuck is currently on."""
+        self._clear_shot_window()
+        wmap = self._run_map()
+        if wmap is None or self._index is None or not self._cells:
+            self._shot_window_var.set("Shot window: chuck not set")
+            return
+        seq = self._touchdowns[self._index]["seq"]
+        cells = self._cells.get(seq) or []
+        if not cells:
+            self._shot_window_var.set("Shot window: not on the map")
+            return
+        pitch = self._cell_pitch(wmap)
+        boxes = [b for b in (self._cell_box(wmap, rc, pitch) for rc in cells) if b]
+        if not boxes:
+            self._shot_window_var.set("Shot window: off the drawn map")
+            return
+        x1 = min(b[0] for b in boxes)
+        y1 = min(b[1] for b in boxes)
+        x2 = max(b[2] for b in boxes)
+        y2 = max(b[3] for b in boxes)
+        rect = wmap.canvas.create_rectangle(x1, y1, x2, y2,
+                                            outline="#2563eb", width=3)
+        wmap.canvas.tag_raise(rect)
+        self._shot_window_items.append(rect)
+
+        t = self._touchdowns[self._index]
+        drawn = sum(1 for rc in cells if rc in wmap.dies)
+        self._shot_window_var.set(
+            f"Shot window #{t['seq']} {len(cells)}-up "
+            f"({drawn} die{'' if drawn == 1 else 's'} on the map):  "
+            f"{format_quad(t['device_id'])}")
 
     def mark_result(self, seq, passed: bool):
         """Record and paint a pass/fail. Kept public for the measurement step,
@@ -593,10 +707,12 @@ class EgPmaRunPanel(ttk.Frame):
                         self._results.get(self._last_seq, "UNTESTED"))
         if index is None:
             self._last_seq = None
+            self.update_shot_window()
             return
         seq = self._touchdowns[index]["seq"]
         self._paint(seq, "PROBING")
         self._last_seq = seq
+        self.update_shot_window()
 
     def _sync_run_map(self):
         """Point the Run tab's map at this recipe so highlighting has squares.
@@ -624,16 +740,22 @@ class EgPmaRunPanel(ttk.Frame):
         if os.path.isfile(csv_path):
             with open(csv_path, encoding="utf-8-sig") as fh:
                 existing = max(0, sum(1 for _ in fh) - 1)
-        if existing != len(self._touchdowns):
+        # The map is per-DIE now, so a 2x2 recipe writes four rows per
+        # touchdown. A file written by the older per-shot code has a quarter
+        # of the rows and would draw a quarter of the wafer, so the mismatch
+        # check compares against the die count and offers to rewrite.
+        want = len(expand_touchdowns_to_dies(self._touchdowns, *self._die_um))
+        if existing != want:
             if not messagebox.askokcancel(
                     "Run map",
                     f"{os.path.basename(csv_path)} has {existing} rows but this "
-                    f"recipe has {len(self._touchdowns)} touchdowns.\n\n"
+                    f"recipe has {want} dies across "
+                    f"{len(self._touchdowns)} touchdowns.\n\n"
                     "Rewrite it from the loaded recipe?"):
                 return
             from electroglas_pma import save_wafer_map_csv
-            save_wafer_map_csv(folder, self._touchdowns)
-            self._log(f"[PMA] Wrote {csv_path}")
+            save_wafer_map_csv(folder, self._touchdowns, self._fields)
+            self._log(f"[PMA] Wrote {csv_path} — {want} dies")
 
         try:
             layout._exec2_map_folder = folder

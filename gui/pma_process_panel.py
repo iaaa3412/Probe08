@@ -620,7 +620,7 @@ class PmaProcessPanel(ttk.Frame):
         saved_note = ""
         if ata_folder and touchdowns:
             try:
-                csv_path = egpma.save_wafer_map_csv(ata_folder, touchdowns)
+                csv_path = egpma.save_wafer_map_csv(ata_folder, touchdowns, fields)
                 saved_note = f" — wafer map saved to {os.path.basename(csv_path)}"
             except OSError as exc:
                 self._log(f"[PMA] Could not save wafer map CSV: {exc}")

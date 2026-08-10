@@ -118,8 +118,10 @@ def split_quad_devices(device_id: str) -> list:
 #     |  [1] BL |  [3] BR |    first, then down the right. NOT reading
 #     +---------+---------+    order, which would give 54-00/54-01/...
 #
-# +y is up and +x is right (verified on the stage: MD +1 x moves right,
-# +1 y moves up), so TL/TR are the HIGH-y pair.
+# "top"/"left" here are MAP terms: the map frame runs +x right and +y DOWN
+# from the top-left origin, so TL is the low-y pair. On the stage itself +y is
+# up (MD +1 y moves up) - the two frames disagree on y, and map_to_prober_um()
+# is the only place that crosses between them.
 QUAD_ORDER = ("TL", "BL", "TR", "BR")
 QUAD_LABELS = {"TL": "top left", "TR": "top right",
                "BL": "bottom left", "BR": "bottom right"}
@@ -149,19 +151,19 @@ def quad_positions(device_id: str) -> list:
 
 
 def quad_die_offsets(die_size_x: float, die_size_y: float) -> dict:
-    """Micron offset from the CENTRE of a 2x2 touchdown to each die centre.
+    """Micron offset from a touchdown's own coordinate to each die's corner.
 
     DieSizeX/Y in a .PMA is the quad PITCH - twice the physical die - so the
-    four die centres sit a quarter-pitch out from the middle in each axis.
+    four dies tile it in half-pitch steps. The touchdown coordinate is the
+    quad's top-left corner in MAP terms (+x right, +y down from the top-left
+    origin), which is how the wafer map has always drawn the shot rectangle,
+    so the offsets are all zero-or-positive.
 
-    CAVEAT: this assumes the touchdown coordinate is the quad centre. That is
-    the natural reading of a 4-up card but is NOT yet confirmed against the
-    stage; if the coordinate turns out to be a corner, every offset here
-    shifts by a constant and only this function needs changing.
+    This is the map frame, NOT the prober frame - on the stage +y is up. Only
+    map_to_prober_um() crosses between the two.
     """
-    qx, qy = float(die_size_x) / 4.0, float(die_size_y) / 4.0
-    return {"TL": (-qx, +qy), "TR": (+qx, +qy),
-            "BL": (-qx, -qy), "BR": (+qx, -qy)}
+    hx, hy = float(die_size_x) / 2.0, float(die_size_y) / 2.0
+    return {pos: (col * hx, row * hy) for pos, (col, row) in QUAD_GRID.items()}
 
 
 def format_quad(device_id: str) -> str:
@@ -315,8 +317,99 @@ def touchdown_prober_um(fields: dict, touchdown: dict) -> tuple:
     return map_to_prober_um(fields, touchdown["x"], touchdown["y"])
 
 
-def save_wafer_map_csv(folder: str, touchdowns: list) -> str:
+# row/col are the authoritative cell keys, row 0 = TOP of the wafer.
+#
+# x_um/y_um are RENDER coordinates, not recipe coordinates: WaferMapPanel maps
+# larger y to higher on screen, while the recipe frame runs +y DOWN from the
+# top-left origin. Emitting y_um = -map_y is what makes the Run tab map agree
+# with the PMA Wafer tab instead of being upside down. map_x/map_y keep the
+# recipe's own microns so the file is still traceable back to the .PMV.
+_DIE_CSV_FIELDS = ("row", "col", "seq", "quad_pos", "device_id",
+                   "x_um", "y_um", "map_x", "map_y",
+                   "shot_x", "shot_y", "enabled")
+
+
+def die_grid_index(dies: list) -> tuple:
+    """(x -> col, y -> row) for a die list, row 0 at the TOP.
+
+    Rows come from map y ascending because the recipe frame runs +y down, so
+    the smallest y is the top of the wafer. eg_pma_run_panel._build_rc_index
+    must agree with this exactly or the run would colour the wrong squares.
+    """
+    xs = sorted({round(d["x"]) for d in dies})
+    ys = sorted({round(d["y"]) for d in dies})
+    return ({x: i for i, x in enumerate(xs)},
+            {y: i for i, y in enumerate(ys)})
+
+
+def expand_touchdowns_to_dies(touchdowns: list, die_size_x, die_size_y) -> list:
+    """One record per DIE, not per touchdown.
+
+    A touchdown coordinate is the corner of the 2x2 quad the same way
+    _draw_map has always treated it - the map frame runs +x right and +y down
+    from the top-left origin, so that corner is the TOP-LEFT die, and the
+    other three sit one half-pitch out. That makes QUAD_GRID's (col, row) the
+    multiplier directly.
+
+    Quads that are not four-up (single-die recipes) come back as one record
+    with quad_pos "" at the touchdown coordinate, so callers do not have to
+    special-case them.
+    """
+    dx, dy = float(die_size_x), float(die_size_y)
+    half_x, half_y = dx / 2.0, dy / 2.0
+    out = []
+    for t in touchdowns:
+        entries = quad_positions(t["device_id"])
+        for ent in entries:
+            if ent["pos"] is None:
+                ox = oy = 0.0
+            else:
+                col, row = QUAD_GRID[ent["pos"]]
+                ox, oy = col * half_x, row * half_y
+            out.append({
+                "seq": t["seq"],
+                "quad_pos": ent["pos"] or "",
+                "device_id": ent["device"],
+                "x": t["x"] + ox,
+                "y": t["y"] + oy,
+                "shot_x": t["x"],
+                "shot_y": t["y"],
+                # "enabled" is the column name WaferMapPanel already filters on, so an
+                # NA quad position is dropped from the map without extra plumbing.
+                "enabled": 1 if ent["present"] else 0,
+            })
+    return out
+
+
+def save_wafer_map_csv(folder: str, touchdowns: list, fields: dict = None) -> str:
+    """Write the Run tab's Electroglas map.
+
+    With `fields` (so the quad pitch is known) this writes one row per DIE, so
+    the map shows every die with its own ID rather than one square per 2x2
+    shot. Without it, the older per-touchdown form is written - kept so any
+    caller that has not got the .PMA header to hand still works.
+    """
     path = os.path.join(folder, "ata_wafer_map_electroglas.csv")
+    if fields:
+        dies = expand_touchdowns_to_dies(touchdowns, fields["DieSizeX"],
+                                         fields["DieSizeY"])
+        x_to_col, y_to_row = die_grid_index(dies)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            wr = csv.DictWriter(f, fieldnames=_DIE_CSV_FIELDS)
+            wr.writeheader()
+            for d in dies:
+                wr.writerow({
+                    "row": y_to_row[round(d["y"])],
+                    "col": x_to_col[round(d["x"])],
+                    "seq": d["seq"], "quad_pos": d["quad_pos"],
+                    "device_id": d["device_id"],
+                    "x_um": fmt_num(d["x"]), "y_um": fmt_num(-d["y"]),
+                    "map_x": fmt_num(d["x"]), "map_y": fmt_num(d["y"]),
+                    "shot_x": fmt_num(d["shot_x"]),
+                    "shot_y": fmt_num(d["shot_y"]),
+                    "enabled": d["enabled"],
+                })
+        return path
     with open(path, "w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
         wr.writeheader()

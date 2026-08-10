@@ -2846,11 +2846,21 @@ class MainLayout(ttk.Frame):
         return set(self._exec2_wafer_map.dies.keys())
 
     def _exec2_redraw_overlay_on_run_map(self):
-        if not self._exec2_overlay_die_ids:
+        if self._exec2_overlay_die_ids:
+            self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
+                self._exec2_wafer_map, self._exec2_overlay_die_ids)
+        else:
             self._exec2_overlay_items = []
-            return
-        self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
-            self._exec2_wafer_map, self._exec2_overlay_die_ids)
+        # The PMA runner's "you are here" box is drawn on this same canvas and
+        # is wiped by the same rebuild, so it re-draws off the one hook rather
+        # than competing for on_redraw.
+        redraw_window = getattr(getattr(self, "eg_pma_run", None),
+                                "update_shot_window", None)
+        if redraw_window:
+            try:
+                redraw_window()
+            except Exception:
+                pass
 
     def _exec2_redraw_overlay_on_results_map(self):
         if not self._exec2_overlay_die_ids:
