@@ -39,6 +39,69 @@ from instruments.gpib_base import GPIBInstrument
 
 CHANNELS = tuple(range(16))          # E1364A channels are numbered 00-15
 
+# ---------------------------------------------------------------------------
+# Card families. Two very different animals answer *IDN? with the SAME string
+# ("HEWLETT-PACKARD,SWITCHBOX,0,A.06.00"), so SYST:CTYP? is the only way to
+# tell them apart - and the same secondary address holds a different card
+# depending on which bench is plugged in.
+# ---------------------------------------------------------------------------
+FAMILY_MUX = "mux"          # E1343A/44A/45A/47A relay multiplexers
+FAMILY_FORM_C = "formc"     # E1364A form C (SPDT) switch
+FAMILY_UNKNOWN = "unknown"
+
+_MUX_MODELS = ("E1343", "E1344", "E1345", "E1346", "E1347")
+_FORM_C_MODELS = ("E1364", "E1365", "E1366", "E1367")
+
+
+def card_family(card_type: str) -> str:
+    """'HEWLETT-PACKARD,E1345A,0,A.06.00' -> FAMILY_MUX."""
+    text = (card_type or "").upper()
+    if any(m in text for m in _MUX_MODELS):
+        return FAMILY_MUX
+    if any(m in text for m in _FORM_C_MODELS):
+        return FAMILY_FORM_C
+    return FAMILY_UNKNOWN
+
+
+# --- multiplexer topology (E1343A / E1345A), confirmed on the hardware ------
+#
+# Each channel carries High, Low and Guard. Channels split into two banks, and
+# a closed channel reaches only its bank common - it gets to the outside world
+# through a TREE SWITCH, which is itself an addressable channel. Close a
+# channel without its tree switch and you have connected nothing, which looks
+# exactly like a clean open circuit.
+#
+#   ch00..07  Bank 0 --[ AT  90 ]-- AT terminals + analog bus H / L / G   sense
+#                          |
+#                     [ AT2 92 ]
+#                          |
+#   ch08..15  Bank 1 --[ BT  91 ]-- BT terminals + analog bus I+ / I- / IG source
+#
+# Every common, tree and analog-bus line carries a 100 ohm series resistor for
+# relay protection. It is in any 2-wire measurement - irrelevant at megohms,
+# not at single ohms.
+TREE_AT = 90            # Bank 0 -> AT terminals / analog bus H,L,G  (sense)
+TREE_BT = 91            # Bank 1 -> BT terminals / analog bus I+,I-,IG (source)
+TREE_AT2 = 92           # Bank 1 -> AT terminals
+TREE_SWITCHES = (TREE_AT, TREE_BT, TREE_AT2)
+
+TREE_LABELS = {TREE_AT: "AT  Bank 0 -> analog bus H/L/G (sense)",
+               TREE_BT: "BT  Bank 1 -> analog bus I+/I-/IG (source)",
+               TREE_AT2: "AT2 Bank 1 -> AT terminals"}
+
+BANK0 = tuple(range(0, 8))
+BANK1 = tuple(range(8, 16))
+
+
+def bank_of(channel: int) -> int:
+    return 0 if int(channel) in BANK0 else 1
+
+
+def fres_partner(channel: int) -> int:
+    """The 4-wire partner of a Bank 0 channel: sense N pairs with source N+8."""
+    ch = int(channel)
+    return ch + 8 if ch in BANK0 else ch - 8
+
 # From references/hpe1364 manual.pdf, all confirmed against this bench:
 #
 #   "the Form C Switch consists of 16 channels (channels 00 through 15)"
@@ -319,6 +382,70 @@ class HPSwitchbox(GPIBInstrument):
         if not verify:
             return {c: True for c in channels}
         return {c: self.read_channel(c) for c in channels}
+
+    # -- multiplexer routing ------------------------------------------------
+
+    def family(self, slot: int = None) -> str:
+        """Which card family is in this switchbox - mux or form C."""
+        return card_family(self.card_type(slot or self.card))
+
+    def scan_port(self) -> str:
+        """ROUT:SCAN:PORT? -> 'ABUS' or 'NONE'."""
+        return (self.query("ROUT:SCAN:PORT?") or "").strip()
+
+    def set_scan_port(self, port: str = "ABUS"):
+        """Route scanned channels to the analog bus (ABUS) or not (NONE).
+
+        Only meaningful on a multiplexer, and only useful if the analog bus
+        ribbon is physically fitted to the multimeter - on probe02 it is not.
+        """
+        self.write(f"ROUT:SCAN:PORT {port}")
+
+    def tree_states(self) -> dict:
+        """{90: bool, 91: bool, 92: bool} - which tree switches are closed."""
+        return {t: self.read_channel(t) for t in TREE_SWITCHES}
+
+    def mux_states(self) -> dict:
+        """Every channel plus the tree switches, in one pass."""
+        states = self.channel_states()
+        states.update(self.tree_states())
+        return states
+
+    def close_2wire(self, channel: int, verify: bool = True) -> dict:
+        """Select one device 2-wire: its channel plus the AT tree switch.
+
+        Channel must be in Bank 0 - Bank 1 reaches the analog bus through BT,
+        which carries the SOURCE pair, not the sense pair. Use AT2 if you
+        really want a Bank 1 channel on the AT terminals.
+        """
+        ch = int(channel)
+        if ch not in BANK0:
+            raise ValueError(
+                f"channel {ch:02d} is in Bank 1; 2-wire selection goes through "
+                f"the AT tree switch, which serves Bank 0 (00-07). Close "
+                f"AT2 ({TREE_AT2}) explicitly if you meant to bring Bank 1 to "
+                "the AT terminals.")
+        self.open_all()
+        self.close_channel(TREE_AT)
+        self.close_channel(ch)
+        if not verify:
+            return {TREE_AT: True, ch: True}
+        return {TREE_AT: self.read_channel(TREE_AT), ch: self.read_channel(ch)}
+
+    def close_4wire(self, channel: int, verify: bool = True) -> dict:
+        """Select one device 4-wire: sense channel N, source channel N+8, and
+        both tree switches. This is the pairing SCAN:MODE FRES uses."""
+        sense = int(channel)
+        if sense not in BANK0:
+            sense = fres_partner(sense)
+        source = fres_partner(sense)
+        wanted = (TREE_AT, TREE_BT, sense, source)
+        self.open_all()
+        for c in wanted:
+            self.close_channel(c)
+        if not verify:
+            return {c: True for c in wanted}
+        return {c: self.read_channel(c) for c in wanted}
 
     def route_die(self, die: int, verify: bool = True) -> dict:
         """Select one die of the 2x2 shot - closes its HI and LO channels.
