@@ -439,7 +439,13 @@ class NanoZPanel(ttk.Frame):
         pf_row.pack(fill="x", padx=6, pady=6)
         ttk.Label(pf_row, text="Metric:").pack(side="left")
         ttk.Combobox(pf_row, textvariable=self._pf_metric_var, state="readonly", width=10,
-                    values=("Current", "Resistance")).pack(side="left", padx=(4, 16))
+                    values=("Current", "Resistance")).pack(side="left", padx=(4, 4))
+        self._pf_unit_var = tk.StringVar(value="")
+        ttk.Label(pf_row, textvariable=self._pf_unit_var, foreground="#6b7280").pack(
+            side="left", padx=(0, 16))
+        self._pf_metric_var.trace_add("write", lambda *_: self._pf_unit_var.set(
+            f"({self._SENSOR_METRIC_UNITS.get(self._pf_metric_var.get(), '')})"))
+        self._pf_unit_var.set(f"({self._SENSOR_METRIC_UNITS.get(self._pf_metric_var.get(), '')})")
         for s in (1, 2, 3, 4):
             ttk.Label(pf_row, text=f"S{s}:").pack(side="left", padx=(0, 2))
             mn_var, mx_var = self._pf_limit_vars[s]
@@ -1829,9 +1835,9 @@ class NanoZPanel(ttk.Frame):
         heads = [("port", "Port", 70), ("chip", "Chip", 50), ("die", "Die ID", 100),
                  ("channel", "Channel", 60),
                  ("v_now", "V now (mV)", 100), ("i_now", "I now (mA)", 100),
-                 ("r_now", "R now (Ω)", 100),
+                 ("r_now", "R now", 100),
                  ("v_avg", "V avg (mV)", 100), ("i_avg", "I avg (mA)", 100),
-                 ("r_avg", "R avg (Ω)", 100),
+                 ("r_avg", "R avg", 100),
                  ("n", "N", 50), ("updated", "Updated", 140)]
         for cid, text, width in heads:
             self._results_tree.heading(cid, text=text)
@@ -1911,23 +1917,33 @@ class NanoZPanel(ttk.Frame):
                        + [(f"h{h}", f"heater{h}_voltage_mv", f"heater{h}_current_ma")
                           for h in (1, 2)])
             for label, v_field, i_field in channels:
+                is_sensor = label.startswith("s")
                 v_now, i_now = latest.get(v_field), latest.get(i_field)
                 v_vals = [h[v_field] for h in windowed if v_field in h]
                 i_vals = [h[i_field] for h in windowed if i_field in h]
                 v_avg = sum(v_vals) / len(v_vals) if v_vals else None
                 i_avg = sum(i_vals) / len(i_vals) if i_vals else None
-                # Resistance(Ohm) = V(mV)/I(mA) - units cancel (mV/mA = V/A = Ohm),
-                # same formula the Charts tab and Pass/Fail Limits use.
+                # R = V(mV)/I(mA) - units cancel to Ohms IF the current field
+                # is genuinely mA. Confirmed against real hardware
+                # (2026-08-07, board COM8): Heater 1 reads ~100 Ohm this way
+                # - its "_ma" field really is mA, formula/label are correct
+                # as-is. But Chip 1/sensor reads ~10 kOhm on real hardware,
+                # not the ~10 Ohm this same formula gives - the "_ma" sensor
+                # current field is actually µA-scale despite its name (or an
+                # equivalent firmware gauge factor), making the raw V/I
+                # number ALREADY the right kOhm magnitude - so sensor rows
+                # just need the unit relabeled to kOhm, not the math changed.
+                r_unit = "kΩ" if is_sensor else "Ω"
                 r_now = v_now / i_now if (v_now is not None and i_now) else None
                 r_avg = v_avg / i_avg if (v_avg is not None and i_avg) else None
                 self._results_tree.insert("", "end", values=(
                     port, chip, die, label,
                     f"{v_now:.2f}" if v_now is not None else "—",
                     f"{i_now:.5f}" if i_now is not None else "—",
-                    f"{r_now:.3g}" if r_now is not None else "—",
+                    f"{r_now:.3g} {r_unit}" if r_now is not None else "—",
                     f"{v_avg:.2f}" if v_avg is not None else "—",
                     f"{i_avg:.5f}" if i_avg is not None else "—",
-                    f"{r_avg:.3g}" if r_avg is not None else "—",
+                    f"{r_avg:.3g} {r_unit}" if r_avg is not None else "—",
                     len(windowed), updated,
                 ))
 
@@ -2448,9 +2464,15 @@ class NanoZPanel(ttk.Frame):
 
     # Graph settings (matches Nanoz_EK.exe's "Sensors"/"Heaters" dropdowns,
     # manual section V.A): Sensors = Current or Resistance; Heaters =
-    # Voltage, Current, Power or Resistance. Resistance(Ohm) = V(mV)/I(mA)
-    # (units cancel: mV/mA = V/A = Ohm). Power(mW) = V(mV)*I(mA)/1000.
-    _SENSOR_METRIC_UNITS = {"Current": "mA", "Resistance": "Ω"}
+    # Voltage, Current, Power or Resistance. R = V(mV)/I(mA) in both cases
+    # (units cancel: mV/mA = V/A = Ohm) - confirmed against real hardware
+    # (2026-08-07, board COM8): Heater 1 reads ~100 Ohm this way, correct
+    # as labeled. But sensor Chip 1 reads ~10 kOhm on real hardware, not
+    # the ~10 Ohm this formula gives - the sensor current field is actually
+    # µA-scale despite being named "_ma" (or an equivalent firmware gauge
+    # factor), so the raw number is already right for kOhm, just needed
+    # relabeling, not a math change. Power(mW) = V(mV)*I(mA)/1000.
+    _SENSOR_METRIC_UNITS = {"Current": "mA", "Resistance": "kΩ"}
     _HEATER_METRIC_UNITS = {"Voltage": "mV", "Current": "mA", "Power": "mW", "Resistance": "Ω"}
 
     @staticmethod
