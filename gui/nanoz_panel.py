@@ -3562,6 +3562,9 @@ class NanoZPanel(ttk.Frame):
         except ValueError:
             messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
             return
+        self._ensure_xy_then(self._console_run_body, cycle)
+
+    def _console_run_body(self, cycle: int):
         self._mark_cycle_start(pin_chart=True)
         self._ensure_csv_paths()
         self._console_send(f"run {cycle}")
@@ -3956,11 +3959,18 @@ class NanoZPanel(ttk.Frame):
         threading.Thread(target=self._manual_xy_thread, daemon=True).start()
 
     def _manual_xy_thread(self):
+        self._query_xy_thread_body()
+
+    def _query_xy_thread_body(self) -> bool:
+        """Query the prober for its current die XY and update
+        _current_rc/the XY label. Runs on a background thread (real prober
+        I/O); returns True on success. Shared by the manual "Refresh XY"
+        button and _ensure_xy_then's auto-refresh for cycle triggers."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self.after(0, lambda: self.manual_xy_var.set("X: —  Y: —"))
             self.after(0, lambda: self._log_main("XY: prober not connected."))
-            return
+            return False
         try:
             raw = prober.get_xy_position()
             x, y = _parse_q_response(raw)
@@ -3969,9 +3979,32 @@ class NanoZPanel(ttk.Frame):
             self.after(0, lambda: self._log(f"Q -> die X={x:.0f} Y={y:.0f}"))
             self.after(0, lambda: self.wafer_map.update_die(int(y), int(x), "CURRENT"))
             self.after(0, self._update_position_window)
+            return True
         except Exception as e:
             self.after(0, lambda e=e: self._log_main(f"XY error: {e}"))
             self.after(0, lambda: self.manual_xy_var.set("X: ERROR  Y: ERROR"))
+            return False
+
+    def _ensure_xy_then(self, fn, *args, **kwargs):
+        """Call right where a cycle would otherwise be triggered directly -
+        if XY isn't known yet (_current_rc is (None, None), e.g. first
+        cycle of the session with no First Die/Refresh XY pressed yet),
+        transparently sends a Refresh XY query to the prober first, then
+        runs fn regardless of whether that query succeeded (same
+        best-effort fallback _active_boards_for_window/_die_provider
+        already use for an unknown position). If XY is already known, fn
+        runs immediately with no extra round-trip. Prober I/O shouldn't
+        block the UI, so a background thread is used whenever a query is
+        actually needed."""
+        if self._current_rc != (None, None):
+            fn(*args, **kwargs)
+            return
+        def _run():
+            self.after(0, lambda: self._log_main(
+                "XY position not known yet — auto-refreshing before this cycle."))
+            self._query_xy_thread_body()
+            self.after(0, lambda: fn(*args, **kwargs))
+        threading.Thread(target=_run, daemon=True).start()
 
     def _manual_measure(self):
         if self._run_guard("Measure"):
@@ -4031,6 +4064,9 @@ class NanoZPanel(ttk.Frame):
     def _test_active_boards(self):
         if self._run_guard("Run Cycle"):
             return
+        self._ensure_xy_then(self._test_active_boards_body)
+
+    def _test_active_boards_body(self):
         active = self._active_boards_for_window()
         if not active:
             messagebox.showerror(
@@ -4425,6 +4461,9 @@ class NanoZPanel(ttk.Frame):
         except ValueError:
             messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
             return
+        self._ensure_xy_then(self._run_single_board_cycle_body, board, port, cycle, context)
+
+    def _run_single_board_cycle_body(self, board, port: str, cycle: int, context: str):
         self._mark_cycle_start(pin_chart=True)
         self._arm_settling_skip([board])
         board.run_cycle(cycle)
