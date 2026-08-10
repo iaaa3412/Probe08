@@ -45,22 +45,22 @@ instruments:
     address: GPIB0::25::INSTR
     timeout_ms: 3000
   dmm_vxi_eg:
-    name: HP E1326B (VXI DMM)
+    name: "HP E1326B (VXI DMM \u2014 FAILED)"
     protocol: GPIB
-    address: GPIB0::9::3::INSTR
+    address: GPIB0::9::7::INSTR
     timeout_ms: 5000
   relay1_eg:
-    name: "HP Switchbox 1 \u2014 E1345A"
+    name: "HP Switchbox \u2014 E1343A (spare mux)"
     protocol: GPIB
     address: GPIB0::9::15::INSTR
     timeout_ms: 3000
   relay2_eg:
-    name: "HP Switchbox 2 \u2014 E1343A"
+    name: "HP Switchbox \u2014 E1364A (WIRED)"
     protocol: GPIB
-    address: GPIB0::9::9::INSTR
+    address: GPIB0::9::10::INSTR
     timeout_ms: 3000
   relay3_eg:
-    name: "HP Switchbox 3 \u2014 E1364A"
+    name: "HP Switchbox \u2014 E1364A (spare)"
     protocol: GPIB
     address: GPIB0::9::14::INSTR
     timeout_ms: 3000

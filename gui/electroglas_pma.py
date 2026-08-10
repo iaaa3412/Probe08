@@ -163,6 +163,62 @@ def fmt_num(v) -> str:
     return str(int(v)) if float(v).is_integer() else str(v)
 
 
+def align_site_info(fields: dict, touchdowns: list, align_die: str = "") -> dict:
+    """Where the align site is, from the two independent sources.
+
+    The .PMA states it only indirectly: XMoveFirstFromAlignSite/Y... are the
+    offset FROM the align site TO the first touchdown, so negating them and
+    dividing by the quad pitch puts the align site in the same quad coordinates
+    the touchdowns use. The recipe-generator workbook, when one is loaded,
+    NAMES the die instead ("Align Die" on its first sheet) - that is stated
+    rather than derived, so it wins when the two disagree.
+
+    Returns keys: quad, offset_um, die_ids, named_touchdown, quad_touchdown,
+    touchdown (the preferred one), source, agree.
+    """
+    info = {"quad": None, "offset_um": None, "die_ids": [],
+            "named_touchdown": None, "quad_touchdown": None,
+            "touchdown": None, "source": "", "agree": None}
+
+    try:
+        dx = float(fields["DieSizeX"])
+        dy = float(fields["DieSizeY"])
+        ox = float(fields["XMoveFirstFromAlignSite"])
+        oy = float(fields["YMoveFirstFromAlignSite"])
+    except (KeyError, TypeError, ValueError):
+        dx = dy = ox = oy = None
+    if dx and dy and ox is not None and oy is not None:
+        info["offset_um"] = (ox, oy)
+        info["quad"] = (-ox / dx, -oy / dy)
+        want = (round(info["quad"][0]), round(info["quad"][1]))
+        for t in touchdowns:
+            if (round(t["x"] / dx), round(t["y"] / dy)) == want:
+                info["quad_touchdown"] = t
+                break
+
+    info["die_ids"] = [p.strip() for p in (align_die or "").split("/") if p.strip()]
+    if info["die_ids"]:
+        wanted = {d.upper() for d in info["die_ids"]}
+        for t in touchdowns:
+            ids = {d.strip().upper() for d in t.get("devices") or [t["device_id"]]}
+            if wanted & ids:
+                info["named_touchdown"] = t
+                break
+
+    if info["named_touchdown"] is not None:
+        info["touchdown"] = info["named_touchdown"]
+        info["source"] = "recipe generator (Align Die)"
+    elif info["quad_touchdown"] is not None:
+        info["touchdown"] = info["quad_touchdown"]
+        info["source"] = "PMA (XMoveFirstFromAlignSite)"
+    elif info["quad"] is not None:
+        info["source"] = "PMA (XMoveFirstFromAlignSite)"
+
+    if info["named_touchdown"] is not None and info["quad_touchdown"] is not None:
+        info["agree"] = info["named_touchdown"]["seq"] == info["quad_touchdown"]["seq"]
+    return info
+
+
 def save_wafer_map_csv(folder: str, touchdowns: list) -> str:
     path = os.path.join(folder, "ata_wafer_map_electroglas.csv")
     with open(path, "w", newline="", encoding="utf-8") as f:

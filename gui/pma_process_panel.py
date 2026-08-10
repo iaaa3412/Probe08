@@ -31,13 +31,14 @@ class PmaProcessPanel(ttk.Frame):
         self._pma_picker_var = tk.StringVar()
         self._xls_picker_var = tk.StringVar()
 
-        self.rowconfigure(4, weight=1)
+        self.rowconfigure(5, weight=1)
         self.columnconfigure(0, weight=1)
 
         self._build_toolbar()
         self._build_source_picker()
         self._build_run_setup()
         self._build_wafer_info()
+        self._build_align_site()
         self._build_body()
 
     def _log(self, msg: str):
@@ -120,9 +121,109 @@ class PmaProcessPanel(ttk.Frame):
         ttk.Label(lf, text="(full wafer map now shown on the PMA Wafer tab)",
                  foreground="gray").pack(side="left", padx=(16, 0))
 
+    def _build_align_site(self):
+        lf = ttk.LabelFrame(self, text="Align Site", padding=8)
+        lf.grid(row=4, column=0, sticky="ew", padx=6, pady=(0, 4))
+        lf.columnconfigure(1, weight=1)
+
+        self._align_die_var = tk.StringVar(value="—")
+        self._align_td_var = tk.StringVar(value="—")
+        self._align_offset_var = tk.StringVar(value="—")
+        self._align_source_var = tk.StringVar(
+            value="Load a .PMA file (and a recipe generator .xls for the die ID).")
+
+        rows = (
+            ("Align die (Recipe Gen):", self._align_die_var),
+            ("Touchdown at align site:", self._align_td_var),
+            ("Offset to first touchdown:", self._align_offset_var),
+        )
+        for r, (label, var) in enumerate(rows):
+            ttk.Label(lf, text=label).grid(row=r, column=0, sticky="w", padx=(0, 8))
+            ttk.Label(lf, textvariable=var, font=("Segoe UI", 9, "bold")).grid(
+                row=r, column=1, sticky="w")
+
+        self._align_source_lbl = ttk.Label(
+            lf, textvariable=self._align_source_var, foreground="#6b7280")
+        self._align_source_lbl.grid(row=3, column=0, columnspan=2, sticky="w",
+                                    pady=(4, 0))
+        ttk.Button(lf, text="↻ Refresh", command=self.refresh_align_site).grid(
+            row=0, column=2, rowspan=2, sticky="e", padx=(12, 0))
+
+    def _workbook_align_die(self) -> str:
+        """The 'Align Die' cell from the recipe-generator workbook, if loaded.
+
+        The workbook lives on the PMA Wafer tab, so it may be loaded before or
+        after the .PMA - hence the Refresh button and the re-read on load.
+        """
+        wafer = getattr(self._main_layout, "pma_wafer", None)
+        if wafer is None:
+            return ""
+        for attr in ("_xls_shot_data", "workbook_data"):
+            data = getattr(wafer, attr, None)
+            if isinstance(data, dict) and data.get("align_die"):
+                return str(data["align_die"])
+        return ""
+
+    def refresh_align_site(self):
+        if not self._fields:
+            self._align_die_var.set("—")
+            self._align_td_var.set("—")
+            self._align_offset_var.set("—")
+            self._align_source_var.set(
+                "Load a .PMA file (and a recipe generator .xls for the die ID).")
+            self._align_source_lbl.config(foreground="#6b7280")
+            return
+
+        info = egpma.align_site_info(
+            self._fields, self._touchdowns, self._workbook_align_die())
+
+        self._align_die_var.set(
+            " / ".join(info["die_ids"]) if info["die_ids"]
+            else "— (no recipe generator .xls loaded)")
+
+        td = info["touchdown"]
+        if td is not None:
+            # The touchdown's OWN quad, not the PMA-derived one - on a mismatch
+            # those differ, and showing the derived one next to the workbook's
+            # die would be actively misleading.
+            quad = ""
+            try:
+                quad = (f"   quad ({td['x'] / float(self._fields['DieSizeX']):.0f},"
+                        f"{td['y'] / float(self._fields['DieSizeY']):.0f})")
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                pass
+            self._align_td_var.set(f"#{td['seq']}  {td['device_id']}{quad}")
+        elif info["quad"] is not None:
+            self._align_td_var.set(
+                f"quad ({info['quad'][0]:.0f},{info['quad'][1]:.0f}) "
+                f"— no touchdown probes the align site")
+        else:
+            self._align_td_var.set("— (PMA has no align-site offset)")
+
+        if info["offset_um"]:
+            ox, oy = info["offset_um"]
+            self._align_offset_var.set(
+                f"X {egpma.fmt_num(ox)} um, Y {egpma.fmt_num(oy)} um")
+        else:
+            self._align_offset_var.set("—")
+
+        if info["agree"] is False:
+            self._align_source_var.set(
+                f"MISMATCH: the workbook names #{info['named_touchdown']['seq']} "
+                f"but the PMA offset points at #{info['quad_touchdown']['seq']} — "
+                f"using the workbook.")
+            self._align_source_lbl.config(foreground="#b91c1c")
+        else:
+            note = "  (both sources agree)" if info["agree"] else ""
+            self._align_source_var.set(
+                f"Source: {info['source'] or 'unknown'}{note}   "
+                f"— the operator aligns and lands the chuck here; the Run tab "
+                f"anchors from it.")
+            self._align_source_lbl.config(foreground="#6b7280")
+
     def _build_body(self):
         split = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
-        split.grid(row=4, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        split.grid(row=5, column=0, sticky="nsew", padx=6, pady=(0, 6))
 
         fields_lf = ttk.LabelFrame(split, text="Parsed PMA Fields", width=320)
         split.add(fields_lf, weight=0)
@@ -159,7 +260,7 @@ class PmaProcessPanel(ttk.Frame):
 
         self._summary_var = tk.StringVar(value="Load a .PMA file to begin.")
         ttk.Label(self, textvariable=self._summary_var, foreground="#374151").grid(
-            row=5, column=0, sticky="w", padx=8, pady=(0, 6))
+            row=6, column=0, sticky="w", padx=8, pady=(0, 6))
 
     def _pma_source_dir(self) -> str:
         folder = getattr(self._main_layout, "_ata_folder", "")
@@ -405,6 +506,7 @@ class PmaProcessPanel(ttk.Frame):
         pma_wafer = getattr(self._main_layout, "pma_wafer", None)
         if pma_wafer is not None:
             pma_wafer.clear_xls_source()
+        self.refresh_align_site()
 
     def _on_pma_picked(self, _evt=None):
         name = self._pma_picker_var.get()
@@ -449,6 +551,7 @@ class PmaProcessPanel(ttk.Frame):
         self._refresh_pickers()
         self._xls_picker_var.set(os.path.basename(path))
         pma_wafer.load_workbook_path(path)
+        self.refresh_align_site()
 
     def _load_recipe_generator_path(self, path: str):
         pma_wafer = getattr(self._main_layout, "pma_wafer", None)
@@ -456,6 +559,7 @@ class PmaProcessPanel(ttk.Frame):
             self._log("[PMA] PMA Wafer tab is not available.")
             return
         pma_wafer.load_workbook_path(path)
+        self.refresh_align_site()
 
     def _create_recipe_from_pma(self):
         if not self._pma_path:
@@ -499,6 +603,8 @@ class PmaProcessPanel(ttk.Frame):
             if prior and prior.get("align_die"):
                 shot_data["align_die"] = prior["align_die"]
             pma_wafer.show_touchdowns(shot_data)
+
+        self.refresh_align_site()
 
         move_list = egpma.build_move_list(touchdowns)
         self._move_list = move_list

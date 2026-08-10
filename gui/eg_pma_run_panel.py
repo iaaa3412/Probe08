@@ -30,7 +30,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from electroglas_pma import parse_pma_file, load_touchdowns
+from electroglas_pma import parse_pma_file, load_touchdowns, align_site_info
 
 # Where LaMP kept its recipes, then the repo's own copies.
 _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
@@ -313,36 +313,33 @@ class EgPmaRunPanel(ttk.Frame):
                          f"compliance {f.get('MeterCurrentLimit')}   NPLC {f.get('NPLC')}")
         self._info_var.set("\n".join(lines))
 
+    def _align_info(self):
+        """Shared with the PMA Process tab, so the two tabs cannot disagree."""
+        return align_site_info(self._fields, self._touchdowns,
+                               self._align_die_from_wafer_tab() or "")
+
     def _align_quad(self):
         """Quad coords of the align site, from the ...FromAlignSite fields."""
-        try:
-            ax = -float(self._fields["XMoveFirstFromAlignSite"]) / self._die_um[0]
-            ay = -float(self._fields["YMoveFirstFromAlignSite"]) / self._die_um[1]
-        except (KeyError, ValueError, ZeroDivisionError):
-            return None
-        return (ax, ay)
+        return self._align_info()["quad"]
 
     def _quad(self, t) -> tuple:
         return (round(t["x"] / self._die_um[0]), round(t["y"] / self._die_um[1]))
 
     def _align_index(self):
         """Index of the touchdown sitting on the align site, if there is one."""
-        align = self._align_quad()
-        if not align:
+        td = self._align_info()["quad_touchdown"]
+        if td is None:
             return None
-        want = (round(align[0]), round(align[1]))
-        for i, t in enumerate(self._touchdowns):
-            if self._quad(t) == want:
-                return i
-        return None
+        return next((i for i, t in enumerate(self._touchdowns)
+                     if t["seq"] == td["seq"]), None)
 
     def _fill_anchor_choices(self):
         choices = []
+        info = self._align_info()
         named = self._align_die_from_wafer_tab()
-        if named:
-            hit = next((t for t in self._touchdowns if named in t["device_id"]), None)
-            if hit:
-                choices.append(f"align die ({named}) — #{hit['seq']} {hit['device_id']}")
+        if named and info["named_touchdown"] is not None:
+            hit = info["named_touchdown"]
+            choices.append(f"align die ({named}) — #{hit['seq']} {hit['device_id']}")
         ai = self._align_index()
         if ai is not None:
             t = self._touchdowns[ai]
