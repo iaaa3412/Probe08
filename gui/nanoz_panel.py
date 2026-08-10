@@ -1840,6 +1840,8 @@ class NanoZPanel(ttk.Frame):
         ttk.Button(path_row, text="Save to CSV", command=self._nz_save_results_csv).pack(
             side="left", padx=10)
         ttk.Button(path_row, text="📤 Export Raw", command=self._nz_export_raw).pack(
+            side="left", padx=(0, 10))
+        ttk.Button(path_row, text="🗑 Clear", command=self._nz_clear_results).pack(
             side="left", padx=(0, 4))
         ttk.Label(path_row, text="(every individual sample, tagged with its die — "
                                  "not the V/I now/avg summary above)",
@@ -1937,6 +1939,20 @@ class NanoZPanel(ttk.Frame):
             return
         self._log_main(f"NanoZ Results: saved {len(self._results_tree.get_children())} "
                        f"row(s) to {path}")
+
+    def _nz_clear_results(self):
+        """Clears the Results table's live data (_latest_spl, what
+        _redraw_results rebuilds the table from every 500ms) - a plain
+        tree.delete() alone would be pointless since the next refresh tick
+        just repopulates it from _latest_spl unchanged. Doesn't touch
+        _spl_history (Charts tab) or the on-disk SPL/ENV CSV logs (Export
+        Raw) - this only clears what's shown here."""
+        n = len(self._latest_spl)
+        self._latest_spl = {}
+        for iid in self._results_tree.get_children():
+            self._results_tree.delete(iid)
+        self._log_main(f"NanoZ Results: cleared ({n} board+chip reading(s) removed from view "
+                       f"— raw CSV logs/Charts history untouched).")
 
     def _results_tab_visible(self):
         try:
