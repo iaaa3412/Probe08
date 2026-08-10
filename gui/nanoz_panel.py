@@ -1771,6 +1771,16 @@ class NanoZPanel(ttk.Frame):
             # inside the chart canvas instead guarantees nothing resets the
             # view once the user has started interacting with it.
             self._chart_canvas.mpl_connect("button_press_event", self._on_chart_button_press)
+            # Mouse-wheel zoom on the time axis, same pattern as the Wafer
+            # Map tab's scroll-zoom - the toolbar's own zoom-rectangle button
+            # already allowed manual zoom, but scroll is much faster for "just
+            # narrow the time window a bit". All three stacked subplots share
+            # the x-axis (sharex=), so zooming from any one of them moves all
+            # three together; each subplot's Y-axis keeps auto-fitting to
+            # whatever's visible on every redraw regardless (matplotlib's
+            # default autoscale, never overridden), so only X needs a manual
+            # zoom control here.
+            self._chart_canvas.mpl_connect("scroll_event", self._on_chart_scroll_zoom)
             self._draw_empty_charts()
         else:
             ttk.Label(tab, text="matplotlib not installed — install it to view live charts.",
@@ -2918,6 +2928,17 @@ class NanoZPanel(ttk.Frame):
         # the drag itself has moved anything yet.
         self._chart_follow_live = False
         self._chart_pinned_time = None
+
+    def _on_chart_scroll_zoom(self, event):
+        if event.inaxes not in (self._chart_ax_v, self._chart_ax_i, self._chart_ax_t):
+            return
+        if event.xdata is None:
+            return
+        factor = 0.85 if event.button == "up" else (1 / 0.85)
+        xlim = self._chart_ax_v.get_xlim()
+        xd = event.xdata
+        self._chart_ax_v.set_xlim(xd - (xd - xlim[0]) * factor, xd + (xlim[1] - xd) * factor)
+        self._chart_canvas.draw_idle()
 
     def _chart_resume_live(self):
         self._chart_follow_live = True
