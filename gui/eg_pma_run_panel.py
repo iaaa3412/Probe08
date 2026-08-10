@@ -6,12 +6,28 @@ walks the recipe. So this panel needs one thing from the operator that it cannot
 work out for itself - WHERE THE CHUCK IS RIGHT NOW - and everything after that
 is arithmetic.
 
-WHY RELATIVE AND NOT ABSOLUTE. The .PMV coordinates are absolute microns in a
-frame whose origin is not pinned down: XMoveFirstFromAlignSite/Y... place the
-align site at an integer quad offset, but which point the coordinates are
-measured from has never been confirmed against the machine. Relative stepping
-sidesteps the question entirely - only differences between consecutive
-touchdowns are used, and those are unambiguous.
+THE FRAME IS NOW PINNED DOWN (operator, from the original LaMP exe):
+
+  1. the operator aligns and lands the chuck on the ALIGN SITE, near the middle
+     of the wafer, and tells the prober that point is its 0,0;
+  2. the exe then moves to the TOP-LEFT of the wafer grid and calls THAT 0,0
+     internally - the prober never agrees, and does not need to;
+  3. everything after is worked out from that top-left origin.
+
+So XMoveFirstFromAlignSite/Y... is the align site -> MAP ORIGIN vector, NOT
+align site -> first touchdown as previously recorded here. Confirmed on three
+recipes: negating it lands on the wafer's extent centre (exactly for GIAL5,
+within the half-pitch grid parity for the other two), while the first touchdown
+is nowhere near the origin in any of them. Hence:
+
+    prober_um = (XMoveFirstFromAlignSite + map_x,
+                 YMoveFirstFromAlignSite + map_y)      [prober 0,0 = align site]
+
+WHY THIS PANEL STILL STEPS RELATIVELY. The original exe drove absolute MICRON
+moves (MA) off that transform and never used die moves at all. Relative MD
+steps are what has been verified on this bench, so they stay the default; the
+micron path is the more faithful one and removes the die-size trap below, but
+it has not yet been run against hardware.
 
 MD STEPS BY THE PROBER'S OWN DIE SIZE, not by anything in the recipe. For a LaMP
 electrical recipe that must be the QUAD pitch (7042 x 3284 um for HP LaMP),

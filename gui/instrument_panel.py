@@ -288,10 +288,10 @@ class MainLayout(ttk.Frame):
             lbl = ttk.Label(inst_frame, text=f"⏳ {inst}", foreground="orange")
             lbl.pack(anchor="w", padx=4, pady=2)
             self.status_labels[inst] = lbl
-        ttk.Button(
+        self._refresh_conn_btn = ttk.Button(
             inst_frame, text="↻ Refresh Connections",
-            command=self._init_hardware_fn
-        ).pack(pady=(8, 4), padx=4, fill="x")
+            command=self._init_hardware_fn)
+        self._refresh_conn_btn.pack(pady=(8, 4), padx=4, fill="x")
 
         self.lbl_progress = ttk.Label(sidebar, text="No wafer loaded")
         self.sidebar_canvas = tk.Canvas(
@@ -312,6 +312,27 @@ class MainLayout(ttk.Frame):
         self.log_text.configure(yscrollcommand=log_sb.set)
         log_sb.pack(side="right", fill="y", pady=2)
         self.log_text.pack(fill="both", expand=True, padx=(2, 0), pady=2)
+
+    def set_visible_instruments(self, names):
+        """Show only these in the sidebar roster, in the declared order.
+
+        An instrument that is neither fitted nor pinged has no status to
+        report, so listing it just adds a permanently grey row. The bench
+        profile decides which those are, and it changes when the prober
+        selector changes - hence re-applied on every connect sweep rather
+        than fixed at build time.
+        """
+        wanted = set(names or [])
+        for inst in self._instrument_names:
+            lbl = self.status_labels.get(inst)
+            if lbl is None:
+                continue
+            lbl.pack_forget()
+            if inst in wanted:
+                # before= keeps the Refresh button at the bottom; a bare
+                # pack() would re-append the label underneath it.
+                lbl.pack(anchor="w", padx=4, pady=2,
+                         before=self._refresh_conn_btn)
 
     @staticmethod
     def _enable_tab_drag(nb: ttk.Notebook):

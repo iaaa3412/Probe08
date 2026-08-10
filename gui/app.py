@@ -29,12 +29,6 @@ ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A"
                                 "Agilent 6634B", "HP Switchbox 1", "HP Switchbox 2",
                                 "HP Switchbox 3"]
 
-# Still listed in the sidebar so the roster stays visible, but this prober does
-# not have them - they are skipped by the connect sweep instead of being
-# reported as failures. Other EG probers are fitted differently; the Instruments
-# panel's Scan Bus button reports what a given one actually carries.
-ELECTROGLAS_NOT_FITTED = ("Keithley 2400", "Agilent 6634B")
-
 # Accretech is one machine for now. Electroglas benches come from
 # instruments/eg_probers.yaml instead, because they genuinely differ.
 ACCRETECH_BENCHES = ("probe08",)
@@ -195,6 +189,7 @@ class AtomicaDashboard(tk.Tk):
             self._ata_picker_var.set("")
         # The prober list is per-system, so it has to follow the toggle.
         self._refresh_bench_picker()
+        self._refresh_routing_button()
         self.update_statistics_visuals()
         self.check_system_ready()
         self.log(f"[SYSTEM] Switched active system to {system.capitalize()} "
@@ -300,6 +295,21 @@ class AtomicaDashboard(tk.Tk):
         holder, self.bottom_routing = scrollable_routing(lf, self)
         holder.pack(fill="both", expand=True)
 
+    def _refresh_routing_button(self):
+        """Switch Routing is an Accretech-only view, so hide its toggle on the
+        Electroglas side rather than leaving a button that opens a pane with
+        nothing relevant in it. Collapses the pane first if it is open,
+        otherwise it would be stranded with no way to close it."""
+        btn = getattr(self, "_routing_toggle_btn", None)
+        if btn is None:
+            return
+        if self.active_system == "electroglas":
+            if getattr(self, "_routing_visible", False):
+                self.cmd_toggle_routing()
+            btn.pack_forget()
+        else:
+            btn.pack(side="right", padx=6, pady=2)
+
     def cmd_toggle_routing(self):
         if self._routing_visible:
             self._main_pane.forget(self._bottom_routing_frame)
@@ -357,6 +367,7 @@ class AtomicaDashboard(tk.Tk):
         txt.configure(state="disabled")
 
     def _connect_instruments(self, ui, drivers, connections):
+        ui.set_visible_instruments([name for name, _key, _drv in connections])
         for lbl in ui.status_labels.values():
             lbl.config(foreground="orange")
         self.update_idletasks()
@@ -388,12 +399,12 @@ class AtomicaDashboard(tk.Tk):
           ID-query timeout; this loop runs on the UI thread, so that froze the
           window for ~30s whenever something on the bench was powered off.
         """
+        # Only what this bench actually carries. Unfitted instruments used to
+        # sit here as permanently grey "(not fitted)" rows; they are now simply
+        # absent, and the Instruments tab still reports the full roster.
+        ui.set_visible_instruments([name for name, _key, _factory in connections])
         for lbl in ui.status_labels.values():
             lbl.config(foreground="orange")
-        for name in ELECTROGLAS_NOT_FITTED:
-            if name in ui.status_labels:
-                ui.status_labels[name].config(text=f"— {name} (not fitted)",
-                                              foreground="gray")
         self.update_idletasks()
         for name, key, build_driver in connections:
             try:
@@ -582,7 +593,7 @@ class AtomicaDashboard(tk.Tk):
         ttk.Button(toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear).pack(side="left", padx=4, pady=2)
         self._routing_toggle_btn = ttk.Button(
             toolbar, text="▸ Show Routing", command=self.cmd_toggle_routing)
-        self._routing_toggle_btn.pack(side="right", padx=6, pady=2)
+        self._refresh_routing_button()
         ttk.Button(toolbar, text="⛶ Fit Windows", command=self.cmd_fit_windows).pack(
             side="right", padx=2, pady=2)
         self.after(200, self._refresh_ata_picker)

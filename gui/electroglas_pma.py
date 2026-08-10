@@ -185,9 +185,12 @@ def load_touchdowns(pma_path: str, fields: dict) -> list:
     UNITS ARE MICRONS. Verified against a real recipe: DieSizeX=7042 with a
     measured die of 3.521mm means the .PMA's "die size" is the 2x2 QUAD pitch,
     twice the physical die, and every move coordinate in the .PMV files is an
-    exact integer multiple of it. Coordinates are absolute, measured from the
-    align site, and XMoveFirstFromAlignSite/YMoveFirstFromAlignSite give the
-    offset from that site to the first touchdown.
+    exact integer multiple of it.
+
+    Coordinates are absolute from the TOP-LEFT of the wafer grid, which the
+    original LaMP exe treated as its own 0,0. They are NOT measured from the
+    align site, and XMoveFirstFromAlignSite/Y... is the align site -> that
+    top-left origin, not align site -> first touchdown. See align_site_info().
 
     The prober itself stores none of this - the PC holds the map and drives the
     stage to each coordinate in turn (MA, absolute move in microns).
@@ -240,9 +243,12 @@ def align_site_info(fields: dict, touchdowns: list, align_die: str = "") -> dict
     """Where the align site is, from the two independent sources.
 
     The .PMA states it only indirectly: XMoveFirstFromAlignSite/Y... are the
-    offset FROM the align site TO the first touchdown, so negating them and
-    dividing by the quad pitch puts the align site in the same quad coordinates
-    the touchdowns use. The recipe-generator workbook, when one is loaded,
+    offset FROM the align site TO THE MAP ORIGIN (the top-left of the grid,
+    which the original exe called 0,0), so negating them puts the align site
+    in the same frame the touchdowns use, and dividing by the quad pitch gives
+    its quad coordinates. Sanity check: that lands on the wafer's extent centre,
+    which is where an operator aligns. The recipe-generator workbook, when one is
+    loaded,
     NAMES the die instead ("Align Die" on its first sheet) - that is stated
     rather than derived, so it wins when the two disagree.
 
@@ -290,6 +296,23 @@ def align_site_info(fields: dict, touchdowns: list, align_die: str = "") -> dict
     if info["named_touchdown"] is not None and info["quad_touchdown"] is not None:
         info["agree"] = info["named_touchdown"]["seq"] == info["quad_touchdown"]["seq"]
     return info
+
+
+def map_to_prober_um(fields: dict, map_x: float, map_y: float) -> tuple:
+    """Recipe map microns -> prober microns, with the prober zeroed on the align site.
+
+    This is what the original LaMP exe did: the operator zeros the prober on the
+    align site, the exe shifts to the top-left of the grid and works from there,
+    and every touchdown is reached with an absolute MICRON move (MA) rather than
+    a die move. Absolute micron moves do not care what die size the prober has
+    configured, which is the whole trap that MD stepping carries.
+    """
+    return (float(fields["XMoveFirstFromAlignSite"]) + float(map_x),
+            float(fields["YMoveFirstFromAlignSite"]) + float(map_y))
+
+
+def touchdown_prober_um(fields: dict, touchdown: dict) -> tuple:
+    return map_to_prober_um(fields, touchdown["x"], touchdown["y"])
 
 
 def save_wafer_map_csv(folder: str, touchdowns: list) -> str:
