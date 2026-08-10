@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import collections
 import csv
 import datetime as dt
@@ -1905,6 +1906,56 @@ class NanoZPanel(ttk.Frame):
             return ""
         return f"{v / i:.4g}"
 
+    # Board-wide ENV fields matched onto each SPL raw-export row (see
+    # _nearest_env_reading) - the ambient/board readings closest in time to
+    # that sample, not per-die like the SPL fields, so kept distinctly
+    # named (env_ prefix) rather than mixed in with the S1-4/H1-2 columns.
+    _RAW_EXPORT_ENV_FIELDS = ("temp_h_c", "humidity_percent", "temp_p_c",
+                              "pressure_hpa_minus_1013", "mcu_temperature_c")
+
+    def _load_env_by_port(self) -> dict:
+        """{port: [(datetime, row_dict), ...]} sorted by time, read from the
+        session's ENV CSV log - the same file _handle_packet appends every
+        settled ENV packet to. Empty per-port lists (or an empty dict, if
+        no ENV data was ever logged this session) if there's nothing to
+        match against; that's fine, the env_ columns just come back blank."""
+        by_port: dict = {}
+        if not self._env_path or not os.path.isfile(self._env_path):
+            return by_port
+        try:
+            with open(self._env_path, "r", encoding="utf-8", newline="") as f:
+                for row in csv.DictReader(f):
+                    ts = row.get("host_timestamp", "")
+                    try:
+                        parsed = dt.datetime.fromisoformat(ts)
+                    except ValueError:
+                        continue
+                    by_port.setdefault(row.get("port"), []).append((parsed, row))
+        except OSError:
+            return by_port
+        for port in by_port:
+            by_port[port].sort(key=lambda pr: pr[0])
+        return by_port
+
+    @staticmethod
+    def _nearest_env_reading(env_by_port: dict, port: str, host_timestamp: str) -> "dict | None":
+        """The ENV sample (board-wide temp/humidity/pressure) closest in
+        time to a given SPL row's timestamp, for the same board - ENV
+        packets stream independently (once per env_interval_s) so they
+        never land at the exact same instant as an SPL sample."""
+        samples = env_by_port.get(port)
+        if not samples:
+            return None
+        try:
+            target = dt.datetime.fromisoformat(host_timestamp)
+        except (ValueError, TypeError):
+            return samples[-1][1]
+        times = [t for t, _ in samples]
+        i = bisect.bisect_left(times, target)
+        candidates = [c for c in (i - 1, i) if 0 <= c < len(samples)]
+        best = min(candidates, key=lambda c: abs((samples[c][0] - target).total_seconds()))
+        return samples[best][1]
+
     @staticmethod
     def _raw_die_key(row: dict) -> str:
         return row.get("die_id") or f"{row.get('die_row')},{row.get('die_col')}"
@@ -1933,9 +1984,10 @@ class NanoZPanel(ttk.Frame):
         (Active), a double-clicked board, Recipe Run, ...). The on-disk log
         itself is left as-is (full raw fields, useful for comms debugging);
         this reads it and writes the export with _RAW_EXPORT_DROP_FIELDS
-        removed and an S1-4/H1-2 resistance column added per row, to the
-        chosen export location with the same Lot/Wafer ID naming the other
-        exports use."""
+        removed, an S1-4/H1-2 resistance column added per row, and the
+        board's ENV reading (temp/humidity/pressure) closest in time to
+        that sample matched in as env_* columns, to the chosen export
+        location with the same Lot/Wafer ID naming the other exports use."""
         if not self._spl_path or not os.path.isfile(self._spl_path):
             messagebox.showerror(
                 "No Raw Data Yet",
@@ -1957,10 +2009,12 @@ class NanoZPanel(ttk.Frame):
             messagebox.showerror("Export Failed", str(e))
             return
         rows = self._raw_latest_cycle_only(rows)
+        env_by_port = self._load_env_by_port()
 
         kept_fields = [c for c in src_fields if c not in self._RAW_EXPORT_DROP_FIELDS]
         r_fields = [f"r_s{s}_kohm" for s in (1, 2, 3, 4)] + ["r_h1_ohm", "r_h2_ohm"]
-        out_fields = kept_fields + r_fields
+        env_fields = [f"env_{f}" for f in self._RAW_EXPORT_ENV_FIELDS]
+        out_fields = kept_fields + r_fields + env_fields
 
         lot_id = self._nz_lot_id_var.get().strip()
         wafer_id = self._nz_wafer_id_var.get().strip()
@@ -1979,6 +2033,10 @@ class NanoZPanel(ttk.Frame):
                     for h in (1, 2):
                         out[f"r_h{h}_ohm"] = self._raw_resistance(
                             row.get(f"heater{h}_voltage_mv"), row.get(f"heater{h}_current_ma"))
+                    env_row = self._nearest_env_reading(
+                        env_by_port, row.get("port"), row.get("host_timestamp", ""))
+                    for f in self._RAW_EXPORT_ENV_FIELDS:
+                        out[f"env_{f}"] = (env_row or {}).get(f, "")
                     writer.writerow(out)
         except OSError as e:
             messagebox.showerror("Export Failed", str(e))
