@@ -2173,8 +2173,17 @@ class MainLayout(ttk.Frame):
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
         self._exec2_wafer_map.on_redraw = self._exec2_redraw_overlay_on_run_map
 
-        stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
-        body.add(stat_lf, weight=1)
+        # Electroglas keeps Pass/Fail in the left column under Recipe Steps so
+        # the wafer map gets the whole rest of the width - the die-ID overlay
+        # needs the room. Accretech keeps its own third pane.
+        if self._system == "electroglas":
+            stat_lf = ttk.LabelFrame(left_col, text="Pass / Fail", padding=(8, 4))
+            stat_lf.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            count_font = ("Consolas", 18, "bold")
+        else:
+            stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
+            body.add(stat_lf, weight=1)
+            count_font = ("Consolas", 24, "bold")
         stat_lf.columnconfigure(0, weight=1)
 
         self._exec2_pass_var = tk.IntVar(value=0)
@@ -2189,8 +2198,7 @@ class MainLayout(ttk.Frame):
             ttk.Label(row_f, text=label, width=6,
                       font=("Segoe UI", 10, "bold"),
                       foreground=color).pack(side="left")
-            ttk.Label(row_f, textvariable=var,
-                      font=("Consolas", 24, "bold"),
+            ttk.Label(row_f, textvariable=var, font=count_font,
                       foreground=color).pack(side="left", padx=8)
 
         ttk.Separator(stat_lf, orient="horizontal").pack(fill="x", pady=8)
@@ -2214,9 +2222,33 @@ class MainLayout(ttk.Frame):
             f"{name}  ({n} dies)" if n else f"{name} — {filename} not found")
         if n or not quiet_if_missing:
             self._exec2_log(f"[RUN] Wafer map loaded from '{name}/{filename}' — {n} dies")
+        self._exec2_adopt_map_die_ids()
         if self._system == "accretech":
             self._sync_results_wafer_map()
             self._exec2_load_selected_map(quiet_if_missing=True)
+
+    def _exec2_adopt_map_die_ids(self):
+        """Use the die IDs the loaded map file carries as the overlay.
+
+        The Electroglas map (ata_wafer_map_electroglas.csv) names every
+        touchdown in a device_id column, so there is nothing to match up -
+        unlike Accretech, where the Overlay dialog has to reconcile two
+        different maps. Feeding them into the SAME _exec2_overlay_die_ids
+        dict means the labels inherit everything that already works there:
+        redrawn from WaferMapPanel.on_redraw after any rebuild, moved with
+        the dies by canvas.scale on zoom, and written out by Save Selected
+        Map, so an export can never disagree with what is on screen.
+        """
+        wm = self._exec2_wafer_map
+        ids = {rc: text for rc, text in (wm.die_ids or {}).items() if text}
+        if not ids:
+            return
+        # Never clobber an overlay the operator built by hand in the dialog.
+        if self._exec2_overlay_die_ids and self._system == "accretech":
+            return
+        self._exec2_clear_overlay_labels(wm, self._exec2_overlay_items)
+        self._exec2_overlay_die_ids = ids
+        self._exec2_redraw_overlay_on_run_map()
 
     def _sync_results_wafer_map(self):
         rwm = getattr(self, "_results_wafer_map", None)
@@ -3697,6 +3729,15 @@ class MainLayout(ttk.Frame):
         self._exec2_last_run_start_idx = len(self.controller.results_data)
         self._exec2_pass_var.set(0)
         self._exec2_fail_var.set(0)
+        # The PMA runner keeps its own verdict-per-touchdown record and paints
+        # the map from it; zeroing the counters without clearing that would
+        # leave green/red squares that nothing counts any more.
+        reset = getattr(getattr(self, "eg_pma_run", None), "reset_results", None)
+        if reset:
+            try:
+                reset()
+            except Exception:
+                pass
         self._exec2_die_num = 0
         if total_dies is not None:
             self._exec2_total_dies = total_dies

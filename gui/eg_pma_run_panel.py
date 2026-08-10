@@ -538,8 +538,37 @@ class EgPmaRunPanel(ttk.Frame):
     def mark_result(self, seq, passed: bool):
         """Record and paint a pass/fail. Kept public for the measurement step,
         which does not exist yet - the run currently only moves."""
+        was = self._results.get(seq)
         self._results[seq] = "PASS" if passed else "FAIL"
         self._paint(seq, self._results[seq])
+        # Only count a touchdown once. Re-probing the same site (Back, then
+        # forward again) must not inflate the totals, and a changed verdict
+        # has to move the count from one column to the other, not add to both.
+        if was == self._results[seq]:
+            return
+        layout = self._main_layout
+        add_pass = getattr(layout, "_exec2_add_pass", None)
+        add_fail = getattr(layout, "_exec2_add_fail", None)
+        if not (add_pass and add_fail):
+            return
+        try:
+            if was in ("PASS", "FAIL"):
+                var = (layout._exec2_pass_var if was == "PASS"
+                       else layout._exec2_fail_var)
+                var.set(max(0, var.get() - 1))
+            (add_pass if passed else add_fail)()
+        except Exception as e:
+            self._log(f"[PMA] Could not update pass/fail counts — "
+                      f"{type(e).__name__}: {e}")
+
+    def reset_results(self):
+        """Drop recorded verdicts and repaint - pairs with Reset Counts."""
+        for seq in list(self._results):
+            self._paint(seq, "UNTESTED")
+        self._results.clear()
+        if self._index is not None:
+            self._last_seq = None
+            self._highlight(self._index)
 
     def _highlight(self, index):
         """Orange-ish CURRENT on the new shot; the one we left keeps its result
