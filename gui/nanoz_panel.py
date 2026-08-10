@@ -7,6 +7,7 @@ import os
 import queue
 import random
 import re
+import shutil
 import threading
 import time
 import tkinter as tk
@@ -1828,6 +1829,11 @@ class NanoZPanel(ttk.Frame):
             side="left", padx=4)
         ttk.Button(path_row, text="Save to CSV", command=self._nz_save_results_csv).pack(
             side="left", padx=10)
+        ttk.Button(path_row, text="📤 Export Raw", command=self._nz_export_raw).pack(
+            side="left", padx=(0, 4))
+        ttk.Label(path_row, text="(every individual sample, tagged with its die — "
+                                 "not the V/I now/avg summary above)",
+                 foreground="#6b7280", font=("Segoe UI", 8)).pack(side="left")
 
         results_frame = ttk.Frame(tab)
         results_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -1861,6 +1867,42 @@ class NanoZPanel(ttk.Frame):
         path = filedialog.askdirectory(title="Choose Export Folder")
         if path:
             self._nz_export_path_var.set(path)
+
+    def _nz_export_raw(self):
+        """Every individual raw SPL sample (not the V/I now/avg summary the
+        results table shows) since the last run started, still tagged with
+        the die each one was taken on. self._spl_path already IS this -
+        every settled SPL packet gets appended to it in real time by
+        _handle_packet regardless of what triggered the cycle (Run Cycle
+        (Active), a double-clicked board, Recipe Run, ...) - so this just
+        copies it to the chosen export location with the same Lot/Wafer ID
+        naming the other exports use, rather than recomputing anything."""
+        if not self._spl_path or not os.path.isfile(self._spl_path):
+            messagebox.showerror(
+                "No Raw Data Yet",
+                "No SPL data has been logged this session — run a cycle first "
+                "(Run Cycle (Active), a recipe run, a double-clicked board, ...), "
+                "then Export Raw.")
+            return
+        folder = self._nz_export_path_var.get().strip() or self._nanoz_ata_folder
+        if not folder:
+            messagebox.showerror("No Export Path", "Choose an export path first.")
+            return
+        lot_id = self._nz_lot_id_var.get().strip()
+        wafer_id = self._nz_wafer_id_var.get().strip()
+        name_parts = [p for p in (lot_id, wafer_id) if p] or ["nanoz"]
+        filename = "_".join(name_parts) + "_nanoz_raw.csv"
+        dest = os.path.join(folder, filename)
+        try:
+            shutil.copyfile(self._spl_path, dest)
+            with open(self._spl_path, "r", encoding="utf-8") as f:
+                n_rows = max(0, sum(1 for _ in f) - 1)  # minus header row
+        except OSError as e:
+            messagebox.showerror("Export Failed", str(e))
+            return
+        self._log_main(f"NanoZ Export Raw: {n_rows} raw sample(s) — every settled SPL "
+                       f"reading since the current run started, tagged with its die — "
+                       f"saved to {dest}")
 
     def _nz_save_results_csv(self):
         folder = self._nz_export_path_var.get().strip() or self._nanoz_ata_folder
