@@ -2223,8 +2223,10 @@ class MainLayout(ttk.Frame):
         if n or not quiet_if_missing:
             self._exec2_log(f"[RUN] Wafer map loaded from '{name}/{filename}' — {n} dies")
         self._exec2_adopt_map_die_ids()
+        # Both systems mirror the Run map onto the Results tab, so the
+        # pass/fail map there is never a stale copy of a different wafer.
+        self._sync_results_wafer_map()
         if self._system == "accretech":
-            self._sync_results_wafer_map()
             self._exec2_load_selected_map(quiet_if_missing=True)
 
     def _exec2_adopt_map_die_ids(self):
@@ -3773,10 +3775,13 @@ class MainLayout(ttk.Frame):
         split = ttk.PanedWindow(page, orient="vertical")
         split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
-        if self._system == "accretech":
-            wafer_pane = ttk.Frame(split)
-            split.add(wafer_pane, weight=3)
-            self._build_results_wafer_map(wafer_pane)
+        # Both systems get the pass/fail wafer map at the top, above Data
+        # Export. Electroglas used to get a donut of run statistics down at
+        # the bottom instead, which said less than the map does and did not
+        # let you click a die to read its measurements.
+        wafer_pane = ttk.Frame(split)
+        split.add(wafer_pane, weight=3)
+        self._build_results_wafer_map(wafer_pane)
 
         export_frame = ttk.LabelFrame(split, text="Data Export")
         split.add(export_frame, weight=0)
@@ -3870,21 +3875,6 @@ class MainLayout(ttk.Frame):
 
         ttk.Button(results_lf, text="Clear Results", command=self.clear_results).grid(
             row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 6))
-
-        if self._system != "accretech":
-            stats_frame = ttk.LabelFrame(split, text="Run Statistics")
-            split.add(stats_frame, weight=1)
-
-            self.results_canvas = tk.Canvas(
-                stats_frame, width=300, height=300, bg="#f0f0f0", highlightthickness=0
-            )
-            self.results_canvas.pack(pady=15)
-            self.lbl_results_large = ttk.Label(
-                stats_frame,
-                text="Pass: 0   |   Fail: 0   |   Untested: 0",
-                font=("Arial", 14, "bold")
-            )
-            self.lbl_results_large.pack(pady=8)
 
     def _build_results_wafer_map(self, tab):
         map_frame = ttk.LabelFrame(tab, text="Wafer Map — Pass / Fail")

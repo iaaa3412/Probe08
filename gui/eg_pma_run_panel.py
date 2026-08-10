@@ -522,25 +522,39 @@ class EgPmaRunPanel(ttk.Frame):
     def _run_map(self):
         return getattr(self._main_layout, "_exec2_wafer_map", None)
 
-    def _paint(self, seq, status: str):
-        """Colour one touchdown on the Run tab map. Best effort."""
-        wmap = self._run_map()
-        if wmap is None or not self._rc:
+    def _results_map(self):
+        return getattr(self._main_layout, "_results_wafer_map", None)
+
+    def _paint(self, seq, status: str, also_results: bool = False):
+        """Colour one touchdown on the Run tab map. Best effort.
+
+        also_results mirrors it onto the Results tab's map, which the
+        Accretech flow does for verdicts only - that map is about outcomes,
+        so the transient PROBING highlight does not belong on it.
+        """
+        if not self._rc:
             return
         rc = self._rc.get(seq)
         if not rc:
             return
-        try:
-            wmap.update_die(rc[0], rc[1], status)
-        except Exception:
-            pass
+        maps = [self._run_map()]
+        if also_results:
+            maps.append(self._results_map())
+        for wmap in maps:
+            if wmap is None:
+                continue
+            try:
+                if rc in wmap.dies:
+                    wmap.update_die(rc[0], rc[1], status)
+            except Exception:
+                pass
 
     def mark_result(self, seq, passed: bool):
         """Record and paint a pass/fail. Kept public for the measurement step,
         which does not exist yet - the run currently only moves."""
         was = self._results.get(seq)
         self._results[seq] = "PASS" if passed else "FAIL"
-        self._paint(seq, self._results[seq])
+        self._paint(seq, self._results[seq], also_results=True)
         # Only count a touchdown once. Re-probing the same site (Back, then
         # forward again) must not inflate the totals, and a changed verdict
         # has to move the count from one column to the other, not add to both.
@@ -564,7 +578,7 @@ class EgPmaRunPanel(ttk.Frame):
     def reset_results(self):
         """Drop recorded verdicts and repaint - pairs with Reset Counts."""
         for seq in list(self._results):
-            self._paint(seq, "UNTESTED")
+            self._paint(seq, "UNTESTED", also_results=True)
         self._results.clear()
         if self._index is not None:
             self._last_seq = None
