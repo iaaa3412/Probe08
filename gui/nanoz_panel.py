@@ -7,7 +7,6 @@ import os
 import queue
 import random
 import re
-import shutil
 import threading
 import time
 import tkinter as tk
@@ -1881,15 +1880,35 @@ class NanoZPanel(ttk.Frame):
         if path:
             self._nz_export_path_var.set(path)
 
+    # Columns dropped from the live SPL CSV log when exporting - framing/
+    # protocol bookkeeping (header/checksum/length/reserved bytes, ppms) and
+    # the prober's own row/col numbering (die_id is what's kept - see the
+    # "results should correspond to die id, not row/col" note elsewhere).
+    _RAW_EXPORT_DROP_FIELDS = {"die_row", "die_col", "header_time_ms", "header_bfr",
+                               "len", "checksum_expected", "ppms", "header_chip", "reserved"}
+
+    @staticmethod
+    def _raw_resistance(v_str, i_str) -> str:
+        try:
+            v, i = float(v_str), float(i_str)
+        except (TypeError, ValueError):
+            return ""
+        if not i:
+            return ""
+        return f"{v / i:.4g}"
+
     def _nz_export_raw(self):
         """Every individual raw SPL sample (not the V/I now/avg summary the
         results table shows) since the last run started, still tagged with
         the die each one was taken on. self._spl_path already IS this -
         every settled SPL packet gets appended to it in real time by
         _handle_packet regardless of what triggered the cycle (Run Cycle
-        (Active), a double-clicked board, Recipe Run, ...) - so this just
-        copies it to the chosen export location with the same Lot/Wafer ID
-        naming the other exports use, rather than recomputing anything."""
+        (Active), a double-clicked board, Recipe Run, ...). The on-disk log
+        itself is left as-is (full raw fields, useful for comms debugging);
+        this reads it and writes the export with _RAW_EXPORT_DROP_FIELDS
+        removed and an S1-4/H1-2 resistance column added per row, to the
+        chosen export location with the same Lot/Wafer ID naming the other
+        exports use."""
         if not self._spl_path or not os.path.isfile(self._spl_path):
             messagebox.showerror(
                 "No Raw Data Yet",
@@ -1901,19 +1920,42 @@ class NanoZPanel(ttk.Frame):
         if not folder:
             messagebox.showerror("No Export Path", "Choose an export path first.")
             return
+
+        try:
+            with open(self._spl_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                src_fields = reader.fieldnames or []
+                rows = list(reader)
+        except OSError as e:
+            messagebox.showerror("Export Failed", str(e))
+            return
+
+        kept_fields = [c for c in src_fields if c not in self._RAW_EXPORT_DROP_FIELDS]
+        r_fields = [f"r_s{s}_kohm" for s in (1, 2, 3, 4)] + ["r_h1_ohm", "r_h2_ohm"]
+        out_fields = kept_fields + r_fields
+
         lot_id = self._nz_lot_id_var.get().strip()
         wafer_id = self._nz_wafer_id_var.get().strip()
         name_parts = [p for p in (lot_id, wafer_id) if p] or ["nanoz"]
         filename = "_".join(name_parts) + "_nanoz_raw.csv"
         dest = os.path.join(folder, filename)
         try:
-            shutil.copyfile(self._spl_path, dest)
-            with open(self._spl_path, "r", encoding="utf-8") as f:
-                n_rows = max(0, sum(1 for _ in f) - 1)  # minus header row
+            with open(dest, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=out_fields)
+                writer.writeheader()
+                for row in rows:
+                    out = {k: row.get(k, "") for k in kept_fields}
+                    for s in (1, 2, 3, 4):
+                        out[f"r_s{s}_kohm"] = self._raw_resistance(
+                            row.get(f"dac_mv_s{s}"), row.get(f"adc_current_ma_s{s}"))
+                    for h in (1, 2):
+                        out[f"r_h{h}_ohm"] = self._raw_resistance(
+                            row.get(f"heater{h}_voltage_mv"), row.get(f"heater{h}_current_ma"))
+                    writer.writerow(out)
         except OSError as e:
             messagebox.showerror("Export Failed", str(e))
             return
-        self._log_main(f"NanoZ Export Raw: {n_rows} raw sample(s) — every settled SPL "
+        self._log_main(f"NanoZ Export Raw: {len(rows)} raw sample(s) — every settled SPL "
                        f"reading since the current run started, tagged with its die — "
                        f"saved to {dest}")
 
@@ -1945,15 +1987,25 @@ class NanoZPanel(ttk.Frame):
         """Clears the Results table's live data (_latest_spl, what
         _redraw_results rebuilds the table from every 500ms) - a plain
         tree.delete() alone would be pointless since the next refresh tick
-        just repopulates it from _latest_spl unchanged. Doesn't touch
-        _spl_history (Charts tab) or the on-disk SPL/ENV CSV logs (Export
-        Raw) - this only clears what's shown here."""
+        just repopulates it from _latest_spl unchanged. Also truncates the
+        on-disk SPL/ENV CSV logs (what Export Raw/the live log actually
+        read from) so a subsequent Export Raw genuinely comes back empty
+        instead of still containing everything collected before Clear was
+        pressed. Doesn't touch _spl_history (Charts tab keeps its own
+        rolling window regardless)."""
         n = len(self._latest_spl)
         self._latest_spl = {}
         for iid in self._results_tree.get_children():
             self._results_tree.delete(iid)
-        self._log_main(f"NanoZ Results: cleared ({n} board+chip reading(s) removed from view "
-                       f"— raw CSV logs/Charts history untouched).")
+        for path in (self._spl_path, self._env_path):
+            if path and os.path.isfile(path):
+                try:
+                    open(path, "w", encoding="utf-8").close()
+                except OSError as e:
+                    self._log_main(f"NanoZ Results: could not clear log file {path}: {e}")
+        self._log_main(f"NanoZ Results: cleared ({n} board+chip reading(s) removed from view, "
+                       f"raw SPL/ENV CSV logs truncated — Export Raw will come back empty "
+                       f"until the next cycle runs).")
 
     def _results_tab_visible(self):
         try:
