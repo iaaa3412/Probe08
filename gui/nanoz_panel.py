@@ -3694,11 +3694,28 @@ class NanoZPanel(ttk.Frame):
         Charts tab, _latest_spl, the Results tab's averages, and the SPL CSV
         export - lets the sensor settle before anything treats it as real
         data. Still stored in _spl_history itself (just filtered out when
-        read), so nothing here is actually lost."""
+        read), so nothing here is actually lost.
+
+        Also the single choke point every cycle trigger (Run Cycle
+        (Active), a double-clicked board, Console's run, a recipe shot,
+        ...) already runs through right before board.run_cycle() - so this
+        is also where each board's die-per-chip gets SNAPSHOT (via
+        set_active_die) from wherever _current_rc/the slot map currently
+        say it is. That snapshot, not a live re-query, is what tags every
+        packet this cycle produces - if the prober/position window has
+        already moved on to the next touchdown by the time this cycle's
+        last few packets actually drain in, they still get tagged with the
+        die they were really measured at, not wherever things have since
+        moved on to."""
         self._ensure_csv_paths()
         for board in boards:
             self._skip_spl_count[(board.port, "0")] = self._SETTLING_SKIP_COUNT
             self._skip_spl_count[(board.port, "1")] = self._SETTLING_SKIP_COUNT
+            board.set_active_die({
+                "0": self._die_provider(board.port, "0"),
+                "1": self._die_provider(board.port, "1"),
+                None: self._die_provider(board.port, None),
+            })
 
     def _handle_packet(self, item: dict):
         kind = item.get("kind")

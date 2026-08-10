@@ -1001,6 +1001,18 @@ class NanoZBoard:
         # die_provider(chip) -> (row, col, die_id); chip is "0"/"1" for a
         # per-chip SPL reading, or None for a board-wide ENV reading.
         self._die_provider = die_provider or (lambda chip: (None, None, None))
+        # Snapshot of which die each chip ("0"/"1") - and the board-wide ENV
+        # reading, key None - is over, taken once when a cycle is armed
+        # (NanoZPanel._arm_settling_skip -> set_active_die) rather than
+        # re-queried live per packet. A cycle can take a while to fully
+        # drain; if the prober/position window has already moved on to the
+        # next touchdown by the time the last few packets of THIS cycle
+        # arrive, live-querying would mis-tag them with the new position
+        # instead of the one they were actually measured at. Falls back to
+        # the live die_provider for any chip key never armed (e.g. a raw
+        # "run" sent straight from the console's Send box, bypassing the
+        # normal arm step).
+        self._active_die: dict = {}
         self.env_interval_s = env_interval_s
         self.ser: Optional[serial.Serial] = None
         self._buffer = bytearray()
@@ -1009,6 +1021,17 @@ class NanoZBoard:
         self.spl_count = 0
         self.env_count = 0
         self.last_error = ""
+
+    def _die_for(self, chip_key) -> tuple:
+        if chip_key in self._active_die:
+            return self._active_die[chip_key]
+        return self._die_provider(chip_key)
+
+    def set_active_die(self, die_map: dict):
+        """Called right when a cycle is armed - fixes which die each chip
+        (and ENV, key None) is over for every packet this cycle produces,
+        immune to the prober moving on to the next touchdown mid-drain."""
+        self._active_die = dict(die_map)
 
     @property
     def is_running(self) -> bool:
@@ -1155,7 +1178,7 @@ class NanoZBoard:
             parsed = parse_spl_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col, die_id = self._die_provider(str(header_chip))
+        row, col, die_id = self._die_for(str(header_chip))
         self.spl_count += 1
         self.out_queue.put({
             "kind": "spl", "host_timestamp": now_stamp(),
@@ -1181,7 +1204,7 @@ class NanoZBoard:
             parsed = parse_env_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col, die_id = self._die_provider(None)
+        row, col, die_id = self._die_for(None)
         self.env_count += 1
         self.out_queue.put({
             "kind": "env", "host_timestamp": now_stamp(),
