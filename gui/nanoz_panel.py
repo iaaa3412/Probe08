@@ -1833,7 +1833,8 @@ class NanoZPanel(ttk.Frame):
         path_row = ttk.Frame(export_frame)
         path_row.pack(fill="x", padx=10, pady=(4, 12))
         ttk.Label(path_row, text="Export Path:").pack(side="left")
-        self._nz_export_path_var = tk.StringVar(value="")
+        self._nz_export_path_var = tk.StringVar(
+            value=os.path.join(os.path.expanduser("~"), "Downloads"))
         ttk.Entry(path_row, textvariable=self._nz_export_path_var, width=40).pack(side="left", padx=6)
         ttk.Button(path_row, text="Browse...", command=self._nz_browse_export_path).pack(
             side="left", padx=4)
