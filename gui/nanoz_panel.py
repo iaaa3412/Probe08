@@ -3452,6 +3452,7 @@ class NanoZPanel(ttk.Frame):
             messagebox.showerror("Invalid Cycle", "Cycle # must be a whole number.")
             return
         self._mark_cycle_start(pin_chart=True)
+        self._ensure_csv_paths()
         self._console_send(f"run {cycle}")
 
     def _console_calib_bang(self):
@@ -3551,6 +3552,21 @@ class NanoZPanel(ttk.Frame):
             self.counts_var.set(f"SPL: {self._spl_total}   ENV: {self._env_total}")
         self.after(50, self._check_queue)
 
+    def _ensure_csv_paths(self):
+        """A formal run (Full Die/Test Die/Recipe Run) always gets a fresh
+        pair of SPL/ENV CSV paths at start - but Run Cycle (Active), a
+        double-clicked board, and Console's run are all just "fire a cycle
+        right now" actions with no such setup step, so _spl_path stayed
+        None for them and _handle_packet's `if settled and self._spl_path`
+        guard silently never wrote anything - meaning Export Raw had no
+        file to find even though data was clearly flowing (visible on the
+        Results tab, which reads _latest_spl/_spl_history directly, not the
+        CSV). Called from every cycle trigger now so a CSV always exists
+        once ANY cycle has run this session; only assigns once so an
+        already-running formal run's path isn't swapped out from under it."""
+        if not self._spl_path:
+            self._spl_path, self._env_path = self._new_csv_paths()
+
     def _arm_settling_skip(self, boards: list):
         """Call right when a cycle is triggered on these boards - their next
         _SETTLING_SKIP_COUNT SPL packets (both chips) are excluded from the
@@ -3558,6 +3574,7 @@ class NanoZPanel(ttk.Frame):
         export - lets the sensor settle before anything treats it as real
         data. Still stored in _spl_history itself (just filtered out when
         read), so nothing here is actually lost."""
+        self._ensure_csv_paths()
         for board in boards:
             self._skip_spl_count[(board.port, "0")] = self._SETTLING_SKIP_COUNT
             self._skip_spl_count[(board.port, "1")] = self._SETTLING_SKIP_COUNT
