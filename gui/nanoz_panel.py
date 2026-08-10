@@ -3842,19 +3842,21 @@ class NanoZPanel(ttk.Frame):
             return True
         return False
 
-    def _do_manual_call(self, name: str, fn, log_cmd: str, refresh_xy: bool = False):
+    def _do_manual_call(self, name: str, fn, log_cmd: str, refresh_xy: bool = False) -> bool:
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self.after(0, lambda: self._log_main(f"{name}: prober not connected."))
-            return
+            return False
         try:
             self.after(0, lambda: self._log(log_cmd))
             stb = fn(prober)
             self.after(0, lambda stb=stb: self._log(f"<< STB={stb}  ({name} complete)"))
             if refresh_xy:
                 self._manual_xy_thread()
+            return True
         except Exception as e:
             self.after(0, lambda e=e: self._log_main(f"{name} error: {e}"))
+            return False
 
     def _manual_z_up(self):
         if self._run_guard("Z Up"):
@@ -3975,7 +3977,17 @@ class NanoZPanel(ttk.Frame):
         threading.Thread(target=self._manual_unload_thread, daemon=True).start()
 
     def _manual_unload_thread(self):
-        self._do_manual_call("Unload", lambda p: p.unload_wafer(), ">> U  (Unload wafer)")
+        ok = self._do_manual_call("Unload", lambda p: p.unload_wafer(), ">> U  (Unload wafer)")
+        if not ok:
+            return
+        # Wafer's off the chuck now - whatever die _current_rc last pointed
+        # at is no longer under the needles, so it's no longer an accurate
+        # "current position". Clear it rather than let a stale die keep
+        # getting reused (e.g. a Run Cycle fired right after Unload, before
+        # anything moves again) until the next real move/Refresh XY.
+        self._current_rc = (None, None)
+        self.after(0, lambda: self.manual_xy_var.set("X: —  Y: —"))
+        self.after(0, lambda: self.die_var.set("Die: —"))
 
     def _manual_xy(self):
         if self._run_guard("XY"):
@@ -4574,12 +4586,6 @@ class NanoZPanel(ttk.Frame):
                     idx += 1
                     continue
 
-                self._current_rc = (row, die_col)
-                die_label = f"R{row}C{die_col}"
-                self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
-                self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
-                self.after(0, self._update_position_window)
-
                 self.after(0, lambda r=row, c=die_col: self._log(f">> J  (Position die X={c} Y={r})"))
                 stb = prober.move_to_die_xy(die_col, row)
                 if stb == 81:
@@ -4591,6 +4597,16 @@ class NanoZPanel(ttk.Frame):
                     break
                 self.after(0, lambda stb=stb: self._log(f"<< STB={stb}"))
                 self._ensure_separated(prober, stb)
+
+                # Only recorded as the current position once the move is
+                # actually confirmed (STB checked out, not a wafer-end/stop
+                # abort above) - setting this beforehand would claim we're
+                # on the new die even on a move that never completed.
+                self._current_rc = (row, die_col)
+                die_label = f"R{row}C{die_col}"
+                self.after(0, lambda dl=die_label: self.die_var.set(f"Die: {dl}"))
+                self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
+                self.after(0, self._update_position_window)
 
                 ok = self._zup_measure_zdown(prober, active_boards, cycle, duration_s, shot["label"])
                 if not self._running:
