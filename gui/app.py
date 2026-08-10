@@ -483,6 +483,15 @@ class AtomicaDashboard(tk.Tk):
         self.log(f"[SYSTEM] Electroglas bench -> {eg_profiles.label(name)}"
                  + (f" ({len(changed)} address(es) updated)" if changed else ""))
         self.log(eg_profiles.summary(name))
+        # The Recipe tab only offers instruments the bench actually has, so it
+        # has to be told the bench changed.
+        panel = getattr(self._by_system["electroglas"]["ui"], "recipe_panel", None)
+        refresh = getattr(panel, "refresh_bench_instruments", None)
+        if refresh:
+            try:
+                refresh()
+            except Exception as e:
+                self.log(f"[SYSTEM] Recipe tab instrument refresh failed: {e}")
         self.init_hardware_eg()
  
     def check_system_ready(self):

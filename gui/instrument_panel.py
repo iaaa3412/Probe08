@@ -347,9 +347,11 @@ class MainLayout(ttk.Frame):
         main_nb.pack(fill="both", expand=True)
         self._enable_tab_drag(main_nb)
 
+        # Run leads on both systems - it is what an operator opens the GUI to
+        # do; the setup tabs behind it are visited far less often.
+        self._tab_execution2(main_nb)
         self._tab_wafer_map(main_nb)
         self._tab_recipe(main_nb)
-        self._tab_execution2(main_nb)
         self._tab_results(main_nb)
         self._tab_probe_card(main_nb)
         self._tab_pma_wafer(main_nb)

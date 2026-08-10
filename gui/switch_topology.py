@@ -11,7 +11,10 @@ MAX_ROW_COUNT = len(ROW_LETTERS_POOL)
 INSTRUMENTS = ("SMU", "DMM", "WGEN", "")
 SMU_CHANNELS = ("A", "B")
 WGEN_CHANNELS = ("CH1", "CH2")
-POLARITIES = ("HI", "LO")
+# SHI/SLO are the 4-wire SENSE legs, used only by "ohmf" recipe steps. A rig
+# without them wired simply leaves no row assigned those roles; the recipe
+# validator then says so rather than silently routing three wires.
+POLARITIES = ("HI", "LO", "SHI", "SLO")
 
 DEFAULT_TOPOLOGY = {
     "slots": [
@@ -89,7 +92,8 @@ def role_label(role: dict) -> str:
         return "(unused)"
     if instrument == "WGEN":
         return f"WGEN {channel}".strip()
-    label = " ".join(b for b in (instrument, channel, polarity) if b)
+    shown = {"SHI": "SENSE HI", "SLO": "SENSE LO"}.get(polarity, polarity)
+    label = " ".join(b for b in (instrument, channel, shown) if b)
     if instrument == "SMU" and polarity == "LO":
         label += "/GND"
     return label
@@ -140,3 +144,25 @@ def rows_for(step_type: str, chan: str, instrument: str):
         want_chan = chan or "A"
         return _match("SMU", want_chan, "HI"), _match("SMU", want_chan, "LO")
     return (), ()
+
+
+def rows_for_fields(step_type: str, chan: str, instrument: str) -> dict:
+    """Switch rows per pin field, so 4-wire steps can carry their sense legs.
+
+    rows_for() is kept as-is for the 2-wire callers; this returns the same
+    HI/LO plus his/los when the step is 4-wire. An empty tuple for a sense
+    field means no row is assigned that role in this rig's topology.
+    """
+    rows_hi, rows_lo = rows_for(step_type, chan, instrument)
+    fields = {"hi": rows_hi, "lo": rows_lo}
+    if step_type == "ohmf":
+        roles = row_roles()
+
+        def _sense(polarity):
+            return tuple(letter for letter in sorted(roles)
+                         if (roles.get(letter) or {}).get("instrument") == "DMM"
+                         and (roles.get(letter) or {}).get("polarity") == polarity)
+
+        fields["his"] = _sense("SHI")
+        fields["los"] = _sense("SLO")
+    return fields

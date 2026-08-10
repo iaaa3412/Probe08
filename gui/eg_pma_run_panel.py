@@ -148,9 +148,12 @@ class EgPmaRunPanel(ttk.Frame):
 
         ttk.Label(lf, text="Chuck is on:").grid(row=1, column=0, sticky="w")
         self._anchor_var = tk.StringVar()
-        self._anchor_cb = ttk.Combobox(lf, textvariable=self._anchor_var,
-                                       state="readonly", width=44)
+        # Editable, not readonly: a whole-wafer recipe has thousands of sites
+        # and scrolling to one is hopeless, so typing filters the list. A die
+        # ID can also just be typed straight in - see _set_anchor.
+        self._anchor_cb = ttk.Combobox(lf, textvariable=self._anchor_var, width=44)
         self._anchor_cb.grid(row=1, column=1, sticky="ew", padx=6)
+        self._anchor_cb.bind("<KeyRelease>", self._on_anchor_typed)
         ttk.Button(lf, text="Set", command=self._set_anchor).grid(row=1, column=2)
 
         self._anchor_state_var = tk.StringVar(value="not set")
@@ -347,10 +350,32 @@ class EgPmaRunPanel(ttk.Frame):
             label = f"align site — #{t['seq']} {t['device_id']}"
             if label not in choices and not any(f"#{t['seq']} " in c for c in choices):
                 choices.append(label)
-        for t in self._touchdowns[:40]:
+        # Every site, not the first 40 - the chuck can legitimately be parked
+        # anywhere on the wafer, and a truncated list silently made most of
+        # them unpickable.
+        for t in self._touchdowns:
             choices.append(f"#{t['seq']} {t['device_id']}")
+        self._anchor_choices = choices
         self._anchor_cb.config(values=choices)
         self._anchor_var.set(choices[0] if choices else "")
+
+    _ANCHOR_MAX_LISTED = 300
+
+    def _on_anchor_typed(self, event=None):
+        """Narrow the dropdown to what the operator has typed.
+
+        Navigation keys are ignored so arrowing through the list does not
+        re-filter out from under them.
+        """
+        if event is not None and event.keysym in (
+                "Up", "Down", "Left", "Right", "Return", "Escape", "Tab"):
+            return
+        text = self._anchor_var.get().strip().lower()
+        if not text:
+            matches = self._anchor_choices
+        else:
+            matches = [c for c in self._anchor_choices if text in c.lower()]
+        self._anchor_cb.config(values=matches[:self._ANCHOR_MAX_LISTED])
 
     def _fill_table(self):
         self._tree.delete(*self._tree.get_children())
@@ -365,16 +390,51 @@ class EgPmaRunPanel(ttk.Frame):
 
     # -- anchoring ----------------------------------------------------------
 
+    def _resolve_anchor(self, choice: str):
+        """Index of the touchdown the operator named, or None (with a reason).
+
+        Accepts a picked list entry ("#123 54-00"), a bare sequence ("#123"),
+        or a die ID typed straight in ("54-00") - including one die of a quad,
+        since that is what is legible under the scope.
+        """
+        text = (choice or "").strip()
+        if not text:
+            messagebox.showwarning("Anchor", "Pick or type where the chuck is first.")
+            return None
+
+        m = re.search(r"#(\d+)", text)
+        if m:
+            seq = int(m.group(1))
+            idx = next((i for i, t in enumerate(self._touchdowns)
+                        if t["seq"] == seq), None)
+            if idx is None:
+                messagebox.showwarning("Anchor", f"No touchdown #{seq} in this recipe.")
+            return idx
+
+        want = text.upper()
+        exact = [i for i, t in enumerate(self._touchdowns)
+                 if want in {d.strip().upper()
+                             for d in (t.get("devices") or [t["device_id"]])}
+                 or want == t["device_id"].strip().upper()]
+        if len(exact) == 1:
+            return exact[0]
+        if len(exact) > 1:
+            seqs = ", ".join(f"#{self._touchdowns[i]['seq']}" for i in exact[:6])
+            messagebox.showwarning(
+                "Anchor", f"'{text}' appears at {len(exact)} touchdowns ({seqs}"
+                          f"{'…' if len(exact) > 6 else ''}).\n\n"
+                          "Pick the one you want from the list instead.")
+            return None
+        messagebox.showwarning(
+            "Anchor", f"No touchdown matches '{text}'.\n\n"
+                      "Type a die ID, or pick an entry from the list.")
+        return None
+
     def _set_anchor(self):
         if not self._touchdowns:
             return
         choice = self._anchor_var.get()
-        m = re.search(r"#(\d+)", choice)
-        if not m:
-            messagebox.showwarning("Anchor", "Pick where the chuck is first.")
-            return
-        seq = int(m.group(1))
-        idx = next((i for i, t in enumerate(self._touchdowns) if t["seq"] == seq), None)
+        idx = self._resolve_anchor(choice)
         if idx is None:
             return
 

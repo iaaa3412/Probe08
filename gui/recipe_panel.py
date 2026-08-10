@@ -14,16 +14,25 @@ except ImportError:
     _pma_xlrd = None
 
 
-_STEP_TYPES    = ("resistance", "voltage", "current", "wave", "passfail", "delay", "open",
-                  "picture")
+_STEP_TYPES    = ("resistance", "ohmf", "voltage", "current", "wave", "passfail",
+                  "delay", "open", "picture")
 _STEP_MODES    = ("measure", "apply")
 _INSTRUMENTS   = ("DMM", "SMU", "WGEN")
 _SMU_CHANNELS  = ("A", "B")
 _WGEN_CHANNELS = ("CH1", "CH2")
 _WAVE_SHAPES   = ("SIN", "SQU", "RAMP", "PULS", "DC")
+# his/los are the 4-wire SENSE pins and are only ever populated on an "ohmf"
+# step. Appended to the end so recipes written before 4-wire existed still
+# parse - _parse_step matches on key name, not position.
 _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", "lo",
                   "level", "limit", "shape", "freq", "conn", "min", "max",
-                  "avg_count", "avg_delay", "nplc")
+                  "avg_count", "avg_delay", "nplc", "his", "los")
+
+# The one step type that takes four pins: source HI/LO carry the test current,
+# sense HI/LO read the voltage right at the pad, so the probe/lead resistance
+# in the source path drops out of the answer. Named for the 3458A's OHMF.
+FOUR_WIRE_TYPE = "ohmf"
+SENSE_FIELDS = ("his", "los")
 
 STEP_FIELDS = _STEP_FIELDS
 
@@ -66,7 +75,7 @@ def _normalize_numeric_field(text: str) -> str:
 
 def _is_measurement_step(step: dict) -> bool:
     t = step.get("type")
-    if t == "resistance":
+    if t in ("resistance", FOUR_WIRE_TYPE):
         return True
     if t in ("voltage", "current"):
         return step.get("mode") == "measure"
@@ -76,6 +85,10 @@ def _is_measurement_step(step: dict) -> bool:
 def _instrument_options(step_type: str, mode: str) -> tuple:
     if step_type == "resistance":
         return ("DMM", "SMU")
+    if step_type == FOUR_WIRE_TYPE:
+        # 4-wire ohms is a DMM function (3458A OHMF); the SMU has no
+        # equivalent in this rig, so offering it would only mislead.
+        return ("DMM",)
     if step_type in ("voltage", "current"):
         return ("SMU",) if mode == "apply" else ("SMU", "DMM")
     if step_type == "wave":
@@ -86,7 +99,7 @@ def _instrument_options(step_type: str, mode: str) -> tuple:
 def _default_instrument(step_type: str, mode: str) -> str:
     if step_type == "wave":
         return "WGEN"
-    if step_type == "resistance":
+    if step_type in ("resistance", FOUR_WIRE_TYPE):
         return "DMM"
     if step_type == "voltage":
         return "SMU" if mode == "apply" else "DMM"
@@ -134,6 +147,10 @@ def _serialize_step(step: dict) -> str:
 
 def _normalize_step(step: dict) -> dict:
     t = step["type"]
+    # Enforced here rather than only in the editor, so a recipe hand-edited or
+    # imported with sense pins on a 2-wire step cannot smuggle them through.
+    if t != FOUR_WIRE_TYPE:
+        step["his"] = step["los"] = ""
     if t == "delay":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
@@ -164,7 +181,7 @@ def _normalize_step(step: dict) -> dict:
 
     step["target"] = ""
     step["min"] = step["max"] = ""
-    if t == "resistance":
+    if t in ("resistance", FOUR_WIRE_TYPE):
         step["mode"] = "measure"
     elif t == "wave":
         step["mode"] = "apply"
@@ -416,13 +433,12 @@ class RecipePanel(ttk.Frame):
         self._conn_viewer = None
         self._system = system
         if system == "electroglas":
-            self._instrument_choices = ("DMM", "SMU")
             self._smu_channel_choices = ("A",)
             self._step_type_choices = tuple(t for t in _STEP_TYPES if t != "wave")
         else:
-            self._instrument_choices = _INSTRUMENTS
             self._smu_channel_choices = _SMU_CHANNELS
             self._step_type_choices = _STEP_TYPES
+        self._instrument_choices = self._bench_instruments()
         self._conn_report = "— no steps —"
 
         self._recipes: dict = {"(unsaved)": {"steps": []}}
@@ -440,6 +456,62 @@ class RecipePanel(ttk.Frame):
         self._update_connections()
         self._update_validity_label()
 
+
+    # Which recipe "instrument" each profile key can stand in for. The recipe
+    # stays generic - a step says DMM, not "3458A" - so the same recipe runs on
+    # any bench that has some DMM fitted.
+    _EG_INSTRUMENT_KEYS = {
+        "DMM": ("dmm_eg", "dmm_vxi_eg"),
+        "SMU": ("smu_eg",),
+    }
+
+    def _bench_instruments(self) -> tuple:
+        """Instruments the ACTIVE prober actually has fitted.
+
+        probe03 has only the 3458A, so offering SMU there would let someone
+        build a recipe that cannot run. Accretech is a single fixed bench and
+        keeps the full list.
+        """
+        if self._system != "electroglas":
+            return _INSTRUMENTS
+        try:
+            import eg_profiles
+            fitted = set(eg_profiles.fitted_keys())
+        except Exception:
+            return ("DMM", "SMU")
+        avail = tuple(name for name, keys in self._EG_INSTRUMENT_KEYS.items()
+                      if fitted.intersection(keys))
+        return avail or ("DMM",)
+
+    def _bench_instrument_note(self) -> str:
+        if self._system != "electroglas":
+            return ""
+        try:
+            import eg_profiles
+            inst = eg_profiles.instruments()
+            bench = eg_profiles.active_name()
+        except Exception:
+            return ""
+        parts = []
+        for name, keys in self._EG_INSTRUMENT_KEYS.items():
+            if name not in self._instrument_choices:
+                continue
+            key = next((k for k in keys
+                        if k in inst and inst[k].get("fitted", True)), None)
+            if key:
+                parts.append(f"{name} = {inst[key].get('name', key)}")
+        if not parts:
+            return f"{bench}: no measurement instrument fitted"
+        return f"{bench}:   " + "    ".join(parts)
+
+    def refresh_bench_instruments(self):
+        """Re-read the active prober - call after switching benches."""
+        self._instrument_choices = self._bench_instruments()
+        if hasattr(self, "_bench_note_lbl"):
+            self._bench_note_lbl.config(text=self._bench_instrument_note())
+        if hasattr(self, "_instr_cb"):
+            self._on_type_change()
+        self._update_validity_label()
 
     def _build_toolbar(self):
         bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
@@ -508,6 +580,12 @@ class RecipePanel(ttk.Frame):
                                      font=("Segoe UI", 8, "italic"))
         self._default_lbl.pack(side="left", padx=(0, 8))
 
+        # What DMM/SMU actually resolve to on the prober that is selected.
+        self._bench_note_lbl = tk.Label(bar, text=self._bench_instrument_note(),
+                                        bg="#e2e8f0", fg="#1d4ed8",
+                                        font=("Segoe UI", 8))
+        self._bench_note_lbl.pack(side="right", padx=(0, 10))
+
 
     def _build_body(self):
         body = ttk.Frame(self)
@@ -530,13 +608,15 @@ class RecipePanel(ttk.Frame):
                   row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
         cols = ("n", "name", "type", "instrument", "mode", "chan", "target",
-                "hi", "lo", "level", "limit", "avg", "min", "max", "shape", "freq", "conn")
+                "hi", "lo", "his", "los",
+                "level", "limit", "avg", "min", "max", "shape", "freq", "conn")
         self._step_tree = ttk.Treeview(sf, columns=cols, show="headings",
                                        height=5, selectmode="browse")
         heads = [("n", "#", 28), ("name", "Name", 90), ("type", "Type", 75),
                  ("instrument", "Instr", 50), ("mode", "Mode", 55), ("chan", "Chan", 40),
                  ("target", "Target", 62),
                  ("hi", "HI pin", 55), ("lo", "LO pin", 55),
+                 ("his", "SnsHI", 52), ("los", "SnsLO", 52),
                  ("level", "Level", 52), ("limit", "Limit", 50),
                  ("avg", "Avg", 68),
                  ("min", "Min", 46), ("max", "Max", 46),
@@ -607,6 +687,22 @@ class RecipePanel(ttk.Frame):
                                    postcommand=lambda: self._refresh_pin_values(self._lo_cb))
         self._lo_cb.grid(row=1, column=7, sticky="w")
         self._pin_widgets = [self._hi_cb, self._lo_cb]
+
+        # The 4-wire sense pair. Present on every step for a stable layout but
+        # only ever enabled for "ohmf" - see _on_type_change.
+        _lbl(5, 0, "Sense HI:")
+        self._his_cb = ttk.Combobox(editor, textvariable=self._ed_vars["his"], width=8,
+                                    postcommand=lambda: self._refresh_pin_values(self._his_cb))
+        self._his_cb.grid(row=5, column=1, sticky="w")
+        _lbl(5, 2, "Sense LO:")
+        self._los_cb = ttk.Combobox(editor, textvariable=self._ed_vars["los"], width=8,
+                                    postcommand=lambda: self._refresh_pin_values(self._los_cb))
+        self._los_cb.grid(row=5, column=3, sticky="w")
+        self._sense_widgets = [self._his_cb, self._los_cb]
+        self._sense_note = ttk.Label(
+            editor, text="4-wire only — HI/LO source the current, Sense HI/LO read the pad",
+            foreground="#6b7280")
+        self._sense_note.grid(row=5, column=4, columnspan=4, sticky="w", padx=(6, 0))
 
         _lbl(2, 0, "Level:")
         self._level_ent = ttk.Entry(editor, textvariable=self._ed_vars["level"], width=9)
@@ -697,6 +793,17 @@ class RecipePanel(ttk.Frame):
                 w.config(state=state)
 
         _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "normal")
+        # Four pins are exclusive to the 4-wire step; every other branch below
+        # leaves these disabled, and the values are cleared so a type change
+        # cannot leave orphaned sense pins behind.
+        if t == FOUR_WIRE_TYPE:
+            _set(self._sense_widgets, "normal")
+            self._sense_note.config(foreground="#6b7280")
+        else:
+            _set(self._sense_widgets, "disabled")
+            self._ed_vars["his"].set("")
+            self._ed_vars["los"].set("")
+            self._sense_note.config(foreground="#cbd5e1")
         self._target_cb.config(state="disabled")
         self._limit_ent.config(state="disabled")
         self._shape_cb.config(state="disabled")
@@ -744,7 +851,7 @@ class RecipePanel(ttk.Frame):
             self._pf_max_ent.config(state="normal")
             return
 
-        if t == "resistance":
+        if t in ("resistance", FOUR_WIRE_TYPE):
             self._ed_vars["mode"].set("measure")
             self._mode_cb.config(state="disabled")
         elif t == "wave":
@@ -872,12 +979,18 @@ class RecipePanel(ttk.Frame):
                 detail.append(f"reset SMU {ref.get('chan') or 'A'} output")
             return channels, detail, []
 
-        rows_hi, rows_lo = switch_topology.rows_for(t, step.get("chan") or "",
-                                                    step.get("instrument") or "")
+        by_field = switch_topology.rows_for_fields(t, step.get("chan") or "",
+                                                   step.get("instrument") or "")
         roles = switch_topology.row_roles()
         max_pin = switch_topology.total_pins()
         channels, detail, unresolved = [], [], []
-        for field, rows in (("hi", rows_hi), ("lo", rows_lo)):
+        for field in ("hi", "lo", "his", "los"):
+            rows = by_field.get(field, ())
+            if not rows and (step.get(field) or "").strip():
+                detail.append(
+                    f"{field.upper()} pin(s) named but no switch row is assigned "
+                    f"DMM {'SHI' if field == 'his' else 'SLO'} — set one in "
+                    f"Switch Settings")
             for token in (p for p in step.get(field, "").split(",") if p.strip()):
                 pin = self._resolve_pin(token)
                 if pin is None or not (1 <= pin <= max_pin):
@@ -1017,11 +1130,37 @@ class RecipePanel(ttk.Frame):
             hi, lo = s.get("hi", "").strip(), s.get("lo", "").strip()
             if hi and lo and hi == lo:
                 issues.append(f"ERROR {tag}: HI and LO are the same pin ({hi})")
+            pin_tokens = [hi, lo]
+            if t == FOUR_WIRE_TYPE:
+                his, los = s.get("his", "").strip(), s.get("los", "").strip()
+                pin_tokens += [his, los]
+                missing = [n for n, v in (("Sense HI", his), ("Sense LO", los)) if not v]
+                if missing:
+                    issues.append(f"ERROR {tag}: 4-wire needs all four pins — "
+                                  f"missing {', '.join(missing)}")
+                # Four legs on one pin is a 2-wire measurement wearing a
+                # 4-wire label, and would read lead resistance as device.
+                named = [(n, v) for n, v in (("HI", hi), ("LO", lo),
+                                             ("Sense HI", his), ("Sense LO", los)) if v]
+                seen = {}
+                for name, val in named:
+                    seen.setdefault(val, []).append(name)
+                for val, names in seen.items():
+                    if len(names) > 1:
+                        issues.append(f"ERROR {tag}: {' and '.join(names)} are the "
+                                      f"same pin ({val}) — 4-wire needs four "
+                                      f"separate pins")
+                rows = switch_topology.rows_for_fields(t, s.get("chan") or "", instrument)
+                for field, role in (("his", "SHI"), ("los", "SLO")):
+                    if s.get(field, "").strip() and not rows.get(field):
+                        issues.append(f"ERROR {tag}: no switch row is assigned "
+                                      f"DMM {role} — add one in Switch Settings "
+                                      f"or the sense leg will not be connected")
             _ch, _det, unresolved = self.step_connections(s)
             if unresolved:
                 issues.append(f"ERROR {tag}: pins not resolvable / out of range: "
                               + ", ".join(unresolved))
-            for token in (hi, lo):
+            for token in pin_tokens:
                 pin = self._resolve_pin(token) if token else None
                 if pin is not None and wiring_pins and str(pin) not in wiring_pins:
                     issues.append(f"WARN {tag}: pin {pin} ('{token}') is not defined "
@@ -1352,6 +1491,7 @@ class RecipePanel(ttk.Frame):
                 step.get("instrument", ""), step.get("mode", ""),
                 step.get("chan", ""), step.get("target", ""),
                 step.get("hi", ""), step.get("lo", ""),
+                step.get("his", ""), step.get("los", ""),
                 step.get("level", ""), step.get("limit", ""),
                 _avg_display(step),
                 step.get("min", ""), step.get("max", ""),
