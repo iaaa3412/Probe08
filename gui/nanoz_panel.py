@@ -67,6 +67,13 @@ class NanoZPanel(ttk.Frame):
         self._run_mode: str | None = None
         self._lot_thread: threading.Thread | None = None
         self._current_rc = (None, None)
+        # Held for the duration of any XY query (manual Refresh XY or the
+        # auto-refresh below) so a cycle trigger that lands while a refresh
+        # is still in flight waits for it instead of firing against a
+        # stale _current_rc - otherwise every reading from that cycle gets
+        # tagged with the die the prober was AT before the move, not where
+        # it actually moved to.
+        self._xy_refresh_lock = threading.Lock()
         self._position_window_items: list = []  # canvas rect ids for the 1x20 position window
         self._position_window_dies: list = []  # [{"row","col","present","die_id"}, ...] current window
         self._touchdown_errors = 0
@@ -3959,7 +3966,8 @@ class NanoZPanel(ttk.Frame):
         threading.Thread(target=self._manual_xy_thread, daemon=True).start()
 
     def _manual_xy_thread(self):
-        self._query_xy_thread_body()
+        with self._xy_refresh_lock:
+            self._query_xy_thread_body()
 
     def _query_xy_thread_body(self) -> bool:
         """Query the prober for its current die XY and update
@@ -3986,23 +3994,26 @@ class NanoZPanel(ttk.Frame):
             return False
 
     def _ensure_xy_then(self, fn, *args, **kwargs):
-        """Call right where a cycle would otherwise be triggered directly -
-        if XY isn't known yet (_current_rc is (None, None), e.g. first
-        cycle of the session with no First Die/Refresh XY pressed yet),
-        transparently sends a Refresh XY query to the prober first, then
-        runs fn regardless of whether that query succeeded (same
+        """Call right where a cycle would otherwise be triggered directly.
+        First waits out any XY refresh already in flight (e.g. the user
+        just pressed Refresh XY and this cycle trigger landed before that
+        query finished) - otherwise the cycle would fire against a stale
+        _current_rc and every reading would get tagged with the die the
+        prober was AT before the move, not where it actually moved to.
+        Then, if XY still isn't known at all (_current_rc is (None, None),
+        e.g. first cycle of the session with no First Die/Refresh XY
+        pressed yet), transparently sends a Refresh XY query to the prober,
+        then runs fn regardless of whether that query succeeded (same
         best-effort fallback _active_boards_for_window/_die_provider
-        already use for an unknown position). If XY is already known, fn
-        runs immediately with no extra round-trip. Prober I/O shouldn't
-        block the UI, so a background thread is used whenever a query is
-        actually needed."""
-        if self._current_rc != (None, None):
-            fn(*args, **kwargs)
-            return
+        already use for an unknown position). Always hops through a
+        background thread (even when nothing needs querying) so waiting on
+        the lock never blocks the UI."""
         def _run():
-            self.after(0, lambda: self._log_main(
-                "XY position not known yet — auto-refreshing before this cycle."))
-            self._query_xy_thread_body()
+            with self._xy_refresh_lock:
+                if self._current_rc == (None, None):
+                    self.after(0, lambda: self._log_main(
+                        "XY position not known yet — auto-refreshing before this cycle."))
+                    self._query_xy_thread_body()
             self.after(0, lambda: fn(*args, **kwargs))
         threading.Thread(target=_run, daemon=True).start()
 
