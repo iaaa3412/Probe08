@@ -10,7 +10,7 @@ import electroglas_pma
 CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq"] + list(STEP_FIELDS)
 
 
-def _bind_zoom_only(canvas):
+def _bind_zoom_only(canvas, on_zoom=None):
     canvas.configure(scrollregion=(-20000, -20000, 20000, 20000))
 
     def _zoom(screen_x, screen_y, factor):
@@ -23,17 +23,22 @@ def _bind_zoom_only(canvas):
                 min(bb[0] - pad, -20000), min(bb[1] - pad, -20000),
                 max(bb[2] + pad,  20000), max(bb[3] + pad,  20000),
             ))
+        # Zooming scales existing items in place - there is no redraw - so
+        # anything that depends on how big a die is ON SCREEN (die-ID labels)
+        # has to be told, or it would never re-evaluate.
+        if on_zoom:
+            on_zoom()
 
     canvas.bind("<MouseWheel>", lambda e: _zoom(e.x, e.y, 1.15 if e.delta > 0 else 1 / 1.15))
     canvas.bind("<Button-4>",   lambda e: _zoom(e.x, e.y, 1.15))
     canvas.bind("<Button-5>",   lambda e: _zoom(e.x, e.y, 1 / 1.15))
 
 
-def _pz_bind(canvas, on_reset):
+def _pz_bind(canvas, on_reset, on_zoom=None):
     canvas.bind("<ButtonPress-1>",   lambda e: canvas.scan_mark(e.x, e.y))
     canvas.bind("<B1-Motion>",       lambda e: canvas.scan_dragto(e.x, e.y, gain=1))
     canvas.bind("<Double-Button-1>", lambda _: on_reset())
-    _bind_zoom_only(canvas)
+    _bind_zoom_only(canvas, on_zoom)
 
 
 ATA_KEY_FILES = {
@@ -98,8 +103,9 @@ class WaferMapPanel(ttk.LabelFrame):
         self._die_status = {}
         self._last_dies = None
         self.on_redraw = None  # optional callback() run after any full redraw
+        self.on_zoom = None    # optional callback() run after any zoom
         self.canvas.create_text(150, 100, text="Waiting for Wafer Map...", fill="gray")
-        _pz_bind(self.canvas, self._reset_view)
+        _pz_bind(self.canvas, self._reset_view, self._fire_zoom)
 
         self._picked = set()
         self._picking_enabled = False
@@ -189,6 +195,25 @@ class WaferMapPanel(ttk.LabelFrame):
         else:
             self.draw_map()
 
+    def _fire_zoom(self):
+        if self.on_zoom:
+            try:
+                self.on_zoom()
+            except Exception:
+                pass
+
+    def die_box_px(self):
+        """(width, height) of a die as currently drawn, in canvas pixels.
+
+        Reflects the live zoom, because canvas.scale has already been applied
+        to the rectangles. Callers use it to decide whether a label would fit.
+        """
+        for item in self.dies.values():
+            c = self.canvas.coords(item)
+            if len(c) >= 4:
+                return abs(c[2] - c[0]), abs(c[3] - c[1])
+        return 0.0, 0.0
+
     def zoom(self, factor: float):
         """Zoom around the canvas's own center — for a Zoom In/Out button,
         as opposed to _bind_zoom_only's scroll-at-cursor binding."""
@@ -203,6 +228,7 @@ class WaferMapPanel(ttk.LabelFrame):
                 min(bb[0] - pad, -20000), min(bb[1] - pad, -20000),
                 max(bb[2] + pad,  20000), max(bb[3] + pad,  20000),
             ))
+        self._fire_zoom()
 
     def zoom_in(self):
         self.zoom(1.25)

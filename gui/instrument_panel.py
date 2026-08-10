@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 import os
 import threading
 import time
@@ -2108,8 +2109,12 @@ class MainLayout(ttk.Frame):
         ttk.Button(pos_lf, text="Reset Counts", command=self._exec2_reset_counts).grid(
                    row=7, column=1, sticky="ew", padx=(1, 0), pady=(4, 0))
 
+        # Electroglas stacks Pass/Fail between Position and Recipe Steps (row 1
+        # below); Recipe Steps is the one that grows, so it takes the weighted
+        # row on both systems.
+        steps_row = 2 if self._system == "electroglas" else 1
         steps_lf = ttk.LabelFrame(left_col, text="Recipe Steps", padding=(6, 4))
-        steps_lf.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+        steps_lf.grid(row=steps_row, column=0, sticky="nsew", pady=(4, 0))
         steps_lf.rowconfigure(1, weight=1)
         steps_lf.columnconfigure(0, weight=1)
 
@@ -2172,13 +2177,16 @@ class MainLayout(ttk.Frame):
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
         self._exec2_wafer_map.on_redraw = self._exec2_redraw_overlay_on_run_map
+        self._exec2_wafer_map.on_zoom = self._exec2_redraw_overlay_on_run_map
 
         # Electroglas keeps Pass/Fail in the left column under Recipe Steps so
         # the wafer map gets the whole rest of the width - the die-ID overlay
         # needs the room. Accretech keeps its own third pane.
         if self._system == "electroglas":
             stat_lf = ttk.LabelFrame(left_col, text="Pass / Fail", padding=(8, 4))
-            stat_lf.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            stat_lf.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+            left_col.rowconfigure(1, weight=0)
+            left_col.rowconfigure(2, weight=1)
             count_font = ("Consolas", 18, "bold")
         else:
             stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
@@ -2846,6 +2854,11 @@ class MainLayout(ttk.Frame):
         return set(self._exec2_wafer_map.dies.keys())
 
     def _exec2_redraw_overlay_on_run_map(self):
+        # Explicitly clear first: a full redraw has already wiped the canvas,
+        # but a ZOOM has not - it scales items in place - so without this the
+        # old labels would survive alongside the new ones.
+        self._exec2_clear_overlay_labels(self._exec2_wafer_map,
+                                         self._exec2_overlay_items)
         if self._exec2_overlay_die_ids:
             self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
                 self._exec2_wafer_map, self._exec2_overlay_die_ids)
@@ -2863,11 +2876,15 @@ class MainLayout(ttk.Frame):
                 pass
 
     def _exec2_redraw_overlay_on_results_map(self):
+        rwm = getattr(self, "_results_wafer_map", None)
+        if rwm is None:
+            return
+        self._exec2_clear_overlay_labels(rwm, self._exec2_overlay_result_items)
         if not self._exec2_overlay_die_ids:
             self._exec2_overlay_result_items = []
             return
         self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
-            self._results_wafer_map, self._exec2_overlay_die_ids)
+            rwm, self._exec2_overlay_die_ids)
 
     def _exec2_clear_overlay_labels(self, wm, items: list):
         for item in items:
@@ -2884,7 +2901,35 @@ class MainLayout(ttk.Frame):
             self._exec2_clear_overlay_labels(rwm, self._exec2_overlay_result_items)
         self._exec2_overlay_die_ids = {}
 
+    _OVERLAY_FONT = ("Consolas", 7)
+
+    def _exec2_overlay_font(self):
+        # Cached: tkfont.Font is not free to build, and this runs per zoom step.
+        if getattr(self, "_overlay_font_obj", None) is None:
+            self._overlay_font_obj = tkfont.Font(family=self._OVERLAY_FONT[0],
+                                                 size=self._OVERLAY_FONT[1])
+        return self._overlay_font_obj
+
+    def _exec2_labels_fit(self, wm, die_ids_by_rc: dict) -> bool:
+        """Is a die currently drawn big enough to hold its ID?
+
+        Zoomed out, a whole-wafer map draws dies a few pixels across and the
+        IDs collapse into an unreadable smear, so they are not drawn at all
+        until there is room. Measured with the real font rather than guessed,
+        against the LONGEST label, so a quad ID like 'TARGET' does not
+        overflow its neighbour.
+        """
+        box_w, box_h = wm.die_box_px()
+        if box_w <= 0:
+            return False
+        longest = max(die_ids_by_rc.values(), key=len, default="")
+        font = self._exec2_overlay_font()
+        return (box_w >= font.measure(longest) + 3
+                and box_h >= font.metrics("linespace"))
+
     def _exec2_draw_overlay_labels_on(self, wm, die_ids_by_rc: dict) -> list:
+        if not self._exec2_labels_fit(wm, die_ids_by_rc):
+            return []
         items = []
         for rc, label_text in die_ids_by_rc.items():
             item = wm.dies.get(rc)
@@ -2895,7 +2940,7 @@ class MainLayout(ttk.Frame):
                 continue
             cx, cy = (coords[0] + coords[2]) / 2, (coords[1] + coords[3]) / 2
             items.append(wm.canvas.create_text(
-                cx, cy, text=label_text, font=("Consolas", 7), fill="#1e293b"))
+                cx, cy, text=label_text, font=self._OVERLAY_FONT, fill="#1e293b"))
         return items
 
     def _exec2_draw_overlay(self, matched: list):
@@ -3913,6 +3958,7 @@ class MainLayout(ttk.Frame):
         self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
         self._results_wafer_map.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
         self._results_wafer_map.on_redraw = self._exec2_redraw_overlay_on_results_map
+        self._results_wafer_map.on_zoom = self._exec2_redraw_overlay_on_results_map
 
         detail_lf = ttk.LabelFrame(map_frame, text="Selected Die")
         detail_lf.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
