@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
+import os
 import re
+import shutil
 import struct
 import threading
 import time
@@ -50,6 +52,12 @@ class BoardIdentity:
     usb_id: str
     slot0: Optional[int] = None  # physical probe-head slot (1..N) wired to chip 0
     slot1: Optional[int] = None  # physical probe-head slot (1..N) wired to chip 1
+    # Last COM port this board was actually found on, persisted purely as a
+    # hint so Connect All can try it directly instead of requiring a full
+    # Discover Boards scan every session - NOT identity (see save_known_boards),
+    # since Windows can still reassign it; if the board isn't there anymore
+    # this hint just fails quietly and the user re-runs Discover Boards.
+    last_port: Optional[str] = None
 
     def chip_slots(self) -> dict:
         return {"0": self.slot0, "1": self.slot1}
@@ -578,23 +586,27 @@ BOARDS_MEMORY_FILENAME = "ata_nanoz_boards.json"
 def save_known_boards(folder, identities: list) -> None:
     """Persist known boards keyed by serial number, NOT COM port - a board's
     port is assigned by Windows on connect and can (and does) change across
-    replugs/reboots, so it's not a stable identity and isn't saved. Dedupes
-    by serial_number defensively (last one wins) so a transient in-memory
-    duplicate never gets written twice."""
+    replugs/reboots, so it's not a stable identity and isn't saved. The
+    current port IS saved separately as "last_port" though - purely a hint
+    (see BoardIdentity.last_port), not identity. Dedupes by serial_number
+    defensively (last one wins) so a transient in-memory duplicate never
+    gets written twice."""
     by_sn: dict[str, dict] = {}
     for i in identities:
         by_sn[i.serial_number or f"(no S/N) {i.port}"] = {
             "serial_number": i.serial_number, "firmware": i.firmware,
             "signature": i.signature, "usb_id": i.usb_id, "slot0": i.slot0, "slot1": i.slot1,
+            "last_port": i.port or i.last_port or None,
         }
     path = Path(folder) / BOARDS_MEMORY_FILENAME
     path.write_text(json.dumps(list(by_sn.values()), indent=2), encoding="utf-8")
 
 
 def load_known_boards(folder) -> list[BoardIdentity]:
-    """Returns each known board with port="" - its real port (if any) is
-    only learned by actually discovering it live on some COM port this
-    session; see save_known_boards for why port isn't persisted."""
+    """Returns each known board with port="" - its real, LIVE port (if any)
+    is only confirmed by actually finding it this session (Discover Boards,
+    or Connect All trying last_port directly); see save_known_boards for why
+    port itself isn't persisted, only last_port as a hint."""
     path = Path(folder) / BOARDS_MEMORY_FILENAME
     if not path.is_file():
         return []
@@ -610,9 +622,32 @@ def load_known_boards(folder) -> list[BoardIdentity]:
             # Legacy single-slot files (pre-two-chip-per-board) had "slot" -> migrate to slot0.
             slot0=row.get("slot0", row.get("slot")),
             slot1=row.get("slot1"),
+            last_port=row.get("last_port"),
         )
         for row in rows
     ]
+
+
+WAFER_PLAN_XLSX_FILENAME = "ata_nanoz_wafer_plan.xlsx"
+
+
+def wafer_plan_path_in_folder(folder) -> str:
+    """The fixed path a wafer plan .xlsx lives at once imported into this ATA
+    folder - see import_wafer_plan_into_folder. Whatever the user originally
+    picked from disk (e.g. references/nautilusprobeplan.xlsx, which is only
+    an example/template) is copied here so the folder is self-contained and
+    doesn't depend on that source file still existing at its original path."""
+    return str(Path(folder) / WAFER_PLAN_XLSX_FILENAME)
+
+
+def import_wafer_plan_into_folder(folder, source_path: str) -> str:
+    """Copies source_path into the ATA folder at its fixed name (overwriting
+    any previous import) and returns that new path. Does not parse it -
+    caller should load_wafer_plan the returned path to validate/use it."""
+    dest = wafer_plan_path_in_folder(folder)
+    if os.path.abspath(source_path) != os.path.abspath(dest):
+        shutil.copyfile(source_path, dest)
+    return dest
 
 
 LEGACY_RECIPE_FILENAME = "ata_nanoz_recipe.json"
@@ -738,11 +773,16 @@ def migrate_legacy_recipe(folder):
 
 
 # ── Wafer-plan (.xlsx) import ───────────────────────────────────────────────
-# Parses a Nautilus-style wafer-plan workbook ("Shot Map" / "Probe Plan" /
-# "Reference Dies" sheets) into the geometry needed to auto-generate the
-# NanoZ recipe: which of the probe head's slots (1..probe_height, top to
-# bottom) land on a real product die, a reference/monitor die, or off the
-# wafer entirely, for every touchdown of every die column.
+# Parses a Nautilus-style wafer-plan workbook - "Die Map" (row/col grid of
+# die serials; fill color marks product vs reference/skip-test) and
+# "Touchdown List" (flat list of Die IDs - the top die of each touchdown, in
+# order) sheets - into the geometry needed to auto-generate the NanoZ recipe:
+# which of the probe head's slots (1..probe_height, top to bottom) land on a
+# real product die, a reference/monitor die, or off the wafer entirely, for
+# every touchdown. A third "Probe Overlay" sheet exists in the workbook too,
+# but it's a human-readable visual (BOLD marks touchdown starts) generated
+# by the same macro that produces Touchdown List - since Touchdown List is
+# already that macro's computed result, Probe Overlay isn't parsed here.
 
 try:
     import openpyxl
@@ -750,31 +790,21 @@ try:
 except ImportError:
     _OPENPYXL_AVAILABLE = False
 
-# Fixed local-position pattern (row, col within a 5x5 shot, 1-based) that is
-# a reference/monitor die on every reference shot in a Nautilus wafer plan -
-# see the workbook's own "Reference Dies" sheet for the source description.
-REFERENCE_LOCAL_POSITIONS = frozenset({
-    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5),
-    (2, 1), (2, 2), (2, 3), (2, 4), (2, 5),
-    (3, 1),
-    (4, 1), (4, 2),
-})
+# Die Map fill color for a reference/monitor (skip-test) die - everything
+# else with a die serial in it is a normal product die.
+_REFERENCE_FILL_RGBS = frozenset({"FFC00000"})
 
-
-@dataclass
-class WaferPlanColumn:
-    die_column: int
-    top_valid_row: int
-    bottom_valid_row: int
-    touchdowns: list  # list[tuple[int, int]] of (start_row, end_row), 1-based inclusive
+# The probe head's physical slot count (1-20, top to bottom) - a hardware
+# constant of the probe card, not something the wafer-plan workbook carries.
+DEFAULT_PROBE_HEIGHT = 20
 
 
 @dataclass
 class WaferPlan:
-    probe_height: int
-    dies_per_shot: int
-    columns: dict  # die_column -> WaferPlanColumn
-    reference_shots: set  # {(shot_row, shot_col), ...}
+    dies: dict          # (row, col) -> {"serial": str, "status": "product"|"reference"}
+    serial_to_rc: dict  # serial.upper() -> (row, col)
+    touchdowns: list     # [(row, col), ...] top die of each touchdown, sheet order
+    probe_height: int = DEFAULT_PROBE_HEIGHT
 
 
 def load_wafer_plan(path) -> WaferPlan:
@@ -782,95 +812,78 @@ def load_wafer_plan(path) -> WaferPlan:
         raise NanoZError("openpyxl is required to import a wafer plan .xlsx (pip install openpyxl)")
 
     wb = openpyxl.load_workbook(path, data_only=True)
-    for name in ("Shot Map", "Probe Plan", "Reference Dies"):
+    for name in ("Die Map", "Touchdown List"):
         if name not in wb.sheetnames:
             raise NanoZError(f"'{name}' sheet not found — not a recognized wafer-plan workbook.")
 
-    shot_ws = wb["Shot Map"]
-    shots_across = shot_ws.cell(row=1, column=2).value
-    if not isinstance(shots_across, int) or shots_across <= 0:
-        raise NanoZError("Shot Map!B1 ('Shots across') is missing or not a number.")
+    die_ws = wb["Die Map"]
+    dies: dict[tuple[int, int], dict] = {}
+    serial_to_rc: dict[str, tuple[int, int]] = {}
+    # Row 1 is a title, row 2 is the "row\col" header, data starts row 3;
+    # column A holds the row-number label, die data starts column B.
+    for row in die_ws.iter_rows(min_row=3, min_col=2):
+        for cell in row:
+            if not cell.value:
+                continue
+            serial = str(cell.value).strip()
+            r, c = cell.row - 2, cell.column - 1
+            fill = cell.fill.fgColor.rgb if cell.fill and cell.fill.fgColor else None
+            status = "reference" if fill in _REFERENCE_FILL_RGBS else "product"
+            dies[(r, c)] = {"serial": serial, "status": status}
+            serial_to_rc[serial.upper()] = (r, c)
+    if not dies:
+        raise NanoZError("Die Map: no dies found.")
 
-    pp_ws = wb["Probe Plan"]
-    probe_height = pp_ws.cell(row=2, column=2).value
-    if not isinstance(probe_height, int) or probe_height <= 0:
-        raise NanoZError("Probe Plan!B2 ('Probe height (dies)') is missing or not a number.")
-
-    columns: dict[int, WaferPlanColumn] = {}
-    max_die_col = 0
-    for row in pp_ws.iter_rows(min_row=5, values_only=True):
-        die_col = row[0] if row else None
-        if not isinstance(die_col, int):
+    td_ws = wb["Touchdown List"]
+    touchdowns = []
+    missing = []
+    # Row 1 is a title, row 2 is the "Die ID" header, data starts row 3.
+    for row in td_ws.iter_rows(min_row=3, max_col=1, values_only=True):
+        serial = row[0] if row else None
+        if not serial:
             continue
-        top_valid, bottom_valid = row[2], row[3]
-        touchdowns = []
-        for i in range(6, len(row) - 1, 2):
-            start, end = row[i], row[i + 1]
-            if start is None or end is None:
-                break
-            touchdowns.append((int(start), int(end)))
-        if not touchdowns:
+        serial = str(serial).strip()
+        rc = serial_to_rc.get(serial.upper())
+        if rc is None:
+            missing.append(serial)
             continue
-        columns[die_col] = WaferPlanColumn(die_col, int(top_valid), int(bottom_valid), touchdowns)
-        max_die_col = max(max_die_col, die_col)
-
-    if not columns:
-        raise NanoZError("Probe Plan: no die-column rows found.")
-
-    dies_per_shot = round(max_die_col / shots_across)
-    if dies_per_shot <= 0:
-        raise NanoZError("Could not determine dies-per-shot from Shot Map / Probe Plan.")
-    if dies_per_shot != 5:
+        touchdowns.append(rc)
+    if not touchdowns:
+        raise NanoZError("Touchdown List: no touchdown dies found.")
+    if missing:
         raise NanoZError(
-            f"This wafer plan uses {dies_per_shot}x{dies_per_shot}-die shots, but the "
-            f"reference-die local-position pattern is only known for 5x5 shots — "
-            f"refusing to guess which dies within a reference shot to skip.")
+            f"Touchdown List references {len(missing)} die ID(s) not found on Die Map: "
+            + ", ".join(missing[:5]) + (", ..." if len(missing) > 5 else ""))
 
-    ref_ws = wb["Reference Dies"]
-    reference_shots = set()
-    header_row = None
-    for i, row in enumerate(ref_ws.iter_rows(values_only=True), start=1):
-        if row and row[0] == "Serial (top-left die)":
-            header_row = i
-            break
-    if header_row is None:
-        raise NanoZError("Reference Dies: could not find the data header row.")
-    for row in ref_ws.iter_rows(min_row=header_row + 1, values_only=True):
-        if not row or len(row) < 5:
-            continue
-        _serial, _die_row, _die_col, shot_row, shot_col = row[:5]
-        if isinstance(shot_row, int) and isinstance(shot_col, int):
-            reference_shots.add((shot_row, shot_col))
-
-    return WaferPlan(probe_height=probe_height, dies_per_shot=dies_per_shot,
-                     columns=columns, reference_shots=reference_shots)
+    return WaferPlan(dies=dies, serial_to_rc=serial_to_rc, touchdowns=touchdowns)
 
 
-def classify_die(plan: "WaferPlan", row: int, col: int) -> str:
-    """Returns 'product', 'reference', or 'off_wafer' for a given (row, col)."""
-    col_info = plan.columns.get(col)
-    if col_info is None or row < col_info.top_valid_row or row > col_info.bottom_valid_row:
-        return "off_wafer"
-    shot_row = (row - 1) // plan.dies_per_shot + 1
-    shot_col = (col - 1) // plan.dies_per_shot + 1
-    if (shot_row, shot_col) in plan.reference_shots:
-        local_row = (row - 1) % plan.dies_per_shot + 1
-        local_col = (col - 1) % plan.dies_per_shot + 1
-        if (local_row, local_col) in REFERENCE_LOCAL_POSITIONS:
-            return "reference"
-    return "product"
+def classify_die(plan: "WaferPlan", row: int, col: int,
+                 row_offset: int = 0, col_offset: int = 0) -> str:
+    """Returns 'product', 'reference', or 'off_wafer' for a given (row, col).
+
+    row_offset/col_offset translate FROM the caller's coordinate space INTO
+    the plan's own Die Map numbering before the lookup - the wafer plan's
+    row/col (1-indexed, top-left origin) is not the same grid as Accretech's
+    (wafer-center-relative, can be negative), see
+    NanoZPanel._wafer_plan_offset. Pass 0, 0 (the default) when row/col are
+    already in the plan's own space."""
+    d = plan.dies.get((row - row_offset, col - col_offset))
+    return d["status"] if d else "off_wafer"
 
 
-def touchdown_slot_exclusions(die_col: int, start_row: int, end_row: int, plan: "WaferPlan") -> dict:
+def touchdown_slot_exclusions(die_col: int, start_row: int, end_row: int, plan: "WaferPlan",
+                              row_offset: int = 0, col_offset: int = 0) -> dict:
     """Slot (1..probe_height, top to bottom of this touchdown) -> exclusion reason,
-    or None if that slot lands on a normal product die that should be run."""
+    or None if that slot lands on a normal product die that should be run.
+    die_col/start_row/end_row are in the caller's space; see classify_die."""
     result = {}
     for slot in range(1, plan.probe_height + 1):
         physical_row = start_row + slot - 1
         if physical_row > end_row:
             result[slot] = "past touchdown end"
             continue
-        status = classify_die(plan, physical_row, die_col)
+        status = classify_die(plan, physical_row, die_col, row_offset, col_offset)
         result[slot] = {"off_wafer": "off wafer", "reference": "reference die",
                         "product": None}[status]
     return result
@@ -878,95 +891,103 @@ def touchdown_slot_exclusions(die_col: int, start_row: int, end_row: int, plan: 
 
 def wafer_plan_die_grid(plan: "WaferPlan") -> list[dict]:
     """Every on-wafer die (product or reference) as {row, col, status, serial}."""
-    if not plan.columns:
-        return []
-    max_row = max(c.bottom_valid_row for c in plan.columns.values())
-    dies = []
-    for col in sorted(plan.columns):
-        for row in range(1, max_row + 1):
-            status = classify_die(plan, row, col)
-            if status != "off_wafer":
-                dies.append({"row": row, "col": col, "status": status,
-                            "serial": die_serial(row, col)})
-    return dies
-
-
-# Letters/numbers scheme for the Nautilus wafer plan's LL### die serials
-# (see the workbook's own "Serial Reference" sheet) - verified against two
-# real entries from "Reference Dies" (row=11,col=51 -> AL056; row=51,col=51
-# -> CE056).
-_SERIAL_LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ"  # 23 letters, I/O/Q excluded
-_SERIAL_VALID_NUMS = [n for n in range(1, 117) if n % 10 != 0]  # 105 values, 1..116
-
-
-def die_serial(row: int, col: int) -> str:
-    r_idx = row - 1
-    first, second = divmod(r_idx, len(_SERIAL_LETTERS))
-    letters = _SERIAL_LETTERS[first % len(_SERIAL_LETTERS)] + _SERIAL_LETTERS[second]
-    num = (_SERIAL_VALID_NUMS[col - 1] if 1 <= col <= len(_SERIAL_VALID_NUMS) else col)
-    return f"{letters}{num:03d}"
+    return [{"row": r, "col": c, "status": d["status"], "serial": d["serial"]}
+           for (r, c), d in sorted(plan.dies.items())]
 
 
 def wafer_plan_stats(plan: "WaferPlan") -> dict:
     counts = {"product": 0, "reference": 0, "off_wafer": 0}
-    for die_col, col in plan.columns.items():
-        for start, end in col.touchdowns:
-            for reason in touchdown_slot_exclusions(die_col, start, end, plan).values():
-                if reason is None:
-                    counts["product"] += 1
-                elif reason == "reference die":
-                    counts["reference"] += 1
-                else:
-                    counts["off_wafer"] += 1
+    for start_row, die_col in plan.touchdowns:
+        end_row = start_row + plan.probe_height - 1
+        for reason in touchdown_slot_exclusions(die_col, start_row, end_row, plan).values():
+            if reason is None:
+                counts["product"] += 1
+            elif reason == "reference die":
+                counts["reference"] += 1
+            else:
+                counts["off_wafer"] += 1
     return counts
 
 
-def build_shots_from_wafer_plan(plan: "WaferPlan", ports: list, slots_by_port: dict) -> list[dict]:
-    """One shot per touchdown, ordered by die column then touchdown index.
-
-    Each NanoZ board has two independent chips (0 and 1), each wired to its
+def _build_shot(plan: "WaferPlan", die_col: int, start: int, end: int, ports: list,
+                slots_by_port: dict, label: str,
+                row_offset: int = 0, col_offset: int = 0) -> dict:
+    """Each NanoZ board has two independent chips (0 and 1), each wired to its
     own physical probe-head slot — `slots_by_port[port]` is a {"0": slot_or_None,
     "1": slot_or_None} dict (see BoardIdentity.chip_slots()). A `run <nn>`
     always actuates both chips together (confirmed in the vendor manual, no
     per-chip run command exists), so a board is only excluded from a shot if
-    BOTH of its chips land off a normal product die for that touchdown —
-    if at least one chip has a real die there, the board still needs to run.
+    BOTH of its chips land off a normal product die for this touchdown — if
+    at least one chip has a real die there, the board still needs to run.
     "chip_reasons" (port -> {"0": reason_or_None, "1": reason_or_None}) records
     the per-chip detail for display/filtering; "board_reasons" (port -> reason
     string, or None if it runs) is the board-level summary, independent of
-    whatever the manual excluded_boards toggle grid does to it afterwards."""
+    whatever the manual excluded_boards toggle grid does to it afterwards.
+
+    die_col/start/end are in the CALLER's coordinate space (e.g. Accretech's)
+    and are stored as-is in the returned shot - only the classify_die lookups
+    are translated into the plan's own space via row_offset/col_offset, so
+    the shot's die_column/td_start_row/td_end_row stay usable for driving
+    the physical prober."""
+    exclusions = touchdown_slot_exclusions(die_col, start, end, plan, row_offset, col_offset)
+    excluded_boards = set()
+    board_reasons = {}
+    chip_reasons = {}
+    for port in ports:
+        chip_slots = slots_by_port.get(port) or {}
+        per_chip = {}
+        for chip in ("0", "1"):
+            slot = chip_slots.get(chip)
+            if slot is None:
+                per_chip[chip] = "no slot assigned"
+            else:
+                per_chip[chip] = exclusions.get(slot, "slot beyond probe head height")
+        chip_reasons[port] = per_chip
+        if all(r is not None for r in per_chip.values()):
+            excluded_boards.add(port)
+            board_reasons[port] = "; ".join(
+                f"chip{c}: {r}" for c, r in per_chip.items())
+        else:
+            board_reasons[port] = None
+    return {
+        "label": label,
+        "excluded_boards": excluded_boards,
+        "board_reasons": board_reasons,
+        "chip_reasons": chip_reasons,
+        "die_column": die_col, "td_start_row": start, "td_end_row": end,
+    }
+
+
+def build_shots_from_windows(plan: "WaferPlan", windows: list, ports: list,
+                             slots_by_port: dict,
+                             row_offset: int = 0, col_offset: int = 0) -> list[dict]:
+    """One shot per (row, col) window - each is a manually-positioned 1-wide x
+    probe_height-tall touchdown footprint (e.g. dies the user highlighted on
+    the Run tab's wafer map, each imagined as a touchdown's top die), rather
+    than the wafer plan's own pre-computed touchdown list. windows are in the
+    caller's coordinate space; see _build_shot."""
     shots = []
-    for die_col in sorted(plan.columns):
-        col = plan.columns[die_col]
-        for td_i, (start, end) in enumerate(col.touchdowns, start=1):
-            exclusions = touchdown_slot_exclusions(die_col, start, end, plan)
-            excluded_boards = set()
-            board_reasons = {}
-            chip_reasons = {}
-            for port in ports:
-                chip_slots = slots_by_port.get(port) or {}
-                per_chip = {}
-                for chip in ("0", "1"):
-                    slot = chip_slots.get(chip)
-                    if slot is None:
-                        per_chip[chip] = "no slot assigned"
-                    else:
-                        per_chip[chip] = exclusions.get(slot, "slot beyond probe head height")
-                chip_reasons[port] = per_chip
-                if all(r is not None for r in per_chip.values()):
-                    excluded_boards.add(port)
-                    board_reasons[port] = "; ".join(
-                        f"chip{c}: {r}" for c, r in per_chip.items())
-                else:
-                    board_reasons[port] = None
-            shots.append({
-                "label": f"Col {die_col} · TD{td_i} (rows {start}-{end})",
-                "excluded_boards": excluded_boards,
-                "board_reasons": board_reasons,
-                "chip_reasons": chip_reasons,
-                "die_column": die_col, "td_start_row": start, "td_end_row": end,
-            })
+    for start_row, die_col in windows:
+        end = start_row + plan.probe_height - 1
+        label = f"Col {die_col} · rows {start_row}-{end} (from selection)"
+        shots.append(_build_shot(plan, die_col, start_row, end, ports, slots_by_port, label,
+                                 row_offset, col_offset))
     return shots
+
+
+def active_ports_for_window(plan: "WaferPlan", die_col: int, start_row: int,
+                            ports: list, slots_by_port: dict,
+                            row_offset: int = 0, col_offset: int = 0) -> list:
+    """Ports whose chip(s) land on a real product die within the touchdown
+    window starting at start_row in die_col (caller's coordinate space) - the
+    same boards Compute Recipe/build_shots_from_windows would leave
+    un-excluded for a touchdown anchored here, used by Run Cycle (Active)/
+    Pause (Active) to scope to the current position window instead of
+    "every connected board"."""
+    end_row = start_row + plan.probe_height - 1
+    shot = _build_shot(plan, die_col, start_row, end_row, ports, slots_by_port, "",
+                       row_offset, col_offset)
+    return [p for p in ports if p not in shot["excluded_boards"]]
 
 
 class NanoZBoard:
@@ -977,9 +998,21 @@ class NanoZBoard:
         self.identity = identity
         self.port = identity.port
         self.out_queue = out_queue
-        # die_provider(chip) -> (row, col); chip is "0"/"1" for a per-chip SPL
-        # reading, or None for a board-wide ENV reading.
-        self._die_provider = die_provider or (lambda chip: (None, None))
+        # die_provider(chip) -> (row, col, die_id); chip is "0"/"1" for a
+        # per-chip SPL reading, or None for a board-wide ENV reading.
+        self._die_provider = die_provider or (lambda chip: (None, None, None))
+        # Snapshot of which die each chip ("0"/"1") - and the board-wide ENV
+        # reading, key None - is over, taken once when a cycle is armed
+        # (NanoZPanel._arm_settling_skip -> set_active_die) rather than
+        # re-queried live per packet. A cycle can take a while to fully
+        # drain; if the prober/position window has already moved on to the
+        # next touchdown by the time the last few packets of THIS cycle
+        # arrive, live-querying would mis-tag them with the new position
+        # instead of the one they were actually measured at. Falls back to
+        # the live die_provider for any chip key never armed (e.g. a raw
+        # "run" sent straight from the console's Send box, bypassing the
+        # normal arm step).
+        self._active_die: dict = {}
         self.env_interval_s = env_interval_s
         self.ser: Optional[serial.Serial] = None
         self._buffer = bytearray()
@@ -988,6 +1021,17 @@ class NanoZBoard:
         self.spl_count = 0
         self.env_count = 0
         self.last_error = ""
+
+    def _die_for(self, chip_key) -> tuple:
+        if chip_key in self._active_die:
+            return self._active_die[chip_key]
+        return self._die_provider(chip_key)
+
+    def set_active_die(self, die_map: dict):
+        """Called right when a cycle is armed - fixes which die each chip
+        (and ENV, key None) is over for every packet this cycle produces,
+        immune to the prober moving on to the next touchdown mid-drain."""
+        self._active_die = dict(die_map)
 
     @property
     def is_running(self) -> bool:
@@ -1134,12 +1178,12 @@ class NanoZBoard:
             parsed = parse_spl_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col = self._die_provider(str(header_chip))
+        row, col, die_id = self._die_for(str(header_chip))
         self.spl_count += 1
         self.out_queue.put({
             "kind": "spl", "host_timestamp": now_stamp(),
             "board_sn": self.identity.serial_number, "port": self.port,
-            "die_row": row, "die_col": col,
+            "die_row": row, "die_col": col, "die_id": die_id,
             "header_chip": header_chip, "header_time_ms": header_time,
             "header_bfr": header_bfr, "len": length,
             "checksum_expected": expected_cs,
@@ -1160,12 +1204,12 @@ class NanoZBoard:
             parsed = parse_env_data(data)
         except Exception as e:
             parsed = {"parse_error": str(e)}
-        row, col = self._die_provider(None)
+        row, col, die_id = self._die_for(None)
         self.env_count += 1
         self.out_queue.put({
             "kind": "env", "host_timestamp": now_stamp(),
             "board_sn": self.identity.serial_number, "port": self.port,
-            "die_row": row, "die_col": col,
+            "die_row": row, "die_col": col, "die_id": die_id,
             "env_x": env_x, "header_time_ms": header_time, "header_bfr": header_bfr,
             "len": length, "checksum_expected": expected_cs,
             **parsed,

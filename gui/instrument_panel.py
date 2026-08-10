@@ -353,6 +353,7 @@ class MainLayout(ttk.Frame):
         self._tab_results(main_nb)
         self._tab_probe_card(main_nb)
         self._tab_pma_wafer(main_nb)
+        self._tab_cassette(main_nb)
         if self._system == "accretech":
             self._tab_accr_wafer(main_nb)
         if self._system == "electroglas":
@@ -374,7 +375,6 @@ class MainLayout(ttk.Frame):
         self._tab_gds_parser(debug_nb)
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
-        self._tab_cassette(debug_nb)
 
         self._build_exec_panel()
         self._build_alignment_panel()
@@ -1368,6 +1368,18 @@ class MainLayout(ttk.Frame):
             pma_wafer.load_from_ata(folder_path)
         self._exec2_map_folder = folder_path
         self._exec2_map_source_var.set("Accretech" if self._system == "accretech" else "Electroglas")
+        # An overlay (real die IDs drawn from a previous ATA folder's CSV/
+        # PMA/XLS source) has no meaning on a different folder's wafer map -
+        # clear it now rather than leaving stale IDs drawn on top of dies
+        # they were never actually matched against.
+        self._exec2_clear_overlay()
+        self._exec2_wafer_map.clear_picks()
+        self._exec2_on_sites_changed([])
+        nanoz_panel = getattr(self, "nanoz_panel", None)
+        if nanoz_panel is not None and hasattr(nanoz_panel, "_clear_overlay"):
+            nanoz_panel._clear_overlay()
+            nanoz_panel.wafer_map.clear_picks()
+            nanoz_panel._on_sites_changed([])
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._refresh_export_formats()
 
@@ -1877,7 +1889,7 @@ class MainLayout(ttk.Frame):
         nb.add(tab, text="Cassette")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        self.cassette_panel = CassettePanel(tab, controller=self.controller)
+        self.cassette_panel = CassettePanel(tab, controller=self.controller, ui=self)
         self.cassette_panel.grid(row=0, column=0, sticky="nsew")
 
     def _tab_accr_wafer(self, nb):
@@ -1944,6 +1956,10 @@ class MainLayout(ttk.Frame):
         # "resuming" its own old loop.
         self._exec2_run_token = 0
         self._exec2_lot_thread: threading.Thread | None = None
+        # Cassette automation hooks into this - set to a callable
+        # fn(pass_n, fail_n, total_n, aborted) to be notified whenever a run
+        # (Full Die today) finishes, instead of polling _exec2_running.
+        self._exec2_on_run_finished = None
         # Index into controller.results_data where the most recently started
         # run began — export formats (unlike "Save as CSV") only export from
         # here onward, so re-running doesn't pile old runs' rows into a new
@@ -2237,6 +2253,12 @@ class MainLayout(ttk.Frame):
             on_change=self._exec2_on_sites_changed))
         if not self._exec2_aborted:
             self.after(0, lambda: self._exec2_set_state(msg, color))
+        if self._exec2_on_run_finished:
+            p, f, total = (self._exec2_pass_var.get(), self._exec2_fail_var.get(),
+                          self._exec2_total_dies)
+            aborted = self._exec2_aborted
+            hook = self._exec2_on_run_finished
+            self.after(0, lambda: hook(p, f, total, aborted))
 
     def _exec2_ensure_separated(self, prober, stb: int, sim: bool):
         if sim or stb != 67:
@@ -3998,6 +4020,9 @@ class MainLayout(ttk.Frame):
         ttk.Radiobutton(type_row, text="CSV (one row per die, merged)",
                        variable=type_var, value="csv",
                        command=lambda: _on_type_change()).pack(side="left", padx=(12, 0))
+        append_date_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_date", False))
+        ttk.Checkbutton(type_row, text="📅 Append date to filename (_YYYYMMDD)",
+                       variable=append_date_var).pack(side="left", padx=(20, 0))
 
         only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
         only_pma_chk = ttk.Checkbutton(
@@ -4207,7 +4232,8 @@ class MainLayout(ttk.Frame):
                 messagebox.showerror("Incomplete", "Add at least one column.")
                 return
             fmt = {"name": name, "table": table, "type": type_var.get(),
-                  "requires_die_id": only_pma_var.get(), "columns": columns}
+                  "requires_die_id": only_pma_var.get(), "append_date": append_date_var.get(),
+                  "columns": columns}
             xfmt.add_format(self._ata_folder, fmt, system=self._system)
             self._refresh_export_formats(select_name=name)
             self.controller.log(f"[RESULTS] Saved export format '{name}' ({table}, "

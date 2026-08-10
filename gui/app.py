@@ -4,6 +4,7 @@ from tkinter import filedialog, simpledialog, messagebox
 import os
 import csv
 import sys
+import datetime as dt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from instrument_panel import MainLayout
 from probe_routing_panel import scrollable_routing
@@ -110,7 +111,7 @@ class AtomicaDashboard(tk.Tk):
                 self._ata_lbl.config(text=f"ATA: {folder_name}  ({n_dies} dies)",
                                      foreground="#1d4ed8")
                 self._refresh_ata_picker()
-                self._ata_picker_var.set(folder_name)
+                self._ata_picker_var.set(self._ata_display_name(folder_name))
                 ui.exec_panel.set_wafer_map(ui.wafer_map, wafer_id=folder_name)
                 ui.wafer_id_var.set(folder_name)
             ui.exec_panel.log(
@@ -188,7 +189,7 @@ class AtomicaDashboard(tk.Tk):
             folder_name = os.path.basename(self.ui._ata_folder)
             self._ata_lbl.config(text=f"ATA: {folder_name}", foreground="#1d4ed8")
             self._refresh_ata_picker()
-            self._ata_picker_var.set(folder_name)
+            self._ata_picker_var.set(self._ata_display_name(folder_name))
         else:
             self._ata_lbl.config(text="No ATA loaded", foreground="gray")
             self._ata_picker_var.set("")
@@ -407,7 +408,7 @@ class AtomicaDashboard(tk.Tk):
                 else:
                     raise Exception("No response")
             except Exception as e:
-                ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
+                ui.status_labels[name].config(text=f"❌ {name}", foreground="red") 
                 self.log(f"[ERROR] {name}: {e}") 
 
     def init_hardware(self):
@@ -537,6 +538,7 @@ class AtomicaDashboard(tk.Tk):
 
         ttk.Label(toolbar, text="ATA Folder:").pack(side="left", padx=(6, 2), pady=2)
         self._ata_picker_var = tk.StringVar()
+        self._ata_picker_label_to_name: dict[str, str] = {}
         self._ata_picker = ttk.Combobox(
             toolbar, textvariable=self._ata_picker_var, state="readonly",
             width=24, postcommand=self._refresh_ata_picker)
@@ -591,8 +593,19 @@ class AtomicaDashboard(tk.Tk):
         found.sort(key=lambda t: t[0], reverse=True)
         return [name for _mtime, name in found]
 
+    @staticmethod
+    def _ata_display_name(name: str) -> str:
+        """Toolbar picker shows the trailing "ata" (case-insensitive)
+        stripped, e.g. "NautATA" -> "Naut" - display only, the real folder
+        name is still what's stored/opened everywhere else."""
+        if name and name.lower().endswith("ata"):
+            return name[:-3] or name
+        return name
+
     def _refresh_ata_picker(self):
-        self._ata_picker.configure(values=self._find_ata_folders())
+        names = self._find_ata_folders()
+        self._ata_picker_label_to_name = {self._ata_display_name(n): n for n in names}
+        self._ata_picker.configure(values=list(self._ata_picker_label_to_name.keys()))
 
     # -- prober bench picker ------------------------------------------------
     #
@@ -656,11 +669,12 @@ class AtomicaDashboard(tk.Tk):
                     pass
         if panel is not None and hasattr(panel, "_bench_var"):
             panel._bench_var.set(name)
-    
+
     def _on_ata_picker_selected(self):
-        name = self._ata_picker_var.get()
-        if not name:
+        label = self._ata_picker_var.get()
+        if not label:
             return
+        name = self._ata_picker_label_to_name.get(label, label)
         folder = os.path.join(self.ui.working_dir_var.get(), name)
         self._do_load_ata_folder(folder)
 
@@ -690,7 +704,7 @@ class AtomicaDashboard(tk.Tk):
         self._ata_lbl.config(text=f"ATA: {folder_name}  ({n_dies} dies)",
                              foreground="#1d4ed8")
         self._refresh_ata_picker()
-        self._ata_picker_var.set(folder_name)
+        self._ata_picker_var.set(self._ata_display_name(folder_name))
         self.ui.exec_panel.log(f"[SYSTEM] ATA folder '{folder_name}' loaded — {n_dies} dies found.")
         self.ui.exec_panel.set_wafer_map(self.ui.wafer_map, wafer_id=folder_name)
         self.ui.wafer_id_var.set(folder_name)
@@ -841,7 +855,9 @@ class AtomicaDashboard(tk.Tk):
             return
         ext = "csv" if fmt_type == "csv" else "sql"
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + [
-            fmt["table"].lower() or "export"]
+            fmt["table"] or "export"]
+        if fmt.get("append_date"):
+            name_parts.append(dt.date.today().strftime("%Y%m%d"))
         filepath = os.path.join(export_dir, "_".join(name_parts) + f".{ext}")
 
         try:
