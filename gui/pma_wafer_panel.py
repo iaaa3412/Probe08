@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import csv
+import math
 import os
 import threading
 import tkinter as tk
@@ -26,7 +27,7 @@ try:
         pass
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
     from matplotlib.figure import Figure
-    from matplotlib.patches import Rectangle
+    from matplotlib.patches import Rectangle, Circle, Wedge
     from matplotlib.collections import PatchCollection
     _MPL = True
 except ImportError:
@@ -406,6 +407,15 @@ _COLOR_PARTIAL  = "#d97706"
 _COLOR_EMPTY    = "#dc2626"
 _COLOR_SELECTED = "#38bdf8"
 
+# Matches WaferMapPanel (wafer_map_view.py), which every other wafer map in
+# the GUI is drawn with, so the Electroglas map reads the same way: a wafer
+# disc with a notch at the bottom rather than a bare grid on labelled axes.
+_WAFER_FILL     = "#f5f5f0"
+_WAFER_EDGE     = "#333333"
+_EDGE_EXCL      = "#aaaaaa"
+_CROSSHAIR      = "#cccccc"
+_DIE_EDGE       = "#4a7090"
+
 
 class PmaWaferPanel(ttk.Frame):
     def __init__(self, parent, controller, get_folder=None, main_layout=None):
@@ -426,6 +436,7 @@ class PmaWaferPanel(ttk.Frame):
         self._selected_patch = None
         self._shots_by_rc: Dict[tuple, Dict[str, Any]] = {}
         self._label_artists: List[Any] = []
+        self._label_hint = None
         self._view_debounce_id = None
         # "You are here" overlay, driven by the Electroglas PMA run panel so the
         # operator can match the map against what is under the scope.
@@ -897,21 +908,46 @@ class PmaWaferPanel(ttk.Frame):
             return [s for s in self.workbook_data["shots"] if s.get("included")]
         return []
 
+    # Below this the IDs are a grey smear rather than text, so they are not
+    # drawn at all - zoom in and they appear. The old code clamped at 3pt and
+    # drew them anyway, which is what made the full-wafer view unreadable.
+    _MIN_LABEL_FONT = 5.5
+
     def _fit_fontsize(self, box_w_px: float, box_h_px: float, text_len: int) -> float:
+        """Largest point size that fits this die box, UNCLAMPED at the bottom.
+
+        The caller needs the honest value to decide whether the label is worth
+        drawing; capped only at the top so a deep zoom does not produce
+        absurdly large text.
+        """
         text_len = max(text_len, 1)
         dpi = self.fig.dpi
         by_width = box_w_px * 72.0 / dpi / (0.62 * text_len)
         by_height = box_h_px * 72.0 / dpi * 0.75
-        return max(3.0, min(by_width, by_height, 24.0))
+        return min(by_width, by_height, 24.0)
+
+    def _set_label_hint(self, text: str):
+        if self._label_hint is not None:
+            try:
+                self._label_hint.remove()
+            except Exception:
+                pass
+            self._label_hint = None
+        if text:
+            self._label_hint = self.ax.annotate(
+                text, xy=(0.01, 0.99), xycoords="axes fraction",
+                ha="left", va="top", fontsize=8, color="#6b7280", zorder=9)
 
     def _update_visible_labels(self):
         self._view_debounce_id = None
         self._clear_labels()
         if not (_MPL and self._show_labels_var.get()):
+            self._set_label_hint("")
             self.canvas.draw_idle()
             return
         shots = self._current_label_shots()
         if not shots:
+            self._set_label_hint("")
             return
         dx, dy = self._current_die_size()
         xlim = sorted(self.ax.get_xlim())
@@ -920,6 +956,7 @@ class PmaWaferPanel(ttk.Frame):
                   if xlim[0] <= s["x_um"] + dx / 2 <= xlim[1]
                   and ylim[0] <= s["y_um"] + dy / 2 <= ylim[1]]
         if not visible or len(visible) > self._MAX_VISIBLE_LABELS:
+            self._set_label_hint("zoom in to show die IDs" if visible else "")
             self.canvas.draw_idle()
             return
         bbox = self.ax.get_window_extent()
@@ -927,15 +964,20 @@ class PmaWaferPanel(ttk.Frame):
         span_y = (ylim[1] - ylim[0]) or 1.0
         box_w_px = bbox.width * dx / span_x
         box_h_px = bbox.height * dy / span_y
+        drawn = 0
         for s in visible:
             label = self._shot_label(s)
             if not label:
                 continue
             fs = self._fit_fontsize(box_w_px, box_h_px, len(label))
+            if fs < self._MIN_LABEL_FONT:
+                continue
             t = self.ax.text(s["x_um"] + dx / 2, s["y_um"] + dy / 2, label,
                             fontsize=fs, ha="center", va="center",
                             color="black", zorder=6, clip_on=True)
             self._label_artists.append(t)
+            drawn += 1
+        self._set_label_hint("" if drawn else "zoom in to show die IDs")
         self.canvas.draw_idle()
 
     def _update_legend(self, data: Dict[str, Any]):
@@ -959,9 +1001,9 @@ class PmaWaferPanel(ttk.Frame):
         self.ax.clear()
         self._shots_by_rc = {}
         self._label_artists = []
+        self._label_hint = None
         self.ax.set_title("Wafer Map")
-        self.ax.set_xlabel("X (µm)")
-        self.ax.set_ylabel("Y (µm)")
+        self.ax.set_axis_off()
         self._connect_view_callbacks()
         self.canvas.draw_idle()
 
@@ -975,33 +1017,77 @@ class PmaWaferPanel(ttk.Frame):
             return _COLOR_EMPTY
         return _COLOR_PARTIAL
 
+    def _wafer_disc(self, shots, dx: float, dy: float):
+        """Centre and radius of the wafer outline, in map microns.
+
+        Same construction WaferMapPanel uses on the canvas maps: centre the
+        die extent, then push the edge out by most of a die pitch so the
+        outermost dies sit inside the disc rather than on it.
+        """
+        cxs = [s["x_um"] + dx / 2 for s in shots]
+        cys = [s["y_um"] + dy / 2 for s in shots]
+        cx_d = (max(cxs) + min(cxs)) / 2.0
+        cy_d = (max(cys) + min(cys)) / 2.0
+        far = max(math.hypot(x - cx_d, y - cy_d) for x, y in zip(cxs, cys))
+        return cx_d, cy_d, far + max(dx, dy) * 0.7
+
+    def _draw_wafer(self, shots, dx: float, dy: float):
+        cx_d, cy_d, r = self._wafer_disc(shots, dx, dy)
+        self.ax.add_patch(Circle((cx_d, cy_d), r, facecolor=_WAFER_FILL,
+                                 edgecolor=_WAFER_EDGE, linewidth=1.6, zorder=0))
+        self.ax.add_patch(Circle((cx_d, cy_d), r * 0.95, facecolor="none",
+                                 edgecolor=_EDGE_EXCL, linewidth=0.9,
+                                 linestyle=(0, (4, 4)), zorder=1))
+        # The y axis is inverted, so screen-bottom is the HIGH-y side of the
+        # data - that is where the notch belongs, and the half-disc has to
+        # point back toward lower y to bite into the wafer.
+        notch_r = max(r * 0.04, max(dx, dy) * 0.35)
+        self.ax.add_patch(Wedge((cx_d, cy_d + r), notch_r, 180, 360,
+                                facecolor=_WAFER_EDGE, edgecolor="none", zorder=2))
+        arm = r * 0.03
+        self.ax.plot([cx_d - arm, cx_d + arm], [cy_d, cy_d], color=_CROSSHAIR,
+                     linewidth=0.8, linestyle=(0, (2, 2)), zorder=1)
+        self.ax.plot([cx_d, cx_d], [cy_d - arm, cy_d + arm], color=_CROSSHAIR,
+                     linewidth=0.8, linestyle=(0, (2, 2)), zorder=1)
+        return cx_d, cy_d, r
+
     def _draw_map(self, data: Dict[str, Any]):
         self.ax.clear()
         self._selected_patch = None
         self._current_artists = []
+        self._label_hint = None
         dx = float(data["die_size_x"] or 1) or 1.0
         dy = float(data["die_size_y"] or 1) or 1.0
         self._map_die_um = (dx, dy)
         shots = data["shots"]
         self._shots_by_rc = {(s["row"], s["col"]): s for s in shots}
+        disc = self._draw_wafer(shots, dx, dy) if shots else None
         if shots:
             patches = [Rectangle((s["x_um"], s["y_um"]), dx, dy) for s in shots]
-            coll = PatchCollection(patches, edgecolor="#0f172a", linewidths=0.3)
+            coll = PatchCollection(patches, edgecolor=_DIE_EDGE, linewidths=0.3,
+                                   zorder=3)
             coll.set_facecolor([self._shot_color(s) for s in shots])
             self.ax.add_collection(coll)
         for s in find_align_shots(data):
             cx, cy = s["x_um"] + dx / 2, s["y_um"] + dy / 2
             self.ax.plot(cx, cy, marker="o", markersize=8, color="#facc15",
                         markeredgecolor="#78350f", markeredgewidth=1.0, zorder=5)
-        x_headers, y_headers = data["x_headers"], data["y_headers"]
-        if x_headers and y_headers:
-            self.ax.set_xlim(min(x_headers) - dx, max(x_headers) + 2 * dx)
-            self.ax.set_ylim(min(y_headers) - dy, max(y_headers) + 2 * dy)
+        if disc:
+            cx_d, cy_d, r = disc
+            pad = r * 0.06
+            self.ax.set_xlim(cx_d - r - pad, cx_d + r + pad)
+            self.ax.set_ylim(cy_d - r - pad, cy_d + r + pad)
+        else:
+            x_headers, y_headers = data["x_headers"], data["y_headers"]
+            if x_headers and y_headers:
+                self.ax.set_xlim(min(x_headers) - dx, max(x_headers) + 2 * dx)
+                self.ax.set_ylim(min(y_headers) - dy, max(y_headers) + 2 * dy)
         self.ax.invert_yaxis()
         self.ax.set_title(f"{data['recipe_name']} — {data['included_shot_count']} shots, "
                           f"{data['real_die_count']} dies")
-        self.ax.set_xlabel("X (µm)")
-        self.ax.set_ylabel("Y (µm)")
+        # No axis furniture, matching the canvas wafer maps on the other tabs.
+        # The navigation toolbar still reports the cursor's micron position.
+        self.ax.set_axis_off()
         self.ax.set_aspect("equal")
         self._connect_view_callbacks()
         self._update_visible_labels()
