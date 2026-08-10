@@ -69,6 +69,20 @@ WAFER_MAP_SOURCES = {
 
 class WaferMapPanel(ttk.LabelFrame):
     _PICK_COLOR = "#f59e0b"
+    _STATUS_COLORS = {
+        "UNTESTED":     "#7aaec8",
+        "CURRENT":      "#dbeafe",
+        # Orange "you are here" for the Electroglas PMA run. A separate
+        # status rather than recolouring CURRENT, because the Accretech
+        # flow uses CURRENT and its appearance should not change.
+        "PROBING":      "#f59e0b",
+        "CONTACT":      "#ede9fe",
+        "TESTING":      "#dbeafe",
+        "PASS":         "#00d200",
+        "FAIL":         "#e53935",
+        "SKIP":         "#fbbc04",
+        "CONTACT_FAIL": "#fb923c",
+    }
 
     def __init__(self, parent):
         super().__init__(parent, text="Wafer Map")
@@ -76,6 +90,12 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
         self.dies = {}
         self.die_ids = {}  # (row, col) -> real die-ID/label from the loaded map file, if any
+        # (row, col) -> last status set via update_die - reapplied by
+        # _draw_from_die_list/draw_map after any full rebuild (e.g. the
+        # pan/zoom double-click reset, or an ATA folder reload) so a run's
+        # PASS/FAIL/CURRENT colouring survives a redraw instead of every
+        # die silently reverting to its untested fill.
+        self._die_status = {}
         self._last_dies = None
         self.on_redraw = None  # optional callback() run after any full redraw
         self.canvas.create_text(150, 100, text="Waiting for Wafer Map...", fill="gray")
@@ -112,9 +132,12 @@ class WaferMapPanel(ttk.LabelFrame):
 
     def _recolor_picks(self):
         for rc, item in self.dies.items():
+            if rc in self._picked:
+                fill = self._PICK_COLOR
+            else:
+                fill = self._STATUS_COLORS.get(self._die_status.get(rc, "UNTESTED"), "#7aaec8")
             try:
-                self.canvas.itemconfig(
-                    item, fill=(self._PICK_COLOR if rc in self._picked else "#7aaec8"))
+                self.canvas.itemconfig(item, fill=fill)
             except tk.TclError:
                 pass
 
@@ -239,9 +262,21 @@ class WaferMapPanel(ttk.LabelFrame):
                         fill="#e0e0e0", outline="gray"
                     )
                     self.dies[(row, col)] = rect
+        self._recolor_statuses()
+        self._recolor_picks()
         self._run_on_redraw()
 
+    def clear_status(self):
+        """Drop every remembered PASS/FAIL/CURRENT/... status - call when
+        genuinely new data is being loaded (a different ATA folder), so a
+        previous wafer's colouring doesn't bleed into this one's dies at
+        the same (row, col). A plain view redraw (double-click reset,
+        zoom) should NOT call this - that's the whole point of
+        _die_status persisting across those."""
+        self._die_status.clear()
+
     def load_from_ata(self, folder_path, filename="ata_wafer_map_gds.csv"):
+        self.clear_status()
         map_file = os.path.join(folder_path, filename)
         if not os.path.exists(map_file):
             self.canvas.delete("all")
@@ -406,26 +441,24 @@ class WaferMapPanel(ttk.LabelFrame):
                 fill="#7aaec8", outline=ol
             )
             self.dies[(d["row"], d["col"])] = rect
+        self._recolor_statuses()
         self._recolor_picks()
         self._run_on_redraw()
 
     def update_die(self, row, col, status):
-        colors = {
-            "UNTESTED":     "#7aaec8",
-            "CURRENT":      "#dbeafe",
-            # Orange "you are here" for the Electroglas PMA run. A separate
-            # status rather than recolouring CURRENT, because the Accretech
-            # flow uses CURRENT and its appearance should not change.
-            "PROBING":      "#f59e0b",
-            "CONTACT":      "#ede9fe",
-            "TESTING":      "#dbeafe",
-            "PASS":         "#00d200",
-            "FAIL":         "#e53935",
-            "SKIP":         "#fbbc04",
-            "CONTACT_FAIL": "#fb923c",
-        }
+        self._die_status[(row, col)] = status
         if (row, col) in self.dies:
-            self.canvas.itemconfig(self.dies[(row, col)], fill=colors.get(status, "#9ca3af"))
+            self.canvas.itemconfig(
+                self.dies[(row, col)], fill=self._STATUS_COLORS.get(status, "#9ca3af"))
+
+    def _recolor_statuses(self):
+        for rc, status in self._die_status.items():
+            item = self.dies.get(rc)
+            if item is not None:
+                try:
+                    self.canvas.itemconfig(item, fill=self._STATUS_COLORS.get(status, "#9ca3af"))
+                except tk.TclError:
+                    pass
 
 
 def _safe_card_filename(name: str) -> str:
