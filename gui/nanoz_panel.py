@@ -1885,7 +1885,8 @@ class NanoZPanel(ttk.Frame):
     # the prober's own row/col numbering (die_id is what's kept - see the
     # "results should correspond to die id, not row/col" note elsewhere).
     _RAW_EXPORT_DROP_FIELDS = {"die_row", "die_col", "header_time_ms", "header_bfr",
-                               "len", "checksum_expected", "ppms", "header_chip", "reserved"}
+                               "len", "checksum_expected", "ppms", "header_chip", "reserved",
+                               "cycle_start"}
 
     @staticmethod
     def _raw_resistance(v_str, i_str) -> str:
@@ -1896,6 +1897,25 @@ class NanoZPanel(ttk.Frame):
         if not i:
             return ""
         return f"{v / i:.4g}"
+
+    @staticmethod
+    def _raw_die_key(row: dict) -> str:
+        return row.get("die_id") or f"{row.get('die_row')},{row.get('die_col')}"
+
+    def _raw_latest_cycle_only(self, rows: list) -> list:
+        """If the same die got cycled more than once (e.g. Run Cycle
+        (Active) fired twice on it), keep only its most recent cycle's
+        samples - concatenating both would double-count/confuse a die's
+        data. cycle_start is an ISO timestamp (nzb.now_stamp-style), so
+        plain string max() already sorts chronologically."""
+        latest: dict[str, str] = {}
+        for row in rows:
+            key = self._raw_die_key(row)
+            cs = row.get("cycle_start") or ""
+            if cs and cs > latest.get(key, ""):
+                latest[key] = cs
+        return [row for row in rows if row.get("cycle_start", "") == latest.get(
+            self._raw_die_key(row), "")]
 
     def _nz_export_raw(self):
         """Every individual raw SPL sample (not the V/I now/avg summary the
@@ -1929,6 +1949,7 @@ class NanoZPanel(ttk.Frame):
         except OSError as e:
             messagebox.showerror("Export Failed", str(e))
             return
+        rows = self._raw_latest_cycle_only(rows)
 
         kept_fields = [c for c in src_fields if c not in self._RAW_EXPORT_DROP_FIELDS]
         r_fields = [f"r_s{s}_kohm" for s in (1, 2, 3, 4)] + ["r_h1_ohm", "r_h2_ohm"]
@@ -3685,6 +3706,11 @@ class NanoZPanel(ttk.Frame):
             if not settled:
                 self._skip_spl_count[key] = remaining - 1
             item["_settled"] = settled
+            # Which cycle this reading belongs to - lets Export Raw tell
+            # "this die got cycled twice" apart and keep only the latest
+            # cycle's samples per die, instead of concatenating both.
+            item["cycle_start"] = (self._cycle_start_time.isoformat()
+                                   if self._cycle_start_time else "")
             # Tagged (not dropped) here - _spl_history keeps every packet so
             # nothing's lost, but Charts/_latest_spl/Results/CSV all filter
             # on this flag so settling data never shows up anywhere.
