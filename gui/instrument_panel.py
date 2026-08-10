@@ -353,6 +353,7 @@ class MainLayout(ttk.Frame):
         self._tab_results(main_nb)
         self._tab_probe_card(main_nb)
         self._tab_pma_wafer(main_nb)
+        self._tab_cassette(main_nb)
         if self._system == "accretech":
             self._tab_accr_wafer(main_nb)
         if self._system == "electroglas":
@@ -374,7 +375,6 @@ class MainLayout(ttk.Frame):
         self._tab_gds_parser(debug_nb)
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
-        self._tab_cassette(debug_nb)
 
         self._build_exec_panel()
         self._build_alignment_panel()
@@ -1889,7 +1889,7 @@ class MainLayout(ttk.Frame):
         nb.add(tab, text="Cassette")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        self.cassette_panel = CassettePanel(tab, controller=self.controller)
+        self.cassette_panel = CassettePanel(tab, controller=self.controller, ui=self)
         self.cassette_panel.grid(row=0, column=0, sticky="nsew")
 
     def _tab_accr_wafer(self, nb):
@@ -1956,6 +1956,10 @@ class MainLayout(ttk.Frame):
         # "resuming" its own old loop.
         self._exec2_run_token = 0
         self._exec2_lot_thread: threading.Thread | None = None
+        # Cassette automation hooks into this - set to a callable
+        # fn(pass_n, fail_n, total_n, aborted) to be notified whenever a run
+        # (Full Die today) finishes, instead of polling _exec2_running.
+        self._exec2_on_run_finished = None
         # Index into controller.results_data where the most recently started
         # run began — export formats (unlike "Save as CSV") only export from
         # here onward, so re-running doesn't pile old runs' rows into a new
@@ -2249,6 +2253,12 @@ class MainLayout(ttk.Frame):
             on_change=self._exec2_on_sites_changed))
         if not self._exec2_aborted:
             self.after(0, lambda: self._exec2_set_state(msg, color))
+        if self._exec2_on_run_finished:
+            p, f, total = (self._exec2_pass_var.get(), self._exec2_fail_var.get(),
+                          self._exec2_total_dies)
+            aborted = self._exec2_aborted
+            hook = self._exec2_on_run_finished
+            self.after(0, lambda: hook(p, f, total, aborted))
 
     def _exec2_ensure_separated(self, prober, stb: int, sim: bool):
         if sim or stb != 67:

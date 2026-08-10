@@ -5,56 +5,121 @@ import os
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 
 class CassettePanel(ttk.Frame):
-    def __init__(self, parent, controller):
+    """Drives a real cassette load end-to-end: one physical wafer per
+    cassette slot, each tagged with its own Lot ID/Wafer ID. The operator
+    loads the cassette, presses NEW CST on the prober, loads/starts the
+    FIRST wafer normally (ATA folder + ▶ Full Die), then presses ▶ Arm here
+    - from then on this panel watches for that run to finish, auto-exports
+    it (reusing the ATA Folder tab's own Export Directory/Format), checks
+    yield against the threshold (pausing if it's too low instead of
+    silently continuing to burn wafers on a bad recipe/setup), and if it's
+    fine sends U (unload/load next wafer) and auto-starts the next slot's
+    run - repeating until the list is exhausted or the cassette reports no
+    next wafer."""
+
+    def __init__(self, parent, controller, ui):
         super().__init__(parent)
         self.controller = controller
-        self._running = False
-        self._abort = False
-        self._results: list = []
+        self.ui = ui
+        self._wafers: list[dict] = []  # [{"lot_id": str, "wafer_id": str}, ...] in slot order
+        self._slot_idx = 0
+        self._armed = False
 
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
 
         self._build_topbar()
+        self._build_wafer_list()
+        self._build_export()
         self._build_manual()
         self._build_progress()
 
+    # ------------------------------------------------------------------ UI
 
     def _build_topbar(self):
         bar = ttk.Frame(self, padding=(6, 4))
         bar.grid(row=0, column=0, sticky="ew")
 
-        ttk.Label(bar, text="Lot ID:").pack(side="left")
-        self._lot_var = tk.StringVar()
-        self._lot_entry = ttk.Entry(bar, textvariable=self._lot_var, width=14)
-        self._lot_entry.pack(side="left", padx=(2, 10))
-
-        ttk.Label(bar, text="Starting Wafer #:").pack(side="left")
-        self._wafer_var = tk.StringVar(value="1")
-        self._wafer_entry = ttk.Entry(bar, textvariable=self._wafer_var, width=5)
-        self._wafer_entry.pack(side="left", padx=(2, 10))
-
-        self._go_btn = ttk.Button(bar, text="▶  Go (Start Lot)", command=self._start_lot)
+        self._go_btn = ttk.Button(bar, text="▶  Arm Cassette Automation",
+                                  command=self._arm)
         self._go_btn.pack(side="left", padx=4)
-        self._stop_btn = ttk.Button(bar, text="⏹  Stop", state="disabled",
-                                    command=self._request_stop)
+        self._stop_btn = ttk.Button(bar, text="⏹  Stop Automation", state="disabled",
+                                    command=lambda: self._disarm("Stopped by user."))
         self._stop_btn.pack(side="left", padx=4)
+        ttk.Button(bar, text="🔄 Reset to Slot #1",
+                  command=self._reset_slot).pack(side="left", padx=4)
+
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
+        ttk.Label(bar, text="Pass yield ≥").pack(side="left")
+        self._yield_var = tk.StringVar(value="95")
+        ttk.Entry(bar, textvariable=self._yield_var, width=5).pack(side="left", padx=(2, 0))
+        ttk.Label(bar, text="% to auto-continue, else pause").pack(side="left", padx=(2, 0))
 
         self._state_var = tk.StringVar(value="IDLE")
         self._state_lbl = ttk.Label(bar, textvariable=self._state_var,
                                     font=("Consolas", 11, "bold"), foreground="#6b7280")
         self._state_lbl.pack(side="right", padx=8)
 
+    def _build_wafer_list(self):
+        lf = ttk.LabelFrame(
+            self, text="Cassette Slots — one Lot ID/Wafer ID per physical wafer, in slot order "
+                       "(slot #1 is whatever the operator already manually loaded/started)",
+            padding=6)
+        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 2))
+        lf.columnconfigure(0, weight=1)
+
+        btns = ttk.Frame(lf)
+        btns.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Button(btns, text="＋ Add Slot", command=self._add_slot).pack(side="left", padx=2)
+        ttk.Button(btns, text="✎ Edit", command=self._edit_slot).pack(side="left", padx=2)
+        ttk.Button(btns, text="🗑 Remove", command=self._remove_slot).pack(side="left", padx=2)
+        ttk.Button(btns, text="▲", width=3, command=lambda: self._move_slot(-1)).pack(
+            side="left", padx=(10, 2))
+        ttk.Button(btns, text="▼", width=3, command=lambda: self._move_slot(1)).pack(
+            side="left", padx=2)
+        ttk.Button(btns, text="🗑 Clear All", command=self._clear_slots).pack(side="left", padx=(10, 2))
+
+        cols = ("slot", "lot", "wafer")
+        self._slot_tree = ttk.Treeview(lf, columns=cols, show="headings", height=5,
+                                       selectmode="browse")
+        heads = [("slot", "Slot #", 60), ("lot", "Lot ID", 160), ("wafer", "Wafer ID", 160)]
+        for cid, text, width in heads:
+            self._slot_tree.heading(cid, text=text)
+            self._slot_tree.column(cid, width=width, anchor="center" if cid == "slot" else "w")
+        self._slot_tree.grid(row=1, column=0, sticky="ew")
+        self._slot_tree.bind("<Double-1>", lambda _e: self._edit_slot())
+
+    def _build_export(self):
+        ef = ttk.LabelFrame(self, text="Auto-Export (after every wafer, using the ATA Folder "
+                                       "tab's own Export Directory/Format)", padding=6)
+        ef.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 2))
+
+        self._auto_export_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ef, text="Auto-export after each wafer",
+                       variable=self._auto_export_var).pack(side="left", padx=(0, 16))
+
+        ttk.Label(ef, text="Export Directory:").pack(side="left")
+        ttk.Entry(ef, textvariable=self.ui.export_path_var, width=32).pack(
+            side="left", padx=6)
+        ttk.Button(ef, text="Browse...", command=self._browse_export_dir).pack(side="left")
+
+        ttk.Label(ef, text="Format:").pack(side="left", padx=(16, 2))
+        self._export_format_cb = ttk.Combobox(
+            ef, textvariable=self.ui.export_format_var, state="readonly", width=32)
+        self._export_format_cb.pack(side="left", padx=(0, 4))
+        self._export_format_cb.bind("<<ComboboxSelected>>", lambda _e: None)
+        ttk.Button(ef, text="↻", width=3, command=self._refresh_export_formats).pack(side="left")
+
     def _build_manual(self):
         mf = ttk.LabelFrame(
             self, text="Manual Command Test (exercise each cassette-workflow "
-                       "command on its own, without running a full lot)",
+                       "command on its own, without running full automation)",
             padding=6)
-        mf.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 2))
+        mf.grid(row=3, column=0, sticky="ew", padx=6, pady=(2, 2))
 
         ttk.Button(mf, text="Wait for Wafer Ready (STB=65)",
                    command=self._manual_wait_ready).pack(side="left", padx=2)
@@ -66,23 +131,14 @@ class CassettePanel(ttk.Frame):
                    command=self._manual_read_stb).pack(side="left", padx=2)
 
     def _build_progress(self):
-        pf = ttk.LabelFrame(self, text="Lot Progress", padding=6)
-        pf.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
-        pf.rowconfigure(2, weight=1)
+        pf = ttk.LabelFrame(self, text="Cassette Automation Log", padding=6)
+        pf.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        pf.rowconfigure(1, weight=1)
         pf.columnconfigure(0, weight=1)
 
-        counters = ttk.Frame(pf)
-        counters.grid(row=0, column=0, sticky="ew")
-        self._wafer_count_var = tk.StringVar(value="Wafer: —")
-        self._die_count_var = tk.StringVar(value="Die: —")
-        ttk.Label(counters, textvariable=self._wafer_count_var,
-                  font=("Consolas", 10, "bold")).pack(side="left", padx=(0, 16))
-        ttk.Label(counters, textvariable=self._die_count_var,
-                  font=("Consolas", 10, "bold")).pack(side="left")
-
         csv_row = ttk.Frame(pf)
-        csv_row.grid(row=1, column=0, sticky="ew", pady=(6, 4))
-        ttk.Label(csv_row, text="Export CSV:").pack(side="left")
+        csv_row.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(csv_row, text="Also save this log as CSV:").pack(side="left")
         self._csv_var = tk.StringVar()
         ttk.Entry(csv_row, textvariable=self._csv_var, width=40).pack(
             side="left", padx=6)
@@ -90,20 +146,21 @@ class CassettePanel(ttk.Frame):
         ttk.Label(csv_row, text="(blank = don't save)", foreground="gray",
                   font=("Arial", 8)).pack(side="left", padx=6)
 
-        cols = ("timestamp", "wafer", "die", "event")
+        cols = ("timestamp", "slot", "lot", "event")
         self._tree = ttk.Treeview(pf, columns=cols, show="headings",
                                   height=10, selectmode="browse")
-        heads = [("timestamp", "Time", 150), ("wafer", "Wafer", 60),
-                 ("die", "Die", 60), ("event", "Event", 260)]
+        heads = [("timestamp", "Time", 150), ("slot", "Slot", 50),
+                 ("lot", "Lot ID", 120), ("event", "Event", 400)]
         for cid, text, width in heads:
             self._tree.heading(cid, text=text)
             self._tree.column(cid, width=width,
-                              anchor="center" if cid in ("wafer", "die") else "w")
-        self._tree.grid(row=2, column=0, sticky="nsew")
+                              anchor="center" if cid == "slot" else "w")
+        self._tree.grid(row=1, column=0, sticky="nsew")
         tsb = ttk.Scrollbar(pf, orient="vertical", command=self._tree.yview)
-        tsb.grid(row=2, column=1, sticky="ns")
+        tsb.grid(row=1, column=1, sticky="ns")
         self._tree.configure(yscrollcommand=tsb.set)
 
+    # ------------------------------------------------------------- helpers
 
     def _log(self, msg: str):
         self.controller.log(msg)
@@ -113,23 +170,155 @@ class CassettePanel(ttk.Frame):
         self._state_lbl.config(foreground=color)
 
     def _set_locked(self, locked: bool):
-        state = "disabled" if locked else "normal"
-        self._lot_entry.config(state=state)
-        self._wafer_entry.config(state=state)
-        self._go_btn.config(state=state)
+        self._go_btn.config(state="disabled" if locked else "normal")
         self._stop_btn.config(state="normal" if locked else "disabled")
-
-    def _browse_csv(self):
-        path = filedialog.asksaveasfilename(
-            title="Export Cassette Run CSV", defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
-        if path:
-            self._csv_var.set(path)
 
     def _drv(self):
         drv = self.controller.drivers.get("prober")
         return drv if (drv and drv.inst) else None
 
+    def _browse_csv(self):
+        path = filedialog.asksaveasfilename(
+            title="Export Cassette Run Log CSV", defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if path:
+            self._csv_var.set(path)
+
+    def _browse_export_dir(self):
+        selected = filedialog.askdirectory(
+            initialdir=self.ui.export_path_var.get(), title="Select Export Directory")
+        if selected:
+            self.ui.export_path_var.set(selected)
+
+    def _refresh_export_formats(self):
+        names = [f["name"] for f in getattr(self.ui, "_export_formats", [])]
+        self._export_format_cb.config(values=names)
+        if names and self.ui.export_format_var.get() not in names:
+            self.ui.export_format_var.set(names[0])
+
+    def _record(self, slot_num, lot_id: str, event: str):
+        row = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+              "slot": slot_num, "lot": lot_id, "event": event}
+        def _ui():
+            self._tree.insert("", "end", values=(row["timestamp"], row["slot"],
+                                                  row["lot"], row["event"]))
+            children = self._tree.get_children()
+            if children:
+                self._tree.see(children[-1])
+            self._maybe_append_csv(row)
+        self.after(0, _ui)
+
+    def _maybe_append_csv(self, row: dict):
+        path = self._csv_var.get().strip()
+        if not path:
+            return
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            exists = os.path.isfile(path) and os.path.getsize(path) > 0
+            with open(path, "a", newline="", encoding="utf-8") as f:
+                wr = csv.DictWriter(f, fieldnames=["timestamp", "slot", "lot", "event"])
+                if not exists:
+                    wr.writeheader()
+                wr.writerow(row)
+        except OSError as exc:
+            self._log(f"[CASSETTE] Log CSV save error: {exc}")
+
+    def _log_event(self, slot_num, lot_id: str, event: str):
+        self._log(f"[CASSETTE] Slot {slot_num}: {event}" if slot_num else f"[CASSETTE] {event}")
+        self._record(slot_num, lot_id, event)
+
+    def _yield_threshold(self) -> float:
+        try:
+            return float(self._yield_var.get())
+        except ValueError:
+            return 95.0
+
+    # ------------------------------------------------------------ slot list
+
+    def _redraw_slots(self):
+        self._slot_tree.delete(*self._slot_tree.get_children())
+        for i, w in enumerate(self._wafers):
+            marker = " (current)" if self._armed and i == self._slot_idx else ""
+            self._slot_tree.insert("", "end", iid=str(i), values=(
+                f"{i + 1}{marker}", w["lot_id"], w["wafer_id"]))
+
+    def _add_slot(self):
+        lot_id = simpledialog.askstring("Add Slot", "Lot ID:", parent=self)
+        if lot_id is None:
+            return
+        lot_id = lot_id.strip()
+        if not lot_id:
+            messagebox.showerror("Lot ID Required", "Lot ID can't be blank.")
+            return
+        wafer_id = simpledialog.askstring(
+            "Add Slot", "Wafer ID (optional):", parent=self) or ""
+        self._wafers.append({"lot_id": lot_id, "wafer_id": wafer_id.strip()})
+        self._redraw_slots()
+
+    def _selected_slot_index(self):
+        sel = self._slot_tree.selection()
+        return int(sel[0]) if sel else None
+
+    def _edit_slot(self):
+        idx = self._selected_slot_index()
+        if idx is None:
+            return
+        w = self._wafers[idx]
+        lot_id = simpledialog.askstring("Edit Slot", "Lot ID:", initialvalue=w["lot_id"],
+                                        parent=self)
+        if lot_id is None:
+            return
+        lot_id = lot_id.strip()
+        if not lot_id:
+            messagebox.showerror("Lot ID Required", "Lot ID can't be blank.")
+            return
+        wafer_id = simpledialog.askstring("Edit Slot", "Wafer ID (optional):",
+                                          initialvalue=w["wafer_id"], parent=self)
+        if wafer_id is None:
+            return
+        self._wafers[idx] = {"lot_id": lot_id, "wafer_id": wafer_id.strip()}
+        self._redraw_slots()
+
+    def _remove_slot(self):
+        idx = self._selected_slot_index()
+        if idx is None:
+            return
+        del self._wafers[idx]
+        if self._slot_idx > idx:
+            self._slot_idx -= 1
+        self._redraw_slots()
+
+    def _move_slot(self, direction: int):
+        idx = self._selected_slot_index()
+        if idx is None:
+            return
+        new_idx = idx + direction
+        if not (0 <= new_idx < len(self._wafers)):
+            return
+        self._wafers[idx], self._wafers[new_idx] = self._wafers[new_idx], self._wafers[idx]
+        self._redraw_slots()
+        self._slot_tree.selection_set(str(new_idx))
+
+    def _clear_slots(self):
+        if self._armed:
+            messagebox.showerror("Automation Armed", "Stop automation before clearing the list.")
+            return
+        if self._wafers and not messagebox.askyesno(
+            "Clear All", f"Remove all {len(self._wafers)} slot(s)?"):
+            return
+        self._wafers = []
+        self._slot_idx = 0
+        self._redraw_slots()
+
+    def _reset_slot(self):
+        if self._armed:
+            messagebox.showerror("Automation Armed", "Stop automation before resetting.")
+            return
+        self._slot_idx = 0
+        self._redraw_slots()
+        self._log_event(1, "", "Reset — next Arm will start tracking from slot #1.")
+
+    # --------------------------------------------------- manual command test
 
     def _manual_wait_ready(self):
         drv = self._drv()
@@ -185,147 +374,135 @@ class CassettePanel(ttk.Frame):
             self._log(f"[CASSETTE] STB={stb}  {desc}")
         threading.Thread(target=_run, daemon=True).start()
 
+    # ------------------------------------------------------------- automation
 
-    def _start_lot(self):
-        if self._running:
+    def _arm(self):
+        if not self._wafers:
+            messagebox.showerror("No Slots", "Add at least one cassette slot "
+                                 "(Lot ID/Wafer ID) first.")
             return
-        lot_id = self._lot_var.get().strip()
-        if not lot_id:
-            messagebox.showerror("Lot ID Required", "Enter a Lot ID before starting.")
+        if self._slot_idx >= len(self._wafers):
+            messagebox.showerror("Nothing Left", "Every slot in the list is already "
+                                 "done — 🔄 Reset to Slot #1 to run it again.")
             return
-        try:
-            wafer_num = int(self._wafer_var.get())
-            if wafer_num <= 0:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Invalid Wafer #",
-                                 "Starting Wafer # must be a positive whole number.")
+        if self._auto_export_var.get() and not self.ui.get_selected_export_format():
+            messagebox.showerror("No Export Format", "Pick an export format above, or "
+                                 "turn off auto-export.")
             return
-
-        sim = self._drv() is None
-        if not messagebox.askyesno(
-            "Start Lot",
-            f"Start cassette-automated testing for Lot '{lot_id}'?\n\n"
-            "This assumes the operator has already loaded the cassette and\n"
-            "pressed NEW CST on the prober's touchscreen (EOI 8.4.1-8.4.10).\n\n"
-            + ("Prober not connected — this will run SIMULATED."
-               if sim else
-               "The GUI locks its controls while waiting for/testing each "
-               "wafer, until the lot completes or Stop is pressed.")
-        ):
+        if getattr(self.ui, "_exec2_on_run_finished", None) not in (None, self._on_wafer_finished):
+            messagebox.showerror("Already Hooked", "Another automation is already watching "
+                                 "for the run to finish.")
             return
 
-        self._results = []
-        self._tree.delete(*self._tree.get_children())
-        self._running = True
-        self._abort = False
+        self._armed = True
+        self.ui._exec2_on_run_finished = self._on_wafer_finished
         self._set_locked(True)
-        self._set_state("WAITING FOR WAFER", "#f59e0b")
-        threading.Thread(target=self._lot_thread, args=(lot_id, wafer_num, sim),
-                         daemon=True).start()
+        self._set_state("ARMED — waiting for the current/next run to finish", "#2563eb")
+        slot = self._wafers[self._slot_idx]
+        self._redraw_slots()
+        self._log_event(
+            self._slot_idx + 1, slot["lot_id"],
+            "Armed — if this wafer's run isn't already going, start it normally "
+            "(▶ Full Die on the Run tab) and this panel will take over from there.")
 
-    def _request_stop(self):
-        self._abort = True
-        self._log("[CASSETTE] Stop requested.")
+    def _disarm(self, reason: str = ""):
+        self._armed = False
+        if getattr(self.ui, "_exec2_on_run_finished", None) is self._on_wafer_finished:
+            self.ui._exec2_on_run_finished = None
+        self._set_locked(False)
+        self._redraw_slots()
+        if reason:
+            self._log_event(self._slot_idx + 1, "", reason)
 
-    def _lot_thread(self, lot_id: str, wafer_num: int, sim: bool):
+    def _on_wafer_finished(self, pass_n: int, fail_n: int, total_n: int, aborted: bool):
+        if not self._armed:
+            return
+        slot = self._wafers[self._slot_idx]
+        lot_id, wafer_id = slot["lot_id"], slot["wafer_id"]
+
+        if aborted:
+            self._log_event(self._slot_idx + 1, lot_id,
+                            "Run was aborted — cassette automation stopped.")
+            self._disarm()
+            self._set_state("STOPPED (run aborted)", "#dc2626")
+            return
+
+        tested = pass_n + fail_n
+        pct = (pass_n / tested * 100) if tested else 0.0
+        self._log_event(self._slot_idx + 1, lot_id,
+                        f"Run finished — {pass_n}/{tested} pass ({pct:.1f}%), "
+                        f"{total_n} die(s) on the wafer map.")
+
+        if self._auto_export_var.get():
+            self._export_current(lot_id, wafer_id)
+
+        threshold = self._yield_threshold()
+        if tested and pct < threshold:
+            self._log_event(self._slot_idx + 1, lot_id,
+                            f"Yield {pct:.1f}% is below the {threshold:g}% threshold — "
+                            f"PAUSING cassette automation (wafer left loaded).")
+            self._disarm()
+            self._set_state(f"PAUSED — yield {pct:.1f}% < {threshold:g}%", "#f97316")
+            return
+
+        self._slot_idx += 1
+        if self._slot_idx >= len(self._wafers):
+            self._log_event(self._slot_idx, lot_id,
+                            "All slots in the list are complete — cassette automation finished.")
+            self._disarm()
+            self._set_state("CASSETTE COMPLETE", "#16a34a")
+            return
+
+        self._set_state("SWAPPING CASSETTE", "#f97316")
+        self._redraw_slots()
+        threading.Thread(target=self._advance_thread, daemon=True).start()
+
+    def _export_current(self, lot_id: str, wafer_id: str):
+        self.ui.lot_id.set(lot_id)
+        self.ui.wafer_id_var.set(wafer_id)
+        try:
+            self.controller.cmd_export_sql()
+        except Exception as e:
+            self._log_event(self._slot_idx + 1, lot_id, f"Auto-export error: {e}")
+
+    def _advance_thread(self):
         drv = self._drv()
         try:
-            while not self._abort:
-                self._log(f"[CASSETTE] Waiting for STB=65 (Wafer #{wafer_num} ready)...")
-                if sim:
-                    time.sleep(0.2)
-                    ready = wafer_num <= 3
-                else:
-                    ready = drv.cassette_wait_for_wafer_ready(timeout_s=60) == 65
-                if not ready:
-                    self._log("[CASSETTE] No STB=65 — treating as idle / lot complete.")
-                    break
-
-                self._log(f"[CASSETTE] << STB=65 — Wafer #{wafer_num} ready, "
-                          "Die #1 in contact.")
-                self._set_state(f"TESTING WAFER #{wafer_num}", "#2563eb")
-                self.after(0, lambda w=wafer_num: self._wafer_count_var.set(f"Wafer: {w}"))
-
-                die_num = 1
-                while not self._abort:
-                    self.after(0, lambda d=die_num: self._die_count_var.set(f"Die: {d}"))
-                    self._log(f"[CASSETTE] Die #{die_num}: running measurements "
-                             "(placeholder)...")
-                    self._record(wafer_num, die_num, "measured (placeholder)")
-
-                    if sim:
-                        time.sleep(0.05)
-                        stb = 67 if die_num >= 5 else 66
-                    else:
-                        self._log("[CASSETTE] >> J  (Next Die)")
-                        stb = drv.cassette_next_die(timeout_s=60)
-
-                    if stb == 66:
-                        self._log(f"[CASSETTE] << STB=66 — Die #{die_num + 1} arrived.")
-                        die_num += 1
-                        continue
-                    if stb == 67:
-                        self._log("[CASSETTE] << STB=67 — end of wafer map.")
-                        self._record(wafer_num, die_num, "end of wafer map (STB=67)")
-                        break
-                    self._log(f"[CASSETTE] Unexpected result ({stb}) waiting for "
-                             "STB=66/67 — stopping this wafer.")
-                    self._record(wafer_num, die_num, f"unexpected STB={stb} — stopped")
-                    break
-
-                if self._abort:
-                    break
-
-                self._set_state("SWAPPING CASSETTE", "#f97316")
+            if drv is None:
+                self._log("[CASSETTE] (simulated — no prober connected) "
+                          ">> U  (Unload / Load Next Wafer)")
+                time.sleep(0.2)
+                next_ready = True
+            else:
                 self._log("[CASSETTE] >> U  (Unload / Load Next Wafer)")
-                if sim:
-                    time.sleep(0.1)
-                    next_ready = wafer_num < 3
-                else:
-                    next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 65
-                if next_ready:
-                    wafer_num += 1
-                    continue
-                self._log("[CASSETTE] No next wafer (cassette empty / idle) — "
-                         "Lot Complete.")
-                break
+                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 65
         except Exception as e:
-            self._log(f"[CASSETTE] ERROR: {e}")
-        finally:
-            self._finish(lot_id)
+            self._log(f"[CASSETTE] Unload/load-next error: {e}")
+            next_ready = False
 
-    def _record(self, wafer_num: int, die_num: int, event: str):
-        row = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-              "wafer": wafer_num, "die": die_num, "event": event}
-        self._results.append(row)
-        def _ui():
-            self._tree.insert("", "end", values=(row["timestamp"], row["wafer"],
-                                                  row["die"], row["event"]))
-            self._tree.see(self._tree.get_children()[-1])
-        self.after(0, _ui)
+        if not next_ready:
+            self.after(0, lambda: self._log_event(
+                self._slot_idx + 1, "", "No next wafer (cassette empty/idle/error) — "
+                "cassette automation stopped."))
+            self.after(0, self._disarm)
+            self.after(0, lambda: self._set_state(
+                "STOPPED (no next wafer)", "#dc2626"))
+            return
 
-    def _finish(self, lot_id: str):
-        self._running = False
-        aborted = self._abort
-        saved = self._maybe_save_csv(lot_id)
-        msg = "ABORTED" if aborted else "LOT COMPLETE"
-        self._log(f"[CASSETTE] {msg}"
-                  + (f" — saved {saved}" if saved else ""))
-        self.after(0, lambda: self._set_state(msg, "#dc2626" if aborted else "#16a34a"))
-        self.after(0, lambda: self._set_locked(False))
+        slot = self._wafers[self._slot_idx]
+        self.after(0, lambda: self.ui.lot_id.set(slot["lot_id"]))
+        self.after(0, lambda: self.ui.wafer_id_var.set(slot["wafer_id"]))
+        self.after(0, lambda: self._log_event(
+            self._slot_idx + 1, slot["lot_id"],
+            "Next wafer ready (STB=65) — auto-starting its run."))
+        self.after(0, self._start_next_run)
 
-    def _maybe_save_csv(self, lot_id: str):
-        path = self._csv_var.get().strip()
-        if not path or not self._results:
-            return None
+    def _start_next_run(self):
+        if not self._armed:
+            return
         try:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                wr = csv.DictWriter(f, fieldnames=["timestamp", "wafer", "die", "event"])
-                wr.writeheader()
-                wr.writerows(self._results)
-            return path
-        except OSError as exc:
-            self._log(f"[CASSETTE] CSV save error: {exc}")
-            return None
+            self.ui._exec2_start_full_die()
+        except Exception as e:
+            self._log_event(self._slot_idx + 1, "", f"Could not auto-start the next run: {e}")
+            self._disarm()
+            self._set_state("STOPPED (auto-start failed)", "#dc2626")

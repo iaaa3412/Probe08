@@ -75,6 +75,10 @@ class NanoZPanel(ttk.Frame):
         self._env_total = 0
         self._pass_count = 0
         self._fail_count = 0
+        # Cassette automation hooks into this - set to a callable
+        # fn(pass_n, fail_n, aborted) to be notified whenever a Recipe Run
+        # finishes, instead of polling self._running.
+        self._on_wafer_finished = None
         self._spl_path: str | None = None
         self._env_path: str | None = None
         self._latest_spl: dict[tuple[str, str], dict] = {}
@@ -150,6 +154,7 @@ class NanoZPanel(ttk.Frame):
         self._build_run_tab(sub_nb)
         self._build_charts_tab(sub_nb)
         self._build_results_tab(sub_nb)
+        self._build_cassette_tab(sub_nb)
         self._build_nanoz_ek_tab(sub_nb)
 
         log_frame = ttk.LabelFrame(outer, text="NanoZ Log")
@@ -1946,6 +1951,335 @@ class NanoZPanel(ttk.Frame):
                     f"{r_avg:.3g} {r_unit}" if r_avg is not None else "—",
                     len(windowed), updated,
                 ))
+
+    # ================================================================
+    # Cassette automation - one physical wafer per cassette slot, each
+    # tagged with its own Lot ID/Wafer ID. Mirrors the Accretech/EG
+    # Cassette tab's design (instrument_panel.py's shared CassettePanel)
+    # but drives Compute Recipe's per-wafer run (_start_recipe_run) instead
+    # of a Full Die walk, and auto-exports through NanoZ's own Results tab
+    # export (Lot ID/Wafer ID/Export Path, _nz_save_results_csv) instead of
+    # the ATA Folder tab's configurable export-format list.
+    # ================================================================
+
+    def _build_cassette_tab(self, nb):
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Cassette")
+        self._cst_wafers: list[dict] = []
+        self._cst_slot_idx = 0
+        self._cst_armed = False
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(3, weight=1)
+
+        bar = ttk.Frame(tab, padding=(6, 4))
+        bar.grid(row=0, column=0, sticky="ew")
+        self._cst_go_btn = ttk.Button(bar, text="▶  Arm Cassette Automation",
+                                      command=self._cst_arm)
+        self._cst_go_btn.pack(side="left", padx=4)
+        self._cst_stop_btn = ttk.Button(bar, text="⏹  Stop Automation", state="disabled",
+                                        command=lambda: self._cst_disarm("Stopped by user."))
+        self._cst_stop_btn.pack(side="left", padx=4)
+        ttk.Button(bar, text="🔄 Reset to Slot #1", command=self._cst_reset_slot).pack(
+            side="left", padx=4)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
+        ttk.Label(bar, text="Pass yield ≥").pack(side="left")
+        self._cst_yield_var = tk.StringVar(value="95")
+        ttk.Entry(bar, textvariable=self._cst_yield_var, width=5).pack(side="left", padx=(2, 0))
+        ttk.Label(bar, text="% to auto-continue, else pause").pack(side="left", padx=(2, 0))
+        self._cst_state_var = tk.StringVar(value="IDLE")
+        self._cst_state_lbl = ttk.Label(bar, textvariable=self._cst_state_var,
+                                        font=("Consolas", 11, "bold"), foreground="#6b7280")
+        self._cst_state_lbl.pack(side="right", padx=8)
+
+        lf = ttk.LabelFrame(
+            tab, text="Cassette Slots — one Lot ID/Wafer ID per physical wafer, in slot order "
+                      "(slot #1 is whatever the operator already manually loaded and pressed "
+                      "▶ Start for)", padding=6)
+        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 2))
+        lf.columnconfigure(0, weight=1)
+        btns = ttk.Frame(lf)
+        btns.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Button(btns, text="＋ Add Slot", command=self._cst_add_slot).pack(side="left", padx=2)
+        ttk.Button(btns, text="✎ Edit", command=self._cst_edit_slot).pack(side="left", padx=2)
+        ttk.Button(btns, text="🗑 Remove", command=self._cst_remove_slot).pack(side="left", padx=2)
+        ttk.Button(btns, text="▲", width=3, command=lambda: self._cst_move_slot(-1)).pack(
+            side="left", padx=(10, 2))
+        ttk.Button(btns, text="▼", width=3, command=lambda: self._cst_move_slot(1)).pack(
+            side="left", padx=2)
+        ttk.Button(btns, text="🗑 Clear All", command=self._cst_clear_slots).pack(
+            side="left", padx=(10, 2))
+        cols = ("slot", "lot", "wafer")
+        self._cst_tree = ttk.Treeview(lf, columns=cols, show="headings", height=5,
+                                      selectmode="browse")
+        heads = [("slot", "Slot #", 60), ("lot", "Lot ID", 160), ("wafer", "Wafer ID", 160)]
+        for cid, text, width in heads:
+            self._cst_tree.heading(cid, text=text)
+            self._cst_tree.column(cid, width=width, anchor="center" if cid == "slot" else "w")
+        self._cst_tree.grid(row=1, column=0, sticky="ew")
+        self._cst_tree.bind("<Double-1>", lambda _e: self._cst_edit_slot())
+
+        ef = ttk.LabelFrame(tab, text="Auto-Export (after every wafer, using the Results tab's "
+                                      "own Export Path — Lot ID/Wafer ID come from the slot)",
+                            padding=6)
+        ef.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 2))
+        self._cst_auto_export_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ef, text="Auto-export after each wafer",
+                       variable=self._cst_auto_export_var).pack(side="left", padx=(0, 16))
+        ttk.Label(ef, text="Export Path:").pack(side="left")
+        ttk.Entry(ef, textvariable=self._nz_export_path_var, width=32).pack(side="left", padx=6)
+        ttk.Button(ef, text="Browse...", command=self._nz_browse_export_path).pack(side="left")
+
+        pf = ttk.LabelFrame(tab, text="Cassette Automation Log", padding=6)
+        pf.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        pf.rowconfigure(0, weight=1)
+        pf.columnconfigure(0, weight=1)
+        cst_cols = ("timestamp", "slot", "lot", "event")
+        self._cst_log_tree = ttk.Treeview(pf, columns=cst_cols, show="headings", height=10,
+                                          selectmode="browse")
+        cst_heads = [("timestamp", "Time", 150), ("slot", "Slot", 50),
+                    ("lot", "Lot ID", 120), ("event", "Event", 400)]
+        for cid, text, width in cst_heads:
+            self._cst_log_tree.heading(cid, text=text)
+            self._cst_log_tree.column(cid, width=width, anchor="center" if cid == "slot" else "w")
+        self._cst_log_tree.grid(row=0, column=0, sticky="nsew")
+        cst_sb = ttk.Scrollbar(pf, orient="vertical", command=self._cst_log_tree.yview)
+        cst_sb.grid(row=0, column=1, sticky="ns")
+        self._cst_log_tree.configure(yscrollcommand=cst_sb.set)
+
+    def _cst_set_state(self, text: str, color: str = "#6b7280"):
+        self._cst_state_var.set(text)
+        self._cst_state_lbl.config(foreground=color)
+
+    def _cst_set_locked(self, locked: bool):
+        self._cst_go_btn.config(state="disabled" if locked else "normal")
+        self._cst_stop_btn.config(state="normal" if locked else "disabled")
+
+    def _cst_log_event(self, slot_num, lot_id: str, event: str):
+        self._log_main(f"[CASSETTE] Slot {slot_num}: {event}" if slot_num
+                       else f"[CASSETTE] {event}")
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        def _ui():
+            self._cst_log_tree.insert("", "end", values=(ts, slot_num, lot_id, event))
+            children = self._cst_log_tree.get_children()
+            if children:
+                self._cst_log_tree.see(children[-1])
+        self.after(0, _ui)
+
+    def _cst_yield_threshold(self) -> float:
+        try:
+            return float(self._cst_yield_var.get())
+        except ValueError:
+            return 95.0
+
+    def _cst_redraw_slots(self):
+        self._cst_tree.delete(*self._cst_tree.get_children())
+        for i, w in enumerate(self._cst_wafers):
+            marker = " (current)" if self._cst_armed and i == self._cst_slot_idx else ""
+            self._cst_tree.insert("", "end", iid=str(i), values=(
+                f"{i + 1}{marker}", w["lot_id"], w["wafer_id"]))
+
+    def _cst_add_slot(self):
+        lot_id = simpledialog.askstring("Add Slot", "Lot ID:", parent=self)
+        if lot_id is None:
+            return
+        lot_id = lot_id.strip()
+        if not lot_id:
+            messagebox.showerror("Lot ID Required", "Lot ID can't be blank.")
+            return
+        wafer_id = simpledialog.askstring("Add Slot", "Wafer ID (optional):", parent=self) or ""
+        self._cst_wafers.append({"lot_id": lot_id, "wafer_id": wafer_id.strip()})
+        self._cst_redraw_slots()
+
+    def _cst_selected_slot_index(self):
+        sel = self._cst_tree.selection()
+        return int(sel[0]) if sel else None
+
+    def _cst_edit_slot(self):
+        idx = self._cst_selected_slot_index()
+        if idx is None:
+            return
+        w = self._cst_wafers[idx]
+        lot_id = simpledialog.askstring("Edit Slot", "Lot ID:", initialvalue=w["lot_id"],
+                                        parent=self)
+        if lot_id is None:
+            return
+        lot_id = lot_id.strip()
+        if not lot_id:
+            messagebox.showerror("Lot ID Required", "Lot ID can't be blank.")
+            return
+        wafer_id = simpledialog.askstring("Edit Slot", "Wafer ID (optional):",
+                                          initialvalue=w["wafer_id"], parent=self)
+        if wafer_id is None:
+            return
+        self._cst_wafers[idx] = {"lot_id": lot_id, "wafer_id": wafer_id.strip()}
+        self._cst_redraw_slots()
+
+    def _cst_remove_slot(self):
+        idx = self._cst_selected_slot_index()
+        if idx is None:
+            return
+        del self._cst_wafers[idx]
+        if self._cst_slot_idx > idx:
+            self._cst_slot_idx -= 1
+        self._cst_redraw_slots()
+
+    def _cst_move_slot(self, direction: int):
+        idx = self._cst_selected_slot_index()
+        if idx is None:
+            return
+        new_idx = idx + direction
+        if not (0 <= new_idx < len(self._cst_wafers)):
+            return
+        self._cst_wafers[idx], self._cst_wafers[new_idx] = (
+            self._cst_wafers[new_idx], self._cst_wafers[idx])
+        self._cst_redraw_slots()
+        self._cst_tree.selection_set(str(new_idx))
+
+    def _cst_clear_slots(self):
+        if self._cst_armed:
+            messagebox.showerror("Automation Armed", "Stop automation before clearing the list.")
+            return
+        if self._cst_wafers and not messagebox.askyesno(
+            "Clear All", f"Remove all {len(self._cst_wafers)} slot(s)?"):
+            return
+        self._cst_wafers = []
+        self._cst_slot_idx = 0
+        self._cst_redraw_slots()
+
+    def _cst_reset_slot(self):
+        if self._cst_armed:
+            messagebox.showerror("Automation Armed", "Stop automation before resetting.")
+            return
+        self._cst_slot_idx = 0
+        self._cst_redraw_slots()
+        self._cst_log_event(1, "", "Reset — next Arm will start tracking from slot #1.")
+
+    def _cst_arm(self):
+        if not self._cst_wafers:
+            messagebox.showerror("No Slots", "Add at least one cassette slot "
+                                 "(Lot ID/Wafer ID) first.")
+            return
+        if self._cst_slot_idx >= len(self._cst_wafers):
+            messagebox.showerror("Nothing Left", "Every slot in the list is already "
+                                 "done — 🔄 Reset to Slot #1 to run it again.")
+            return
+        if self._on_wafer_finished not in (None, self._cst_on_wafer_finished):
+            messagebox.showerror("Already Hooked", "Another automation is already watching "
+                                 "for the run to finish.")
+            return
+        self._cst_armed = True
+        self._on_wafer_finished = self._cst_on_wafer_finished
+        self._cst_set_locked(True)
+        self._cst_set_state("ARMED — waiting for the current/next run to finish", "#2563eb")
+        slot = self._cst_wafers[self._cst_slot_idx]
+        self._cst_redraw_slots()
+        self._cst_log_event(
+            self._cst_slot_idx + 1, slot["lot_id"],
+            "Armed — if this wafer's run isn't already going, start it normally "
+            "(▶ Start on the Run tab) and this panel will take over from there.")
+
+    def _cst_disarm(self, reason: str = ""):
+        self._cst_armed = False
+        if self._on_wafer_finished is self._cst_on_wafer_finished:
+            self._on_wafer_finished = None
+        self._cst_set_locked(False)
+        self._cst_redraw_slots()
+        if reason:
+            self._cst_log_event(self._cst_slot_idx + 1, "", reason)
+
+    def _cst_on_wafer_finished(self, pass_n: int, fail_n: int, aborted: bool):
+        if not self._cst_armed:
+            return
+        slot = self._cst_wafers[self._cst_slot_idx]
+        lot_id, wafer_id = slot["lot_id"], slot["wafer_id"]
+
+        if aborted:
+            self._cst_log_event(self._cst_slot_idx + 1, lot_id,
+                                "Run was stopped/aborted — cassette automation stopped.")
+            self._cst_disarm()
+            self._cst_set_state("STOPPED (run aborted)", "#dc2626")
+            return
+
+        tested = pass_n + fail_n
+        pct = (pass_n / tested * 100) if tested else 0.0
+        self._cst_log_event(self._cst_slot_idx + 1, lot_id,
+                            f"Run finished — {pass_n}/{tested} pass ({pct:.1f}%).")
+
+        if self._cst_auto_export_var.get():
+            self._cst_export_current(lot_id, wafer_id)
+
+        threshold = self._cst_yield_threshold()
+        if tested and pct < threshold:
+            self._cst_log_event(self._cst_slot_idx + 1, lot_id,
+                                f"Yield {pct:.1f}% is below the {threshold:g}% threshold — "
+                                f"PAUSING cassette automation (wafer left loaded).")
+            self._cst_disarm()
+            self._cst_set_state(f"PAUSED — yield {pct:.1f}% < {threshold:g}%", "#f97316")
+            return
+
+        self._cst_slot_idx += 1
+        if self._cst_slot_idx >= len(self._cst_wafers):
+            self._cst_log_event(self._cst_slot_idx, lot_id,
+                                "All slots in the list are complete — cassette automation "
+                                "finished.")
+            self._cst_disarm()
+            self._cst_set_state("CASSETTE COMPLETE", "#16a34a")
+            return
+
+        self._cst_set_state("SWAPPING CASSETTE", "#f97316")
+        self._cst_redraw_slots()
+        threading.Thread(target=self._cst_advance_thread, daemon=True).start()
+
+    def _cst_export_current(self, lot_id: str, wafer_id: str):
+        self._nz_lot_id_var.set(lot_id)
+        self._nz_wafer_id_var.set(wafer_id)
+        try:
+            self._nz_save_results_csv()
+        except Exception as e:
+            self._cst_log_event(self._cst_slot_idx + 1, lot_id, f"Auto-export error: {e}")
+
+    def _cst_advance_thread(self):
+        prober = self.controller.drivers.get("prober")
+        drv = prober if (prober and prober.inst) else None
+        try:
+            if drv is None:
+                self.after(0, lambda: self._log_main(
+                    "[CASSETTE] (simulated — no prober connected) "
+                    ">> U  (Unload / Load Next Wafer)"))
+                time.sleep(0.2)
+                next_ready = True
+            else:
+                self.after(0, lambda: self._log_main("[CASSETTE] >> U  (Unload / Load Next Wafer)"))
+                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 65
+        except Exception as e:
+            self.after(0, lambda e=e: self._log_main(f"[CASSETTE] Unload/load-next error: {e}"))
+            next_ready = False
+
+        if not next_ready:
+            self.after(0, lambda: self._cst_log_event(
+                self._cst_slot_idx + 1, "", "No next wafer (cassette empty/idle/error) — "
+                "cassette automation stopped."))
+            self.after(0, self._cst_disarm)
+            self.after(0, lambda: self._cst_set_state("STOPPED (no next wafer)", "#dc2626"))
+            return
+
+        slot = self._cst_wafers[self._cst_slot_idx]
+        self.after(0, lambda: self._nz_lot_id_var.set(slot["lot_id"]))
+        self.after(0, lambda: self._nz_wafer_id_var.set(slot["wafer_id"]))
+        self.after(0, lambda: self._cst_log_event(
+            self._cst_slot_idx + 1, slot["lot_id"],
+            "Next wafer ready (STB=65) — auto-starting its recipe run."))
+        self.after(0, self._cst_start_next_run)
+
+    def _cst_start_next_run(self):
+        if not self._cst_armed:
+            return
+        try:
+            self._start_recipe_run()
+        except Exception as e:
+            self._cst_log_event(self._cst_slot_idx + 1, "", f"Could not auto-start the next run: {e}")
+            self._cst_disarm()
+            self._cst_set_state("STOPPED (auto-start failed)", "#dc2626")
 
     def _build_nanoz_ek_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -3973,12 +4307,16 @@ class NanoZPanel(ttk.Frame):
         self._lot_thread.start()
 
     def _recipe_thread_body(self, prober, cycle: int, duration_s: float):
+        # idx/shots defined before the try so the finally block can always
+        # tell "ran every shot" (idx >= len(shots)) from "stopped early"
+        # (Stop pressed, STB=81/90, or an exception before/mid-loop) - used
+        # by cassette automation to distinguish a real finish from an abort.
+        shots = self._shots
+        idx = 0
         try:
             self.after(0, lambda: self._log(">> D  (Separate)"))
             prober.z_down()
 
-            shots = self._shots
-            idx = 0
             while self._running and idx < len(shots):
                 shot = shots[idx]
                 die_col = shot.get("die_column")
@@ -4046,6 +4384,11 @@ class NanoZPanel(ttk.Frame):
             self._running = False
             self._run_mode = None
             self.after(0, lambda: self._finish_lot("RECIPE RUN COMPLETE"))
+            if self._on_wafer_finished:
+                aborted = idx < len(shots)
+                p, f = self._pass_count, self._fail_count
+                hook = self._on_wafer_finished
+                self.after(0, lambda: hook(p, f, aborted))
 
     _WAFER_READY_TIMEOUT_S = 60.0
     _NEXT_DIE_TIMEOUT_S = 60.0
