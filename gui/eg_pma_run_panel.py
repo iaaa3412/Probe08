@@ -30,7 +30,8 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from electroglas_pma import parse_pma_file, load_touchdowns, align_site_info
+from electroglas_pma import (parse_pma_file, load_touchdowns, align_site_info,
+                             format_quad)
 
 # Where LaMP kept its recipes, then the repo's own copies.
 _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
@@ -746,7 +747,7 @@ class EgPmaRunPanel(ttk.Frame):
         qx, qy = self._quad(t)
         dies = [d for d in t["devices"] if d.strip().upper() != "NA"]
         na = len(t["devices"]) - len(dies)
-        detail = "   ".join(f"{i + 1}:{d}" for i, d in enumerate(t["devices"]))
+        detail = format_quad(t["device_id"])
         self._sel_var.set(
             f"#{t['seq']}  quad ({qx},{qy})   {len(dies)} die"
             f"{'' if len(dies) == 1 else 's'}"

@@ -106,6 +106,79 @@ def split_quad_devices(device_id: str) -> list:
     return parts if len(parts) > 1 else [str(device_id).strip()]
 
 
+# Where each slash-separated die physically sits inside a 2x2 touchdown.
+# Confirmed on a real LaMP align site, 54-00/44-70/54-01/44-71:
+#
+#           <- x ->                 index 0  54-00   top left
+#     +---------+---------+         index 1  44-70   bottom left
+#   ^ |  54-00  |  54-01  |         index 2  54-01   top right
+#   y |  [0] TL |  [2] TR |         index 3  44-71   bottom right
+#     +---------+---------+
+#     |  44-70  |  44-71  |    i.e. COLUMN-major: down the left column
+#     |  [1] BL |  [3] BR |    first, then down the right. NOT reading
+#     +---------+---------+    order, which would give 54-00/54-01/...
+#
+# +y is up and +x is right (verified on the stage: MD +1 x moves right,
+# +1 y moves up), so TL/TR are the HIGH-y pair.
+QUAD_ORDER = ("TL", "BL", "TR", "BR")
+QUAD_LABELS = {"TL": "top left", "TR": "top right",
+               "BL": "bottom left", "BR": "bottom right"}
+# (col, row) with col 0 = left, row 0 = top.
+QUAD_GRID = {"TL": (0, 0), "TR": (1, 0), "BL": (0, 1), "BR": (1, 1)}
+
+
+def quad_positions(device_id: str) -> list:
+    """Pair each die of a touchdown with its physical corner.
+
+    Returns [{"index", "pos", "label", "device", "col", "row", "present"}, ...]
+    in the recipe's own slash order. Any touchdown that is not four-up is
+    returned with pos=None - a single-die recipe has no corners to assign,
+    and guessing would be worse than saying nothing.
+    """
+    dies = split_quad_devices(device_id)
+    out = []
+    for i, die in enumerate(dies):
+        pos = QUAD_ORDER[i] if len(dies) == len(QUAD_ORDER) else None
+        col, row = QUAD_GRID[pos] if pos else (None, None)
+        out.append({
+            "index": i, "pos": pos, "label": QUAD_LABELS.get(pos, ""),
+            "device": die, "col": col, "row": row,
+            "present": die.strip().upper() not in ("NA", "TARGET", ""),
+        })
+    return out
+
+
+def quad_die_offsets(die_size_x: float, die_size_y: float) -> dict:
+    """Micron offset from the CENTRE of a 2x2 touchdown to each die centre.
+
+    DieSizeX/Y in a .PMA is the quad PITCH - twice the physical die - so the
+    four die centres sit a quarter-pitch out from the middle in each axis.
+
+    CAVEAT: this assumes the touchdown coordinate is the quad centre. That is
+    the natural reading of a 4-up card but is NOT yet confirmed against the
+    stage; if the coordinate turns out to be a corner, every offset here
+    shifts by a constant and only this function needs changing.
+    """
+    qx, qy = float(die_size_x) / 4.0, float(die_size_y) / 4.0
+    return {"TL": (-qx, +qy), "TR": (+qx, +qy),
+            "BL": (-qx, -qy), "BR": (+qx, -qy)}
+
+
+def format_quad(device_id: str) -> str:
+    """One-line 'TL:54-00  TR:54-01  BL:44-70  BR:44-71' for the UI.
+
+    Reordered into reading order so it matches what you see down a scope,
+    rather than the recipe's column-major storage order.
+    """
+    entries = quad_positions(device_id)
+    if len(entries) == 1:
+        return entries[0]["device"]
+    if not entries or entries[0]["pos"] is None:
+        return "   ".join(f"{e['index'] + 1}:{e['device']}" for e in entries)
+    by_pos = {e["pos"]: e["device"] for e in entries}
+    return "   ".join(f"{p}:{by_pos[p]}" for p in ("TL", "TR", "BL", "BR"))
+
+
 def load_touchdowns(pma_path: str, fields: dict) -> list:
     """Read a .PMA plus its move/device sibling files into touchdown records.
 

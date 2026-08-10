@@ -174,11 +174,11 @@ class PmaProcessPanel(ttk.Frame):
             self._align_source_lbl.config(foreground="#6b7280")
             return
 
-        info = egpma.align_site_info(
-            self._fields, self._touchdowns, self._workbook_align_die())
+        align_die = self._workbook_align_die()
+        info = egpma.align_site_info(self._fields, self._touchdowns, align_die)
 
         self._align_die_var.set(
-            " / ".join(info["die_ids"]) if info["die_ids"]
+            egpma.format_quad(align_die) if info["die_ids"]
             else "— (no recipe generator .xls loaded)")
 
         td = info["touchdown"]
@@ -192,7 +192,8 @@ class PmaProcessPanel(ttk.Frame):
                         f"{td['y'] / float(self._fields['DieSizeY']):.0f})")
             except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 pass
-            self._align_td_var.set(f"#{td['seq']}  {td['device_id']}{quad}")
+            self._align_td_var.set(
+                f"#{td['seq']}  {egpma.format_quad(td['device_id'])}{quad}")
         elif info["quad"] is not None:
             self._align_td_var.set(
                 f"quad ({info['quad'][0]:.0f},{info['quad'][1]:.0f}) "
