@@ -1289,18 +1289,22 @@ class Electroglas2001X(GPIBInstrument):
     # 17605 um is also exactly this product's SHOT pitch (5 physical dies of
     # 3521 um), which is why it looked like a tidy one-shot step.
     #
-    # Two units fit that within the resolution of reading die IDs:
-    #   0.1 mil = 2.54 um   -> 7042 counts = 17886.7 um, 282 um past the die
-    #   2.5 um exactly      -> 7042 counts = 17605.0 um, dead on
-    # 0.1 mil is far the more likely: this prober's Z axis is already in
-    # 0.1-mil units (see the Z limits and SP8Z/SP7Z above), so one unit for
-    # the whole machine is the natural design.
+    # CONFIRMED 2.5 um, NOT 0.1 mil. 0.1 mil (2.54) was the tidier guess -
+    # this prober's Z axis is in 0.1-mil units - but it is wrong. The two
+    # differ by 1.6%, invisible in one step, so it was settled by multiplying
+    # the error up: 17 consecutive quad steps along row y=49260 of
+    # HPLaMP_WHOLE_WAFER, sent as 2772 counts each (7042/2.54). Predicted
+    # end-of-row drift was 19 um if the unit were 2.54 and 1904 um if it were
+    # 2.50; the operator measured about half a die (1760 um). Solving for the
+    # unit from that drift gives 2.503.
     #
-    # UNCONFIRMED - the two differ by only 1.6%, which a single step cannot
-    # separate. Multiply the error up before believing either: a ten-quad move
-    # is 70420 um, so command round(70420 / MM_UNIT_UM) and see whether it
-    # lands dead on that touchdown or ~1.1 mm (a third of a die) short.
-    MM_UNIT_UM = 2.54
+    # WHY it is 2.5 is NOT established, and that matters: if the factor comes
+    # from a prober configuration setting rather than being intrinsic (this
+    # machine has scale-factor parameters - cf. SP12S "3 steps per mil" for Z,
+    # and SX4C/SX5C wafer expansion), then changing prober setup silently
+    # changes it, and micron moves would go wrong with nothing to flag it.
+    # Die moves (MD) have no such dependency and are the safer default.
+    MM_UNIT_UM = 2.50
 
     # Same guard as move_relative_die, in microns. These commands had NO bounds
     # check at all, which is how a value meant as microns went out as counts

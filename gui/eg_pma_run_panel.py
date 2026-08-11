@@ -113,6 +113,9 @@ class EgPmaRunPanel(ttk.Frame):
         self._selected = None
         self._seq_at_rc = {}        # (row, col) -> touchdown seq, for map clicks
         self._shot_window_items = []   # canvas ids for the 2x2 "you are here" box
+        # Microns asked for but not yet delivered, because MM only moves in
+        # whole 2.5 um counts. Carried into the next move - see _move_um.
+        self._um_residual = [0.0, 0.0]
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(5, weight=1)
@@ -525,6 +528,7 @@ class EgPmaRunPanel(ttk.Frame):
 
         self._index = idx
         self._anchored = True
+        self._um_residual = [0.0, 0.0]
         t = self._touchdowns[idx]
         qx, qy = self._quad(t)
         self._anchor_state_var.set(f"anchored at #{t['seq']} quad ({qx},{qy}) — "
@@ -1017,10 +1021,13 @@ class EgPmaRunPanel(ttk.Frame):
         """Relative MICRON move (MM), the way the original LaMP exe worked.
 
         The recipe's own coordinates are microns, so the delta between two
-        touchdowns is the move - no die-size arithmetic anywhere, and nothing
-        depends on what the prober has configured as its die size. That is the
-        whole point: MD's failure mode is a silent pitch mismatch that lands
-        every touchdown between sites, and this cannot have it.
+        touchdowns is the move, with no die-size arithmetic.
+
+        That does NOT make it assumption-free. MM's count is 2.5 um, measured
+        rather than documented, and why it is 2.5 is unknown - if it comes
+        from a prober configuration setting then this mode swaps a dependency
+        on the die size for a dependency on that, which is no better and is
+        harder to notice. MD stays the default until the 2.5 is explained.
 
         Signs are deliberately the SAME as the MD path (delta straight from
         the recipe, no flip), because MD deltas are themselves recipe deltas
@@ -1033,8 +1040,15 @@ class EgPmaRunPanel(ttk.Frame):
         divergence; the driver's own MC/MF acknowledgement check is what
         catches a refused move.
         """
-        dx_um = int(round(nxt["x"] - cur["x"]))
-        dy_um = int(round(nxt["y"] - cur["y"]))
+        # Carry the sub-count remainder. A quad step is 7042 um and a count is
+        # 2.5 um, so 2816.8 counts - and rounding the SAME way every step makes
+        # the error accumulate linearly, ~317 um over a 634-touchdown recipe.
+        # Adding back what was not delivered last time keeps the total error
+        # bounded by half a count instead of growing without limit.
+        want_x = (nxt["x"] - cur["x"]) + self._um_residual[0]
+        want_y = (nxt["y"] - cur["y"]) + self._um_residual[1]
+        dx_um = int(round(want_x))
+        dy_um = int(round(want_y))
         before = self._read_position(drv)
         self._ui(lambda: self._status_var.set(
             f"#{nxt['seq']}  MM {dx_um:+d},{dy_um:+d} um  {nxt['device_id']}"))
@@ -1059,6 +1073,11 @@ class EgPmaRunPanel(ttk.Frame):
                 note = (f"   [?P moved ({got[0]:+d},{got[1]:+d}) dies, recipe step "
                         f"is ({dxq:+d},{dyq:+d}) — the prober's die size differs "
                         f"from the recipe's, which does not affect a micron move]")
+
+        # What the prober was actually able to deliver, to the nearest count.
+        unit = float(getattr(drv, "MM_UNIT_UM", 1.0)) or 1.0
+        self._um_residual = [want_x - round(dx_um / unit) * unit,
+                             want_y - round(dy_um / unit) * unit]
 
         self._index = target
         self._ui(lambda: (self._mark_current(), self._refresh_position()))
