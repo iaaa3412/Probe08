@@ -2511,7 +2511,9 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[RUN] Cannot start — no wafer map loaded "
                             "(load an ATA folder with source set to 'Electroglas').")
             ok = False
-        required_instruments = ("prober", "smu", "dmm", "switch", "wave_gen")
+        required_instruments = (("prober", "smu", "dmm", "switch", "wave_gen")
+                                if self._system == "accretech"
+                                else ("prober", "smu", "relay1"))
         missing_instruments = [k for k in required_instruments if k not in self.controller.drivers]
         if missing_instruments:
             self._exec2_log("[RUN] Cannot start — instrument(s) not connected: "
@@ -3124,6 +3126,30 @@ class MainLayout(ttk.Frame):
         self._exec2_load_recipe()
         self._exec2_log(f"[RUN] Auto-loaded default recipe '{name}' (probe card '{card}').")
 
+    def _exec2_apply_recipe_sites(self, name: str):
+        """Select the recipe's touchdowns on the map, if it defines any.
+
+        This is what makes the touchdown list the recipe's property rather
+        than the ATA folder's: loading a recipe re-picks its own dies, so
+        switching recipes can no longer inherit the previous one's selection.
+        A recipe with no list leaves the map alone - the run then walks
+        everything, which is the old behaviour.
+        """
+        get_sites = getattr(self.recipe_panel, "get_sites", None)
+        sites = list(get_sites()) if get_sites else []
+        if not sites:
+            return
+        known = self._exec2_wafer_map.dies
+        on_map = [rc for rc in sites if rc in known]
+        self._exec2_wafer_map.set_picked(on_map)
+        self._exec2_on_sites_changed(on_map)
+        missing = len(sites) - len(on_map)
+        self._exec2_log(
+            f"[RUN] Recipe '{name}' defines {len(sites)} touchdown(s) — "
+            f"selected {len(on_map)} on the map."
+            + (f"  ⚠ {missing} are not on this wafer map; check that the loaded "
+               "map matches the recipe." if missing else ""))
+
     def _exec2_load_recipe(self):
         name = self._exec2_recipe_var.get()
         if not name:
@@ -3140,6 +3166,7 @@ class MainLayout(ttk.Frame):
             self._exec2_steps_tree.insert("", "end", values=(
                 i, s.get("name", ""), s.get("type", ""), s.get("conn", "")))
         self._exec2_steps_var.set(f"{name} — {len(self._exec2_steps)} step(s)")
+        self._exec2_apply_recipe_sites(name)
 
         self._exec2_log(f"[RUN] Loaded recipe '{name}' with "
                         f"{len(self._exec2_steps)} step(s):")
@@ -3237,10 +3264,25 @@ class MainLayout(ttk.Frame):
                     time.sleep(avg_delay_ms / 1000.0)
         return sum(readings) / len(readings)
 
+    def _exec2_switch_driver(self):
+        """The relay card a recipe's conn channels refer to on this system.
+
+        Accretech has one matrix registered as "switch". Electroglas registers
+        its three cards as relay1/relay2/relay3 and has no "switch" at all, so
+        looking that key up returned None and every measurement step silently
+        took the sim path - random.gauss() numbers recorded as if they were
+        readings. relay1 is the wired card on both Electroglas benches
+        (probe02's E1345A, probe03's E1364A), per hp_switchbox.BENCH_WIRING.
+        """
+        drivers = self.controller.drivers
+        if self._system == "accretech":
+            return drivers.get("switch")
+        return drivers.get("relay1") or drivers.get("switch")
+
     def _exec2_run_steps_once(self) -> bool:
         import random
         import re
-        switch = self.controller.drivers.get("switch")
+        switch = self._exec2_switch_driver()
         smu    = self.controller.drivers.get("smu")
         dmm    = self.controller.drivers.get("dmm")
         wgen   = self.controller.drivers.get("wave_gen")
@@ -3314,7 +3356,12 @@ class MainLayout(ttk.Frame):
                                     + (f"  ({note})" if note else ""))
                     if not sim:
                         for ch in chans:
-                            switch.open_crosspoint(ch[:2], ch[2:])
+                            # A 707B addresses a crosspoint (row, column); a
+                            # switchbox card addresses a plain channel number.
+                            if hasattr(switch, "open_crosspoint"):
+                                switch.open_crosspoint(ch[:2], ch[2:])
+                            else:
+                                switch.open_channel(ch)
                     self._exec2_mark_open(chans)
                     continue
 

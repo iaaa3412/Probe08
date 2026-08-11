@@ -378,6 +378,14 @@ def repeat_steps_per_die(steps: list, dies_per_shot: int) -> list:
     return out
 
 
+def site_key(site: dict) -> tuple:
+    """(row, col) of a touchdown, or None when it carries only a die ID."""
+    try:
+        return int(site["row"]), int(site["col"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def recipes_to_rows(recipes: dict) -> list:
     rows = []
     for name, rec in recipes.items():
@@ -387,26 +395,50 @@ def recipes_to_rows(recipes: dict) -> list:
             for k in _STEP_FIELDS:
                 row[k] = step.get(k, "")
             rows.append(row)
+        # SITE rows ride in the same CSV as the steps, reusing existing
+        # columns (name = die ID, hi/lo = row/col) so a probe card written by
+        # this version still loads in one that predates touchdown lists - an
+        # unknown "kind" is skipped, and the recipe just comes back without
+        # its sites rather than failing to parse.
+        for i, site in enumerate(rec.get("sites", []), 1):
+            rows.append({"kind": "SITE", "recipe": name, "seq": str(i),
+                         "name": site.get("die_id", ""),
+                         "hi": str(site.get("row", "")),
+                         "lo": str(site.get("col", ""))})
     return rows
 
 
 def rows_to_recipes(rows: list) -> dict:
     recipes: dict = {}
     step_rows: dict = {}
+    site_rows: dict = {}
     for row in rows:
         kind = (row.get("kind") or "").strip().upper()
-        if kind not in ("RECIPE", "STEP"):
+        if kind not in ("RECIPE", "STEP", "SITE"):
             continue
         name = (row.get("recipe") or "").strip()
         if not name:
             continue
-        recipes.setdefault(name, {"steps": []})
+        recipes.setdefault(name, {"steps": [], "sites": []})
         if kind == "RECIPE":
             continue
         try:
             seq = int(row.get("seq") or 0)
         except ValueError:
             seq = 0
+        if kind == "SITE":
+            def _int(v):
+                try:
+                    return int(str(v).strip())
+                except (TypeError, ValueError):
+                    return None
+            site = {"die_id": (row.get("name") or "").strip(),
+                    "row": _int(row.get("hi")), "col": _int(row.get("lo"))}
+            # A site with no row/col cannot be walked to, so drop it rather
+            # than let the run silently skip it later.
+            if site["row"] is not None and site["col"] is not None:
+                site_rows.setdefault(name, []).append((seq, site))
+            continue
         step = {k: row.get(k, "") for k in _STEP_FIELDS}
         if step.get("type") not in _STEP_TYPES:
             step["type"] = "resistance"
@@ -414,6 +446,11 @@ def rows_to_recipes(rows: list) -> dict:
     for name, items in step_rows.items():
         items.sort(key=lambda t: t[0])
         recipes[name]["steps"] = [_normalize_step(s) for _seq, s in items]
+    for name, items in site_rows.items():
+        items.sort(key=lambda t: t[0])
+        recipes[name]["sites"] = [s for _seq, s in items]
+    for rec in recipes.values():
+        rec.setdefault("sites", [])
     return recipes
 
 
@@ -441,11 +478,12 @@ class RecipePanel(ttk.Frame):
         self._instrument_choices = self._bench_instruments()
         self._conn_report = "— no steps —"
 
-        self._recipes: dict = {"(unsaved)": {"steps": []}}
+        self._recipes: dict = {"(unsaved)": {"steps": [], "sites": []}}
         self._current: str = "(unsaved)"
         self._active_card: str = ""
 
         self._steps: list[dict] = self._recipes[self._current]["steps"]
+        self._sites: list[dict] = self._recipes[self._current]["sites"]
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -590,10 +628,152 @@ class RecipePanel(ttk.Frame):
     def _build_body(self):
         body = ttk.Frame(self)
         body.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
-        body.rowconfigure(0, weight=1)
+        body.rowconfigure(0, weight=3)
+        body.rowconfigure(1, weight=2)
         body.columnconfigure(0, weight=1)
         self._build_steps(body)
+        self._build_sites(body)
 
+
+    # -- touchdown list -----------------------------------------------------
+    #
+    # Which dies a recipe probes used to live outside the recipe: Accretech
+    # kept one ata_wafer_map_selected.csv per ATA FOLDER, so every recipe in
+    # that folder shared a single selection and switching recipe silently kept
+    # the previous one's sites. Here the list belongs to the recipe, travels
+    # with the probe card, and carries the die ID beside the row/col so a
+    # saved list can be checked against the map it was taken from.
+
+    def _build_sites(self, parent):
+        sf = ttk.LabelFrame(parent, text="Touchdowns (which dies this recipe probes)",
+                            padding=6)
+        sf.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        sf.rowconfigure(2, weight=1)
+        sf.columnconfigure(0, weight=1)
+
+        self._sites_var = tk.StringVar(value="No touchdowns — the run walks every die")
+        ttk.Label(sf, textvariable=self._sites_var, font=("Arial", 8),
+                  foreground="#555", justify="left", wraplength=760).grid(
+                  row=0, column=0, columnspan=2, sticky="w")
+
+        bar = ttk.Frame(sf)
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+        ttk.Button(bar, text="⬅ Take from map selection",
+                   command=self._sites_from_map).pack(side="left")
+        ttk.Button(bar, text="➡ Push to map",
+                   command=self._sites_to_map).pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="✕ Remove selected",
+                   command=self._site_remove).pack(side="left", padx=(16, 0))
+        ttk.Button(bar, text="🗑 Clear all",
+                   command=self._sites_clear).pack(side="left", padx=(6, 0))
+
+        cols = ("n", "die_id", "row", "col")
+        self._site_tree = ttk.Treeview(sf, columns=cols, show="headings", height=6)
+        for cid, text, width, anchor in (("n", "#", 40, "center"),
+                                         ("die_id", "Die ID", 260, "w"),
+                                         ("row", "Row", 60, "center"),
+                                         ("col", "Col", 60, "center")):
+            self._site_tree.heading(cid, text=text)
+            self._site_tree.column(cid, width=width, anchor=anchor,
+                                   stretch=(cid == "die_id"))
+        self._site_tree.grid(row=2, column=0, sticky="nsew")
+        sb = ttk.Scrollbar(sf, orient="vertical", command=self._site_tree.yview)
+        sb.grid(row=2, column=1, sticky="ns")
+        self._site_tree.configure(yscrollcommand=sb.set)
+
+    def _run_panel(self):
+        """The Run tab that owns the wafer map, or None if not built yet."""
+        return getattr(self.controller, "ui", None)
+
+    def _refresh_sites(self):
+        self._site_tree.delete(*self._site_tree.get_children())
+        for i, s in enumerate(self._sites, 1):
+            self._site_tree.insert("", "end", values=(
+                i, s.get("die_id", "") or "—", s.get("row", ""), s.get("col", "")))
+        n = len(self._sites)
+        if not n:
+            self._sites_var.set(
+                "No touchdowns — the run walks every die on the wafer map. "
+                "Select dies on the Run tab's map, then ⬅ Take from map selection.")
+        else:
+            named = sum(1 for s in self._sites if s.get("die_id"))
+            self._sites_var.set(
+                f"{n} touchdown{'' if n == 1 else 's'} — the run probes only these, "
+                f"in this order. {named} carry a die ID.")
+
+    def _sites_from_map(self):
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        picks = list(wm.get_picked())
+        if not picks:
+            messagebox.showinfo(
+                "Touchdowns",
+                "No dies are selected on the Run tab's map.\n\n"
+                "Click dies there (or use the Run tab's selection tools), then "
+                "come back and press this again.")
+            return
+        overlay = getattr(ui, "_exec2_overlay_die_ids", None) or {}
+        sites = []
+        for rc in picks:
+            rc = (int(rc[0]), int(rc[1]))
+            die_id = overlay.get(rc) or wm.die_ids.get(rc, "")
+            sites.append({"die_id": die_id, "row": rc[0], "col": rc[1]})
+        self._sites[:] = sites
+        self._store_form()
+        self._refresh_sites()
+        self.controller.log(f"[RECIPE] '{self._current}': touchdown list set to "
+                            f"{len(sites)} die(s) from the map selection.")
+
+    def _sites_to_map(self):
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        if not self._sites:
+            messagebox.showinfo("Touchdowns", "This recipe has no touchdowns yet.")
+            return
+        picks = [(s["row"], s["col"]) for s in self._sites]
+        missing = [rc for rc in picks if rc not in wm.dies]
+        wm.set_picked(picks)
+        if hasattr(ui, "_exec2_on_sites_changed"):
+            ui._exec2_on_sites_changed(picks)
+        note = (f" ({len(missing)} not on the loaded map — wrong wafer map for "
+                "this recipe?)" if missing else "")
+        self.controller.log(f"[RECIPE] '{self._current}': highlighted "
+                            f"{len(picks)} touchdown(s) on the Run map.{note}")
+
+    def _site_remove(self):
+        sel = self._site_tree.selection()
+        if not sel:
+            return
+        for idx in sorted((self._site_tree.index(i) for i in sel), reverse=True):
+            if 0 <= idx < len(self._sites):
+                del self._sites[idx]
+        self._store_form()
+        self._refresh_sites()
+
+    def _sites_clear(self):
+        if not self._sites:
+            return
+        if not messagebox.askokcancel(
+                "Clear touchdowns",
+                f"Remove all {len(self._sites)} touchdown(s) from "
+                f"'{self._current}'?\n\nThe run will then walk every die."):
+            return
+        self._sites.clear()
+        self._store_form()
+        self._refresh_sites()
+
+    def get_sites(self) -> list:
+        """The active recipe's touchdown list, as [(row, col), ...]."""
+        return [(s["row"], s["col"]) for s in self._sites]
+
+    def get_site_records(self) -> list:
+        return list(self._sites)
 
     def _build_steps(self, parent):
         sf = ttk.LabelFrame(parent, text="Measurement Steps (per shot)",
@@ -1508,13 +1688,16 @@ class RecipePanel(ttk.Frame):
         if rec is None:
             return
         rec["steps"] = self._steps
+        rec["sites"] = self._sites
 
     def _load_form(self, name: str):
         rec = self._recipes[name]
         self._current = name
         self._picker_var.set(name)
         self._steps = rec.setdefault("steps", [])
+        self._sites = rec.setdefault("sites", [])
         self._refresh_steps()
+        self._refresh_sites()
         self._update_validity_label()
 
     def _switch_recipe(self):
@@ -1592,11 +1775,13 @@ class RecipePanel(ttk.Frame):
             return
         self._store_form()
         cur = self._recipes[self._current]
-        rec = {"steps": [dict(s) for s in cur["steps"]]}
+        rec = {"steps": [dict(s) for s in cur["steps"]],
+               "sites": [dict(s) for s in cur.get("sites", [])]}
         self._recipes[name] = rec
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
+                and not self._recipes["(unsaved)"]["steps"]
+                and not self._recipes["(unsaved)"].get("sites")):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
@@ -1704,10 +1889,11 @@ class RecipePanel(ttk.Frame):
             name = f"{orig_name} ({n})"
             n += 1
         self._store_form()
-        self._recipes[name] = {"steps": steps}
+        self._recipes[name] = {"steps": steps, "sites": []}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
+                and not self._recipes["(unsaved)"]["steps"]
+                and not self._recipes["(unsaved)"].get("sites")):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
@@ -1797,10 +1983,11 @@ class RecipePanel(ttk.Frame):
             name = f"{orig_name} ({n})"
             n += 1
         self._store_form()
-        self._recipes[name] = {"steps": steps}
+        self._recipes[name] = {"steps": steps, "sites": []}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
+                and not self._recipes["(unsaved)"]["steps"]
+                and not self._recipes["(unsaved)"].get("sites")):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
@@ -1860,11 +2047,12 @@ class RecipePanel(ttk.Frame):
     def load_recipes(self, card: str, recipes: dict):
         self._active_card = card
         if recipes:
-            self._recipes = {name: {"steps": [dict(s) for s in rec.get("steps", [])]}
+            self._recipes = {name: {"steps": [dict(s) for s in rec.get("steps", [])],
+                                    "sites": [dict(s) for s in rec.get("sites", [])]}
                               for name, rec in recipes.items()}
             self._current = next(iter(self._recipes))
         else:
-            self._recipes = {"(unsaved)": {"steps": []}}
+            self._recipes = {"(unsaved)": {"steps": [], "sites": []}}
             self._current = "(unsaved)"
         self.validate_all_recipes()
         self._load_form(self._current)
