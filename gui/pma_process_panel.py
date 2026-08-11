@@ -639,6 +639,16 @@ class PmaProcessPanel(ttk.Frame):
             return 0
         touchdowns = getattr(run, "_touchdowns", None) or []
         cells = getattr(run, "_cells", None) or {}
+        # The row/col index is derived from the recipe alone, not from the
+        # loaded map, so it can always be rebuilt. Do that rather than attach
+        # an empty list if the Run tab has not built it yet - silently saving
+        # zero touchdowns looks identical to a recipe that probes everything.
+        if touchdowns and not cells and hasattr(run, "_build_rc_index"):
+            try:
+                run._build_rc_index()
+                cells = getattr(run, "_cells", None) or {}
+            except Exception as exc:
+                self._log(f"[PMA] LOAD ALL: could not index the touchdowns: {exc}")
         sites = []
         for t in touchdowns:
             for rc in cells.get(t["seq"], []):

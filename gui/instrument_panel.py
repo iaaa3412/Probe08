@@ -2231,14 +2231,16 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech":
             ttk.Button(map_bar, text="Overlay…",
                        command=self._exec2_open_overlay_dialog).pack(side="left")
-            ttk.Button(map_bar, text="💾 Save Selected Map",
-                       command=self._exec2_save_selected_map).pack(side="left", padx=(6, 0))
-            ttk.Button(map_bar, text="📥 Load Selected Map",
-                       command=lambda: self._exec2_load_selected_map(
-                           quiet_if_missing=False)).pack(side="left", padx=(6, 0))
-            self._exec2_select_all_btn = ttk.Button(
-                map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
-            self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
+        # Both systems: the selection is the loaded recipe's touchdown list, so
+        # saving and reloading it belongs wherever dies are picked.
+        ttk.Button(map_bar, text="💾 Save Selected Map",
+                   command=self._exec2_save_selected_map).pack(side="left", padx=(6, 0))
+        ttk.Button(map_bar, text="📥 Load Selected Map",
+                   command=lambda: self._exec2_load_selected_map(
+                       quiet_if_missing=False)).pack(side="left", padx=(6, 0))
+        self._exec2_select_all_btn = ttk.Button(
+            map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
+        self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
 
         self._exec2_wafer_map = WaferMapPanel(map_lf)
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
@@ -2686,20 +2688,67 @@ class MainLayout(ttk.Frame):
         return (os.path.join(self._ata_folder, self._SELECTED_MAP_FILENAME)
                 if self._ata_folder else None)
 
+    def _exec2_loaded_recipe_name(self) -> str:
+        """The recipe the Run tab currently has loaded, if any."""
+        if not getattr(self, "_exec2_steps", None):
+            return ""
+        try:
+            return self.recipe_panel.get_active_recipe() or ""
+        except Exception:
+            return ""
+
     def _exec2_save_selected_map(self):
+        """Save the picked dies as the loaded recipe's touchdown list.
+
+        The selection is a property of the recipe, not of the ATA folder: one
+        folder holds many recipes and they probe different dies. This and the
+        Recipe tab's "Take from map selection" are the same operation from two
+        places - whichever the operator reaches for, the list ends up in the
+        same place and the other view shows it.
+
+        With no recipe loaded there is nothing to attach it to, so it still
+        falls back to the folder-level CSV rather than silently discarding the
+        selection.
+        """
         from tkinter import messagebox
         import csv
-        if not self._ata_folder:
-            messagebox.showerror(
-                "No ATA Folder",
-                "No ATA folder is loaded — use 📁 Load ATA Folder on the top "
-                "toolbar first.")
-            return
         picks = self._exec2_wafer_map.get_picked()
         if not picks:
             messagebox.showinfo("No Dies Selected",
                                 "Click dies on the map to select them first.")
             return
+
+        recipe = self._exec2_loaded_recipe_name()
+        set_sites = getattr(self.recipe_panel, "set_sites", None)
+        if recipe and set_sites:
+            sites = []
+            for rc in picks:
+                rc = (int(rc[0]), int(rc[1]))
+                sites.append({
+                    "die_id": (self._exec2_overlay_die_ids.get(rc)
+                               or self._exec2_wafer_map.die_ids.get(rc, "")),
+                    "row": rc[0], "col": rc[1]})
+            if set_sites(recipe, sites):
+                named = sum(1 for s in sites if s["die_id"])
+                self._exec2_log(
+                    f"[RUN] Saved {len(sites)} selected die(s) as the touchdown "
+                    f"list of recipe '{recipe}' ({named} with a die ID) — "
+                    "saved to the probe card, and shown on the Recipe tab.")
+                return
+            self._exec2_log(f"[RUN] Could not attach the selection to recipe "
+                            f"'{recipe}' — falling back to the folder file.")
+
+        if not self._ata_folder:
+            messagebox.showerror(
+                "Nowhere to save",
+                "No recipe is loaded and no ATA folder is open.\n\n"
+                "Load a recipe (⟳ Load Recipe) to save the selection as its "
+                "touchdown list, or open an ATA folder to save a folder-level "
+                "selected map.")
+            return
+        self._exec2_log("[RUN] No recipe loaded — saving a folder-level selected "
+                        "map instead. Load a recipe first to attach the "
+                        "selection to it.")
         path = self._exec2_selected_map_path()
         with open(path, "w", newline="", encoding="utf-8") as f:
             wr = csv.writer(f)
@@ -2712,6 +2761,33 @@ class MainLayout(ttk.Frame):
 
     def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
         import csv
+        # The recipe's own list wins whenever it has one - that is where Save
+        # Selected now puts it. The folder file is only what older folders
+        # have, and reading it in preference would quietly resurrect another
+        # recipe's dies.
+        recipe = self._exec2_loaded_recipe_name()
+        if recipe:
+            get_records = getattr(self.recipe_panel, "get_site_records", None)
+            sites = list(get_records()) if get_records else []
+            if sites:
+                picks = [(s["row"], s["col"]) for s in sites]
+                ids = {(s["row"], s["col"]): s["die_id"]
+                       for s in sites if s.get("die_id")}
+                self._exec2_wafer_map.set_picked(picks)
+                self._exec2_on_sites_changed(picks)
+                if ids:
+                    self._exec2_clear_overlay()
+                    self._exec2_overlay_die_ids = ids
+                    self._exec2_redraw_overlay_on_run_map()
+                    self._exec2_redraw_overlay_on_results_map()
+                self._exec2_log(f"[RUN] Loaded {len(picks)} touchdown(s) from "
+                                f"recipe '{recipe}'.")
+                return picks
+            if not quiet_if_missing:
+                self._exec2_log(
+                    f"[RUN] Recipe '{recipe}' has no touchdown list yet — click "
+                    "dies on the map, then 💾 Save Selected Map.")
+                return []
         path = self._exec2_selected_map_path()
         if not path or not os.path.exists(path):
             if not quiet_if_missing:

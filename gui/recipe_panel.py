@@ -721,8 +721,16 @@ class RecipePanel(ttk.Frame):
         self._sites[:] = sites
         self._store_form()
         self._refresh_sites()
-        self.controller.log(f"[RECIPE] '{self._current}': touchdown list set to "
-                            f"{len(sites)} die(s) from the map selection.")
+        # Save immediately, the same as the Run tab's 💾 Save Selected Map -
+        # the two are one operation reached from two places, so they must not
+        # differ in whether the result survives a restart.
+        card = self._get_active_card()
+        saved = bool(card) and bool(self._save_recipes(card, self._recipes))
+        self.controller.log(
+            f"[RECIPE] '{self._current}': touchdown list set to {len(sites)} "
+            f"die(s) from the map selection"
+            + (f" and saved to probe card '{card}'." if saved
+               else " — NOT saved (no probe card); press 💾 Save."))
 
     def _sites_to_map(self):
         ui = self._run_panel()
