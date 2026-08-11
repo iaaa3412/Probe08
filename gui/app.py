@@ -55,6 +55,9 @@ class AtomicaDashboard(tk.Tk):
             "electroglas": {"drivers": {}, "results": [], "ui": None,
                             "total": 0, "tested": 0, "passed": 0, "failed": 0},
         }
+        # False until both startup sweeps have run, so a bench selected during
+        # construction does not connect twice.
+        self._startup_done = False
         self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
@@ -83,7 +86,12 @@ class AtomicaDashboard(tk.Tk):
         # loaded; before init_hardware, so the first connect sweep runs
         # against the bench that was actually chosen.
         self._apply_default_prober()
-        self.after(500, self.init_hardware)
+        # Both systems sweep at startup. SEQUENCED, not concurrent: they share
+        # one GPIB board, and two sweeps opening resources at the same time is
+        # exactly how the VI_ERROR_SYSTEM_ERROR races happen - so the
+        # Electroglas sweep is kicked off by the Accretech one finishing
+        # rather than by a guessed delay.
+        self.after(500, self._startup_sweep)
         self.update_statistics_visuals()
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
@@ -464,6 +472,20 @@ class AtomicaDashboard(tk.Tk):
                 ui.status_labels[name].config(text=f"❌ {name}", foreground="red") 
                 self.log(f"[ERROR] {name}: {e}") 
 
+    def _startup_sweep(self):
+        """Connect both systems, one after the other, then let later bench
+        switches reconnect on their own."""
+        try:
+            self.init_hardware()
+        finally:
+            self.after(200, self._startup_sweep_eg)
+
+    def _startup_sweep_eg(self):
+        try:
+            self.init_hardware_eg()
+        finally:
+            self._startup_done = True
+
     def init_hardware(self):
         self.log("[SYSTEM] Pinging Accretech hardware connections...")
         connections = [
@@ -545,7 +567,10 @@ class AtomicaDashboard(tk.Tk):
                 refresh()
             except Exception as e:
                 self.log(f"[SYSTEM] Recipe tab instrument refresh failed: {e}")
-        self.init_hardware_eg()
+        # During startup the scheduled sweep has not run yet and will pick this
+        # bench up, so connecting here as well would just sweep the bus twice.
+        if self._startup_done:
+            self.init_hardware_eg()
  
     def check_system_ready(self):
         missing = []
