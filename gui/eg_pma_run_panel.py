@@ -217,9 +217,17 @@ class EgPmaRunPanel(ttk.Frame):
         ttk.Radiobutton(mode, text="die steps (MD)", value=MOTION_DIE,
                         variable=self._motion_var,
                         command=self._on_motion_mode).pack(side="left", padx=(6, 0))
-        ttk.Radiobutton(mode, text="microns (MM) — as the LaMP exe did",
-                        value=MOTION_UM, variable=self._motion_var,
-                        command=self._on_motion_mode).pack(side="left", padx=(8, 0))
+        # Disabled, not removed: the mode is right in principle - the original
+        # exe did drive microns - but no micron command on this prober has been
+        # identified. MM, which this used to send, is the DIE move; sending it
+        # a micron count moved a whole shot instead of one quad. Leaving the
+        # control visible-but-dead records that this was tried and why it is off.
+        self._um_radio = ttk.Radiobutton(
+            mode, text="microns — DISABLED, no verified command",
+            value=MOTION_UM, variable=self._motion_var,
+            command=self._on_motion_mode)
+        self._um_radio.pack(side="left", padx=(8, 0))
+        self._um_radio.state(["disabled"])
         self._motion_note = ttk.Label(lf, font=("Arial", 8), foreground="#888",
                                       justify="left", wraplength=430, text="")
         self._motion_note.pack(anchor="w")
@@ -1064,14 +1072,15 @@ class EgPmaRunPanel(ttk.Frame):
     def _on_motion_mode(self):
         um = self._motion_var.get() == MOTION_UM
         self._motion_note.config(text=(
-            "Relative micron moves straight from the recipe coordinates. The "
-            "prober's configured die size is not used, so it cannot cause a "
-            "pitch mismatch — but ?P still counts in the prober's own die "
-            "size, so it can only cross-check the move when the two agree."
+            "Micron mode is off: no micron command on this prober has been "
+            "identified. MM — which this sent — is the DIE move in the only "
+            "verified command list, and a bench test confirmed it: a 7042 um "
+            "step moved a whole shot, not one quad."
             if um else
-            "Relative die-index moves. The PROBER applies the pitch, so its "
-            "SET PRMTR die size must match this recipe or every touchdown "
-            "lands between sites. ?P fully verifies each move."))
+            "Relative die-index moves (MD). The PROBER applies the pitch, so "
+            "its SET PRMTR die size must match this recipe or every touchdown "
+            "lands between sites. ?P fully verifies each move, and the step is "
+            "bounds-checked."))
 
     # -- selection: pick a die on the map or in the table --------------------
 

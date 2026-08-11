@@ -1276,20 +1276,44 @@ class Electroglas2001X(GPIBInstrument):
     def clear_die_envelope(self):
         self._die_envelope = None
 
+    # NONE OF THESE THREE IS A MICRON MOVE. The "_m" naming is a leftover from
+    # when this file was guesswork, and it is actively misleading - see the
+    # module header: only the IC-CAP list is verified, and it says
+    #
+    #     MM      Move Chuck        -> reply "MC" or "MF"
+    #
+    # i.e. MM is the DIE move, not a micron one. _wait_until_not_moving's own
+    # note records MM being driven with "X1 Y0" - one DIE - during earlier
+    # bench work, which agrees.
+    #
+    # DISPROVED ON THE BENCH 2026-08-11. A PMA run sent MMX7042Y0 intending
+    # 7042 um (one 7042 um quad step) from quad 65-23/65-13/65-24/65-14. If MM
+    # took microns the chuck would have advanced one quad, to
+    # 66-20/66-10/66-21/66-11. It landed on 66-23/66-13/66-24/66-14 - a whole
+    # SHOT across, same position within the shot - while ?P moved only +3 dies.
+    # That is consistent with MM being read as "move 7042 DIES" and the prober
+    # limiting the move, and flatly inconsistent with microns.
+    #
+    # So they raise rather than move. move_relative_die (MD) is the verified
+    # path and is bounds-checked; these were not, which is the worse half of
+    # the bug - a mistyped micron value here bypassed every guard.
+
+    _NOT_MICRONS = (
+        "is NOT a micron move. The only verified command list for this prober "
+        "(Keysight IC-CAP) documents MM as 'Move Chuck' in DIE units, and a "
+        "bench test on 2026-08-11 confirmed MMX7042Y0 moved a whole shot "
+        "rather than 7042 um. Use move_relative_die() for die steps. If a real "
+        "micron move exists on this machine it has not been identified yet - "
+        "do not guess it here again.")
+
     def move_absolute_m(self, x, y):
-        status = self._motion(f"MAX{int(x)}Y{int(y)}")
-        self.z_is_up = False
-        return status
+        raise NotImplementedError(f"move_absolute_m (MA) {self._NOT_MICRONS}")
 
     def move_relative_m(self, dx, dy):
-        status = self._motion(f"MMX{int(dx)}Y{int(dy)}")
-        self.z_is_up = False
-        return status
+        raise NotImplementedError(f"move_relative_m (MM) {self._NOT_MICRONS}")
 
     def move_micro(self, dx, dy):
-        status = self._motion(f"FMX{int(dx)}Y{int(dy)}")
-        self.z_is_up = False
-        return status
+        raise NotImplementedError(f"move_micro (FM) {self._NOT_MICRONS}")
 
     def move_xy_relative(self, dx_index: int, dy_index: int):
         self._not_implemented("move_xy_relative")
