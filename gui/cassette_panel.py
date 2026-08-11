@@ -12,14 +12,15 @@ class CassettePanel(ttk.Frame):
     """Drives a real cassette load end-to-end: one physical wafer per
     cassette slot, each tagged with its own Lot ID/Wafer ID. The operator
     loads the cassette, presses NEW CST on the prober, loads/starts the
-    FIRST wafer normally (ATA folder + ▶ Full Die), then presses ▶ Arm here
-    - from then on this panel watches for that run to finish, auto-exports
-    it (reusing the ATA Folder tab's own Export Directory/Format), checks
-    yield against the threshold (pausing if it's too low instead of
-    silently continuing to burn wafers on a bad recipe/setup), and if it's
-    fine sends U (unload/load next wafer) and auto-starts the next slot's
-    run - repeating until the list is exhausted or the cassette reports no
-    next wafer."""
+    FIRST wafer normally (ATA folder + ▶ Full Die, or ▶ Test Selected),
+    then presses ▶ Arm here - from then on this panel watches for that run
+    to finish, auto-exports it (reusing the ATA Folder tab's own Export
+    Directory/Format), checks yield against the threshold (pausing if
+    it's too low instead of silently continuing to burn wafers on a bad
+    recipe/setup), and if it's fine sends U (unload/load next wafer) and
+    auto-starts the next slot's run in that SAME mode the first wafer
+    used (see _run_mode) - repeating until the list is exhausted or the
+    cassette reports no next wafer."""
 
     def __init__(self, parent, controller, ui):
         super().__init__(parent)
@@ -28,6 +29,11 @@ class CassettePanel(ttk.Frame):
         self._wafers: list[dict] = []  # [{"lot_id": str, "wafer_id": str}, ...] in slot order
         self._slot_idx = 0
         self._armed = False
+        # "full" or "test" - which run mode to repeat on every later slot,
+        # set from the first wafer's actual run (see _on_wafer_finished).
+        # Defaults to "full" so arming before that first run has even
+        # finished once still falls back to the old Full Die behavior.
+        self._run_mode = "full"
 
         self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
@@ -403,7 +409,9 @@ class CassettePanel(ttk.Frame):
         self._log_event(
             self._slot_idx + 1, slot["lot_id"],
             "Armed — if this wafer's run isn't already going, start it normally "
-            "(▶ Full Die on the Run tab) and this panel will take over from there.")
+            "(▶ Full Die or ▶ Test Selected on the Run tab) and this panel will "
+            "take over from there, repeating whichever one you used for every "
+            "later slot.")
 
     def _disarm(self, reason: str = ""):
         self._armed = False
@@ -414,9 +422,18 @@ class CassettePanel(ttk.Frame):
         if reason:
             self._log_event(self._slot_idx + 1, "", reason)
 
-    def _on_wafer_finished(self, pass_n: int, fail_n: int, total_n: int, aborted: bool):
+    def _on_wafer_finished(self, pass_n: int, fail_n: int, total_n: int, aborted: bool,
+                           run_mode: str = "full"):
         if not self._armed:
             return
+        # Whatever mode the FIRST wafer's run was actually started in
+        # (Full Die from the Run tab, or Test Selected) - every later slot
+        # repeats that exact same mode, not always Full Die. run_mode is
+        # None on an aborted run (nothing finished to read a mode from);
+        # keep whatever was last recorded rather than overwrite it with
+        # nothing.
+        if run_mode:
+            self._run_mode = run_mode
         slot = self._wafers[self._slot_idx]
         lot_id, wafer_id = slot["lot_id"], slot["wafer_id"]
 
@@ -500,8 +517,14 @@ class CassettePanel(ttk.Frame):
     def _start_next_run(self):
         if not self._armed:
             return
+        # Repeat whatever mode the first wafer was actually started in -
+        # Test Selected reuses the wafer map's current picks (untouched
+        # across slots, since the same ATA folder/recipe stays loaded for
+        # the whole cassette), so each wafer gets the same subset of dies.
+        starter = (self.ui._exec2_start_test_die if self._run_mode == "test"
+                  else self.ui._exec2_start_full_die)
         try:
-            self.ui._exec2_start_full_die()
+            starter()
         except Exception as e:
             self._log_event(self._slot_idx + 1, "", f"Could not auto-start the next run: {e}")
             self._disarm()

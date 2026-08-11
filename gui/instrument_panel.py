@@ -2255,6 +2255,7 @@ class MainLayout(ttk.Frame):
             # blocked on a hardware call — it's no longer "the" run, so don't
             # stomp on whatever state that newer run/abort has already set.
             return
+        finished_mode = self._exec2_run_mode
         self._exec2_running  = False
         self._exec2_run_mode = None
         self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
@@ -2270,7 +2271,7 @@ class MainLayout(ttk.Frame):
                           self._exec2_total_dies)
             aborted = self._exec2_aborted
             hook = self._exec2_on_run_finished
-            self.after(0, lambda: hook(p, f, total, aborted))
+            self.after(0, lambda: hook(p, f, total, aborted, finished_mode))
 
     def _exec2_ensure_separated(self, prober, stb: int, sim: bool):
         if sim or stb != 67:
