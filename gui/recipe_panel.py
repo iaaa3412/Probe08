@@ -583,14 +583,11 @@ class RecipePanel(ttk.Frame):
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
 
-        if self._system != "accretech":
-            self._btn_import_legacy = ttk.Button(bar, text="📥  Import Legacy (.pma)…",
-                                                 command=self._import_legacy)
-            self._btn_import_legacy.pack(side="left", padx=2, pady=4)
-            self._btn_import_workbook = ttk.Button(
-                bar, text="📥  Import Legacy Workbook (.xls)…",
-                command=self._import_legacy_workbook)
-            self._btn_import_workbook.pack(side="left", padx=2, pady=4)
+        # The Import Legacy buttons are gone: the PMA Process tab's LOAD ALL
+        # is the one way in, and it drives the same import_legacy_from_path /
+        # import_legacy_workbook_from_path underneath. Two entry points meant a
+        # recipe could be imported here from one PMA while the run adopted
+        # another, with nothing to flag the mismatch.
         self._btn_save = ttk.Button(bar, text="💾  Save", command=self._save)
         self._btn_save.pack(side="left", padx=2, pady=4)
 
@@ -767,6 +764,32 @@ class RecipePanel(ttk.Frame):
         self._sites.clear()
         self._store_form()
         self._refresh_sites()
+
+    def set_sites(self, recipe: str, sites: list) -> bool:
+        """Replace a recipe's touchdown list. Used by the PMA tab's LOAD ALL.
+
+        Saves to the probe card straight away: the list arrives as part of a
+        chain the operator did not step through, so leaving it unsaved would
+        mean a restart silently drops it.
+        """
+        rec = self._recipes.get(recipe)
+        if rec is None:
+            return False
+        clean = []
+        for s in sites:
+            try:
+                clean.append({"die_id": str(s.get("die_id", "") or ""),
+                              "row": int(s["row"]), "col": int(s["col"])})
+            except (KeyError, TypeError, ValueError):
+                continue
+        rec["sites"] = clean
+        if recipe == self._current:
+            self._sites = rec["sites"]
+            self._refresh_sites()
+        card = self._get_active_card()
+        if card:
+            self._save_recipes(card, self._recipes)
+        return True
 
     def get_sites(self) -> list:
         """The active recipe's touchdown list, as [(row, col), ...]."""
@@ -1478,8 +1501,6 @@ class RecipePanel(ttk.Frame):
 
     def _lockable_buttons(self) -> tuple:
         names = ["_btn_new", "_btn_rename", "_btn_delete"]
-        if self._system != "accretech":
-            names += ["_btn_import_legacy", "_btn_import_workbook"]
         names += ["_btn_save", "_btn_add_step", "_btn_update_step",
                  "_btn_remove_step", "_btn_move_up", "_btn_move_down",
                  "_btn_recompute"]

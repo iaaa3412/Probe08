@@ -47,11 +47,17 @@ class PmaProcessPanel(ttk.Frame):
     def _build_toolbar(self):
         bar = ttk.Frame(self)
         bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        ttk.Button(bar, text="📥  Load PMA File…", command=self._load_pma).pack(side="left")
-        ttk.Button(bar, text="📥  Open Recipe Generator (.xls)…",
-                  command=self._open_recipe_generator).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="🧪  Create Recipe from PMA",
-                  command=self._create_recipe_from_pma).pack(side="left", padx=(6, 0))
+        # One button does the whole hand-off. It used to take three, spread
+        # over two tabs: Create Recipe from PMA here, then From PMA Process on
+        # the Run tab, with the touchdown list a separate manual step after
+        # that. Any of them could be skipped or run in the wrong order, and
+        # nothing downstream noticed.
+        self._load_all_btn = ttk.Button(bar, text="⚙  LOAD ALL",
+                                        command=self.load_all)
+        self._load_all_btn.pack(side="left")
+        ttk.Label(bar, text="build the recipe, the touchdown list and the run "
+                            "from the selected PMA + Recipe Generator",
+                  foreground="#6b7280", font=("Arial", 8)).pack(side="left", padx=(8, 0))
         self._path_lbl = ttk.Label(bar, text="No PMA file loaded", foreground="gray")
         self._path_lbl.pack(side="left", padx=10)
 
@@ -65,7 +71,10 @@ class PmaProcessPanel(ttk.Frame):
             bar, textvariable=self._pma_picker_var, state="readonly", width=28)
         self._pma_picker.pack(side="left", padx=(4, 2))
         self._pma_picker.bind("<<ComboboxSelected>>", self._on_pma_picked)
-        ttk.Button(bar, text="⭐ Set Default", command=self._set_pma_default).pack(
+        # Each browse button sits with the dropdown it feeds: it adds a file to
+        # that dropdown's list, which was not obvious with both stranded on a
+        # separate toolbar.
+        ttk.Button(bar, text="📥 Load…", command=self._load_pma).pack(
             side="left", padx=(0, 2))
         ttk.Button(bar, text="🗑", width=3, command=self._delete_pma).pack(
             side="left", padx=(0, 12))
@@ -75,9 +84,17 @@ class PmaProcessPanel(ttk.Frame):
             bar, textvariable=self._xls_picker_var, state="readonly", width=28)
         self._xls_picker.pack(side="left", padx=(4, 2))
         self._xls_picker.bind("<<ComboboxSelected>>", self._on_xls_picked)
-        ttk.Button(bar, text="⭐ Set Default", command=self._set_xls_default).pack(
+        ttk.Button(bar, text="📥 Open…", command=self._open_recipe_generator).pack(
             side="left", padx=(0, 2))
-        ttk.Button(bar, text="🗑", width=3, command=self._delete_xls).pack(side="left")
+        ttk.Button(bar, text="🗑", width=3, command=self._delete_xls).pack(
+            side="left", padx=(0, 12))
+
+        # One default, not two. The PMA and the workbook describe the same
+        # wafer and are only correct together - defaulting them separately let
+        # a folder come up with a PMA from one product and a workbook from
+        # another, which reads as a working setup until the die IDs disagree.
+        ttk.Button(bar, text="⭐ Set Both as Default",
+                   command=self._set_defaults).pack(side="left")
 
         self._defaults_lbl = ttk.Label(bar, text="", foreground="#6b7280")
         self._defaults_lbl.pack(side="left", padx=(12, 0))
@@ -323,29 +340,26 @@ class PmaProcessPanel(ttk.Frame):
             parts.append(f"Recipe Gen default: {defaults['xls']}")
         self._defaults_lbl.config(text="   |   ".join(parts))
 
-    def _set_pma_default(self):
-        name = self._pma_picker_var.get()
-        if not name:
-            self._log("[PMA] Pick a PMA file first to set it as the default.")
+    def _set_defaults(self):
+        """Default the PMA and the workbook together, as one pairing."""
+        pma, xls = self._pma_picker_var.get(), self._xls_picker_var.get()
+        if not pma and not xls:
+            self._log("[PMA] Pick a PMA file and a recipe generator file first.")
+            return
+        if not (pma and xls) and not messagebox.askokcancel(
+                "Set default",
+                f"Only the {'PMA' if pma else 'recipe generator'} file is "
+                "selected.\n\nThese two describe the same wafer and are meant "
+                "to be defaulted as a pair. Set the default with the other "
+                "half empty?"):
             return
         defaults = self._load_defaults()
-        defaults["pma"] = name
+        defaults["pma"], defaults["xls"] = pma, xls
         self._save_defaults(defaults)
         self._update_defaults_label()
-        self._log(f"[PMA] '{name}' set as the default PMA file — it will "
-                  "auto-load whenever this ATA folder is opened.")
-
-    def _set_xls_default(self):
-        name = self._xls_picker_var.get()
-        if not name:
-            self._log("[PMA] Pick a recipe generator file first to set it as the default.")
-            return
-        defaults = self._load_defaults()
-        defaults["xls"] = name
-        self._save_defaults(defaults)
-        self._update_defaults_label()
-        self._log(f"[PMA] '{name}' set as the default recipe generator file — it "
-                  "will auto-load whenever this ATA folder is opened.")
+        self._log(f"[PMA] Default set to PMA '{pma or '—'}' + recipe generator "
+                  f"'{xls or '—'}' — both auto-load whenever this ATA folder "
+                  "is opened.")
 
     def scan_ata_folder(self):
         self._refresh_pickers()
@@ -562,16 +576,80 @@ class PmaProcessPanel(ttk.Frame):
         pma_wafer.load_workbook_path(path)
         self.refresh_align_site()
 
-    def _create_recipe_from_pma(self):
+    def load_all(self):
+        """PMA + workbook -> recipe, touchdown list, and a ready Run tab.
+
+        Deliberately one action. These four steps only make sense performed
+        together and in this order, and when they were separate buttons on two
+        tabs the failure mode was silent: a recipe built from one PMA, a run
+        adopted from another, and a touchdown list from whatever was selected
+        on the map at the time. Ordering matters - the touchdown list is read
+        from the touchdowns the Run tab adopts, so the recipe has to exist and
+        the run has to be adopted before the list can be attached to it.
+        """
         if not self._pma_path:
-            self._log("[PMA] Load a .PMA file first.")
+            self._log("[PMA] LOAD ALL: no PMA file loaded — pick one from the "
+                      "PMA dropdown (or 📥 Load…) first.")
             return
+        self._log(f"[PMA] LOAD ALL — {os.path.basename(self._pma_path)}")
+
         recipe_panel = getattr(self._main_layout, "recipe_panel", None)
         if recipe_panel is None or not hasattr(recipe_panel, "import_legacy_from_path"):
-            self._log("[PMA] Recipe tab is not available.")
+            self._log("[PMA] LOAD ALL: the Recipe tab is not available.")
             return
-        if recipe_panel.import_legacy_from_path(self._pma_path):
-            self.recipe_name_var.set(recipe_panel.get_active_recipe())
+        if not recipe_panel.import_legacy_from_path(self._pma_path):
+            self._log("[PMA] LOAD ALL: stopped — the recipe could not be built "
+                      "from this PMA.")
+            return
+        recipe = recipe_panel.get_active_recipe()
+        self.recipe_name_var.set(recipe)
+        self._log(f"[PMA] LOAD ALL: recipe '{recipe}' created.")
+
+        run = getattr(self._main_layout, "eg_pma_run", None)
+        if run is None or not hasattr(run, "adopt_from_process"):
+            self._log("[PMA] LOAD ALL: the Run tab is not available — recipe "
+                      "built, but nothing to run it with.")
+            return
+        if getattr(run, "_anchored", False):
+            self._log("[PMA] LOAD ALL: the Run tab is anchored to a die, so it "
+                      "was left alone — re-adopting would lose where the chuck "
+                      "is. Finish or reset the run, then LOAD ALL again.")
+            return
+        try:
+            run.adopt_from_process(quiet=True)
+        except Exception as exc:
+            self._log(f"[PMA] LOAD ALL: the Run tab could not adopt the recipe: {exc}")
+            return
+
+        n = self._push_touchdowns_to_recipe(run, recipe_panel, recipe)
+        self._log(f"[PMA] LOAD ALL: done — recipe '{recipe}', {n} touchdown(s), "
+                  "Run tab ready.")
+
+    def _push_touchdowns_to_recipe(self, run, recipe_panel, recipe: str) -> int:
+        """Attach the PMA's touchdowns, in recipe order, to the loaded recipe.
+
+        Order is the PMA's own, not the map's - the .PMA lists touchdowns in
+        the sequence the prober walks them, and that sequence is part of the
+        recipe. Row/col come from the same index the Run tab paints with, so
+        the list addresses exactly the squares the run will colour.
+        """
+        set_sites = getattr(recipe_panel, "set_sites", None)
+        if set_sites is None:
+            self._log("[PMA] LOAD ALL: this Recipe tab has no touchdown list.")
+            return 0
+        touchdowns = getattr(run, "_touchdowns", None) or []
+        cells = getattr(run, "_cells", None) or {}
+        sites = []
+        for t in touchdowns:
+            for rc in cells.get(t["seq"], []):
+                sites.append({"die_id": t.get("device_id", ""),
+                              "row": rc[0], "col": rc[1]})
+        if not sites:
+            self._log("[PMA] LOAD ALL: the recipe has no touchdowns to attach "
+                      "(is the Run tab's wafer map synced?).")
+            return 0
+        set_sites(recipe, sites)
+        return len(sites)
 
     def _push_to_run_tab(self):
         """Hand the loaded recipe to the Run tab, so it no longer needs its own
@@ -579,15 +657,15 @@ class PmaProcessPanel(ttk.Frame):
         picks it up with no clicks.
 
         NOT while a run is anchored: re-adopting resets the anchor, and losing
-        where the chuck is mid-wafer is far worse than having to press
-        '↙ From PMA Process' by hand. The button is still there for that.
+        where the chuck is mid-wafer is far worse than picking the file again.
+        Run LOAD ALL once the run is finished or reset.
         """
         run = getattr(self._main_layout, "eg_pma_run", None)
         if run is None or not hasattr(run, "adopt_from_process"):
             return
         if getattr(run, "_anchored", False):
             self._log("[PMA] Run tab left alone — it is anchored to a die. "
-                      "Use '↙ From PMA Process' there to re-adopt.")
+                      "Finish or reset the run, then press LOAD ALL.")
             return
         try:
             run.adopt_from_process(quiet=True)

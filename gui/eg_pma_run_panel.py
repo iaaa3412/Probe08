@@ -155,13 +155,12 @@ class EgPmaRunPanel(ttk.Frame):
         self._recipe_var = tk.StringVar(value="(none loaded)")
         ttk.Label(row, textvariable=self._recipe_var, foreground="#0077cc",
                   font=("Consolas", 9)).grid(row=0, column=1, sticky="w", padx=6)
-        # No "Load .PMA" here on purpose: the PMA Process tab is the one that
-        # parses recipes and owns the source folder, and two tabs disagreeing
-        # about which recipe is loaded is worse than a missing shortcut. This
-        # button just re-pulls whatever that tab has; it also runs by itself
-        # at startup - see adopt_from_process().
-        ttk.Button(row, text="↙ From PMA Process", command=self._use_loaded_pma).grid(
-            row=0, column=2, sticky="e", padx=(0, 4))
+        # Nothing here loads a recipe. The PMA Process tab parses recipes and
+        # owns the source folder, and its LOAD ALL is the single entry point -
+        # it builds the recipe, adopts it here, and attaches the touchdown
+        # list in one go. A second way in from this side let the Run tab and
+        # the Recipe tab end up on different PMAs with nothing to say so.
+        # adopt_from_process() still runs by itself at startup.
 
     def _build_info(self):
         lf = ttk.LabelFrame(self, text="Recipe", padding=6)
