@@ -47,7 +47,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from electroglas_pma import (parse_pma_file, load_touchdowns, align_site_info,
-                             format_quad, expand_touchdowns_to_dies, die_grid_index)
+                             format_quad, expand_touchdowns_to_dies, die_grid_index,
+                             measurement_plan)
 
 # Where LaMP kept its recipes, then the repo's own copies.
 _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
@@ -334,10 +335,15 @@ class EgPmaRunPanel(ttk.Frame):
         ]
         if align:
             lines.append(f"align site             quad ({align[0]:.0f},{align[1]:.0f})")
-        volts = f.get("Voltage")
-        if volts:
-            lines.append(f"test                   {volts} V   range {f.get('MeterRange')}   "
-                         f"compliance {f.get('MeterCurrentLimit')}   NPLC {f.get('NPLC')}")
+        n_minor = int(f.get("CountMovesMinor") or 1)
+        lines.append(
+            f"structure              {f.get('CountMovesMajor', '?')} major"
+            + (f" x {n_minor} minor sub-sites per touchdown" if n_minor > 1
+               else " moves, ONE die per touchdown (no minor moves)"))
+        plan = measurement_plan(f)
+        lines.append(f"measurement            {plan['summary']}")
+        if plan["wires"]:
+            lines.append(f"probe pins needed      {plan['wires']}")
         self._info_var.set("\n".join(lines))
 
     def _align_info(self):

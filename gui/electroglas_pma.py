@@ -15,7 +15,27 @@ ELECTRICAL_FIELDS = (
     "MeterDelay", "Averages", "NPLC", "MeterCurrentLimit", "MeterRange",
 )
 
-ALL_FIELDS = WAFER_FIELDS + ELECTRICAL_FIELDS
+# A SECOND, SEPARATE measurement style, used by the recipes that drive an
+# external DMM instead of the SMU. "ExternalDMM2Function" is not a made-up
+# name - its values are the HP 3458A's own function commands (OHM = 2-wire
+# ohms, OHMF = 4-wire), and ExternalDMM2Range values seen in real recipes
+# (1000, 1000000) are exact members of the 3458A's ohms range list. So this
+# group means: put the 3458A in this function on this range and read it.
+#
+# The two styles are mutually exclusive in every recipe seen so far - a file
+# has ELECTRICAL_FIELDS (SMU, sourced volts, measured current) or
+# EXTERNAL_DMM_FIELDS (3458A, resistance), never both.
+EXTERNAL_DMM_FIELDS = (
+    "ExternalDMM2Function", "ExternalDMM2Range", "ExternalDMM2NPLC",
+    "ShortWait",
+)
+
+MISC_FIELDS = ("IsPicture",)
+
+ALL_FIELDS = WAFER_FIELDS + ELECTRICAL_FIELDS + EXTERNAL_DMM_FIELDS + MISC_FIELDS
+
+# 3458A function -> how many probe pins the measurement needs.
+DMM_FUNCTION_WIRES = {"OHM": 2, "OHMF": 4}
 
 _CSV_FIELDS = ("seq", "major_index", "minor_index", "device_id", "x", "y")
 
@@ -298,6 +318,71 @@ def align_site_info(fields: dict, touchdowns: list, align_die: str = "") -> dict
     if info["named_touchdown"] is not None and info["quad_touchdown"] is not None:
         info["agree"] = info["named_touchdown"]["seq"] == info["quad_touchdown"]["seq"]
     return info
+
+
+def measurement_plan(fields: dict) -> dict:
+    """What this recipe actually measures, and with what.
+
+    Returns keys: style ("dmm" | "smu" | "none"), summary, wires, and the
+    raw settings. "none" is a real answer, not a failure - the 21PCM recipe
+    carries no measurement fields at all and only steps the wafer.
+    """
+    fn = (fields.get("ExternalDMM2Function") or "").strip().upper()
+    if fn:
+        rng = fields.get("ExternalDMM2Range", "")
+        nplc = fields.get("ExternalDMM2NPLC", "")
+        wires = DMM_FUNCTION_WIRES.get(fn)
+        try:
+            current = _ohms_source_current(float(rng))
+        except (TypeError, ValueError):
+            current = None
+        return {
+            "style": "dmm", "function": fn, "range": rng, "nplc": nplc,
+            "short_wait": fields.get("ShortWait", ""),
+            "wires": wires,
+            "source_current": current,
+            "summary": (
+                f"HP 3458A {fn} ({wires}-wire resistance) on the {rng} ohm "
+                f"range, NPLC {nplc}"
+                + (f", sources {_fmt_current(current)}" if current else "")),
+        }
+    if fields.get("Voltage"):
+        return {
+            "style": "smu", "wires": 2,
+            "voltage": fields.get("Voltage"),
+            "range": fields.get("MeterRange", ""),
+            "compliance": fields.get("MeterCurrentLimit", ""),
+            "nplc": fields.get("NPLC", ""),
+            "summary": (
+                f"SMU sources {fields.get('Voltage')} V and measures current; "
+                f"range {fields.get('MeterRange', '?')}, compliance "
+                f"{fields.get('MeterCurrentLimit', '?')}, NPLC "
+                f"{fields.get('NPLC', '?')}"),
+        }
+    return {"style": "none", "wires": None,
+            "summary": "No measurement fields - this recipe only steps the wafer."}
+
+
+# Mirrors instruments/hp3458a.py OHMS_TEST_CURRENT; duplicated rather than
+# imported so the recipe layer stays free of driver imports.
+_OHMS_SOURCE_CURRENT = {
+    10: 10e-3, 100: 1e-3, 1e3: 1e-3, 10e3: 100e-6, 100e3: 50e-6,
+    1e6: 5e-6, 10e6: 500e-9, 100e6: 500e-9, 1e9: 500e-9,
+}
+
+
+def _ohms_source_current(range_ohms: float):
+    for r in sorted(_OHMS_SOURCE_CURRENT):
+        if range_ohms <= r * 1.001:
+            return _OHMS_SOURCE_CURRENT[r]
+    return None
+
+
+def _fmt_current(amps: float) -> str:
+    for scale, unit in ((1.0, "A"), (1e-3, "mA"), (1e-6, "uA"), (1e-9, "nA")):
+        if abs(amps) >= scale:
+            return f"{amps / scale:g} {unit}"
+    return f"{amps:g} A"
 
 
 def map_to_prober_um(fields: dict, map_x: float, map_y: float) -> tuple:
