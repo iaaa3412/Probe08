@@ -57,6 +57,14 @@ _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
 
 _POS_RE = re.compile(r"X(-?\d+)Y(-?\d+)")
 
+MOTION_DIE = "die"      # MD - relative die indices, the prober does the pitch
+MOTION_UM = "um"        # MM - relative microns, the PC does the pitch
+
+# Largest single micron hop before it gets split. A whole-wafer row flyback is
+# legitimately ~130 mm, so this is not a "no move is this big" guard like the
+# die-step cap - it just keeps any one command bounded.
+_MAX_UM_HOP = 150000
+
 
 def parse_position(reply) -> tuple:
     """'X30Y38' -> (30, 38), or None."""
@@ -198,6 +206,21 @@ class EgPmaRunPanel(ttk.Frame):
             side="left", padx=(6, 0))
         ttk.Button(btns, text="🗺 Sync Run map", command=self._sync_run_map).pack(
             side="left", padx=(6, 0))
+
+        mode = ttk.Frame(lf)
+        mode.pack(fill="x", pady=(6, 0))
+        ttk.Label(mode, text="Move by:").pack(side="left")
+        self._motion_var = tk.StringVar(value=MOTION_DIE)
+        ttk.Radiobutton(mode, text="die steps (MD)", value=MOTION_DIE,
+                        variable=self._motion_var,
+                        command=self._on_motion_mode).pack(side="left", padx=(6, 0))
+        ttk.Radiobutton(mode, text="microns (MM) — as the LaMP exe did",
+                        value=MOTION_UM, variable=self._motion_var,
+                        command=self._on_motion_mode).pack(side="left", padx=(8, 0))
+        self._motion_note = ttk.Label(lf, font=("Arial", 8), foreground="#888",
+                                      justify="left", wraplength=430, text="")
+        self._motion_note.pack(anchor="w")
+        self._on_motion_mode()
 
         self._status_var = tk.StringVar(value="idle")
         ttk.Label(lf, textvariable=self._status_var, font=("Consolas", 9)
@@ -468,14 +491,18 @@ class EgPmaRunPanel(ttk.Frame):
             return
 
         dx, dy = self._die_um
-        if not self._size_confirmed:
+        # Only MD depends on the prober's own pitch, so only MD needs this
+        # asked. In micron mode the question is meaningless and asking it
+        # would train people to click through it.
+        if not self._size_confirmed and self._motion_var.get() == MOTION_DIE:
             if not messagebox.askokcancel(
                     "Confirm die size",
                     f"This recipe steps by {dx:.0f} x {dy:.0f} um "
                     f"({dx / 1000:.3f} x {dy / 1000:.3f} mm).\n\n"
                     "MD moves by the PROBER'S configured die size, not this one. "
                     "They must match, or every step lands between quads.\n\n"
-                    "Is the prober's SET PRMTR die size set to this?"):
+                    "Is the prober's SET PRMTR die size set to this?\n\n"
+                    "(Switching 'Move by' to microns avoids this entirely.)"):
                 return
             self._size_confirmed = True
 
@@ -926,6 +953,9 @@ class EgPmaRunPanel(ttk.Frame):
             self._ui(lambda: (self._mark_current(), self._refresh_position()))
             return True
 
+        if self._motion_var.get() == MOTION_UM:
+            return self._move_um(drv, cur, nxt, target, (nx, ny))
+
         before = self._read_position(drv)
         self._ui(lambda: self._status_var.set(
             f"#{nxt['seq']}  MD {dx:+d},{dy:+d}  {nxt['device_id']}"))
@@ -965,6 +995,72 @@ class EgPmaRunPanel(ttk.Frame):
             f"[PMA] #{nxt['seq']} MD {dx:+d},{dy:+d} -> quad ({nx},{ny})  "
             f"{nxt['device_id']}"))
         return True
+
+    def _move_um(self, drv, cur, nxt, target, quad) -> bool:
+        """Relative MICRON move (MM), the way the original LaMP exe worked.
+
+        The recipe's own coordinates are microns, so the delta between two
+        touchdowns is the move - no die-size arithmetic anywhere, and nothing
+        depends on what the prober has configured as its die size. That is the
+        whole point: MD's failure mode is a silent pitch mismatch that lands
+        every touchdown between sites, and this cannot have it.
+
+        Signs are deliberately the SAME as the MD path (delta straight from
+        the recipe, no flip), because MD deltas are themselves recipe deltas
+        divided by the pitch and that path is bench-verified.
+
+        Verification is necessarily weaker. ?P counts DIES, in the prober's
+        own pitch, so it can only confirm a micron move when that pitch
+        happens to match the recipe - which is exactly the assumption this
+        mode exists to avoid. So a ?P mismatch is reported and not treated as
+        divergence; the driver's own MC/MF acknowledgement check is what
+        catches a refused move.
+        """
+        dx_um = int(round(nxt["x"] - cur["x"]))
+        dy_um = int(round(nxt["y"] - cur["y"]))
+        before = self._read_position(drv)
+        self._ui(lambda: self._status_var.set(
+            f"#{nxt['seq']}  MM {dx_um:+d},{dy_um:+d} um  {nxt['device_id']}"))
+
+        for hop_x, hop_y in chunk_step(dx_um, dy_um, _MAX_UM_HOP):
+            if self._abort:
+                return False
+            try:
+                drv.move_relative_m(hop_x, hop_y)
+            except Exception as e:
+                msg = f"{type(e).__name__}: {str(e).splitlines()[0][:70]}"
+                self._ui(lambda: self._log(
+                    f"[PMA] #{nxt['seq']} MM {hop_x:+d},{hop_y:+d} um FAILED — {msg}"))
+                return False
+
+        after = self._read_position(drv)
+        note = ""
+        if before is not None and after is not None:
+            got = (after[0] - before[0], after[1] - before[1])
+            dxq, dyq = quad[0] - self._quad(cur)[0], quad[1] - self._quad(cur)[1]
+            if got != (dxq, dyq):
+                note = (f"   [?P moved ({got[0]:+d},{got[1]:+d}) dies, recipe step "
+                        f"is ({dxq:+d},{dyq:+d}) — the prober's die size differs "
+                        f"from the recipe's, which does not affect a micron move]")
+
+        self._index = target
+        self._ui(lambda: (self._mark_current(), self._refresh_position()))
+        self._ui(lambda: self._log(
+            f"[PMA] #{nxt['seq']} MM {dx_um:+d},{dy_um:+d} um -> quad "
+            f"({quad[0]},{quad[1]})  {nxt['device_id']}{note}"))
+        return True
+
+    def _on_motion_mode(self):
+        um = self._motion_var.get() == MOTION_UM
+        self._motion_note.config(text=(
+            "Relative micron moves straight from the recipe coordinates. The "
+            "prober's configured die size is not used, so it cannot cause a "
+            "pitch mismatch — but ?P still counts in the prober's own die "
+            "size, so it can only cross-check the move when the two agree."
+            if um else
+            "Relative die-index moves. The PROBER applies the pitch, so its "
+            "SET PRMTR die size must match this recipe or every touchdown "
+            "lands between sites. ?P fully verifies each move."))
 
     # -- selection: pick a die on the map or in the table --------------------
 
