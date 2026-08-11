@@ -1276,44 +1276,77 @@ class Electroglas2001X(GPIBInstrument):
     def clear_die_envelope(self):
         self._die_envelope = None
 
-    # NONE OF THESE THREE IS A MICRON MOVE. The "_m" naming is a leftover from
-    # when this file was guesswork, and it is actively misleading - see the
-    # module header: only the IC-CAP list is verified, and it says
+    # MM IS A FINE POSITIONAL MOVE, BUT ITS COUNT IS NOT ONE MICRON.
     #
-    #     MM      Move Chuck        -> reply "MC" or "MF"
+    # Measured 2026-08-11 on a real recipe. From touchdown #228 of
+    # HPLaMP_WHOLE_WAFER (TL die 65-23, x = 98588 um) a MMX7042Y0 was sent,
+    # intending one 7042 um quad step to #229. The chuck landed with TL die
+    # 66-23, which that recipe places at x = 116193 um:
     #
-    # i.e. MM is the DIE move, not a micron one. _wait_until_not_moving's own
-    # note records MM being driven with "X1 Y0" - one DIE - during earlier
-    # bench work, which agrees.
+    #     travelled 116193 - 98588 = 17605 um  for a commanded 7042
+    #     scale = 17605 / 7042 = 2.50
     #
-    # DISPROVED ON THE BENCH 2026-08-11. A PMA run sent MMX7042Y0 intending
-    # 7042 um (one 7042 um quad step) from quad 65-23/65-13/65-24/65-14. If MM
-    # took microns the chuck would have advanced one quad, to
-    # 66-20/66-10/66-21/66-11. It landed on 66-23/66-13/66-24/66-14 - a whole
-    # SHOT across, same position within the shot - while ?P moved only +3 dies.
-    # That is consistent with MM being read as "move 7042 DIES" and the prober
-    # limiting the move, and flatly inconsistent with microns.
+    # 17605 um is also exactly this product's SHOT pitch (5 physical dies of
+    # 3521 um), which is why it looked like a tidy one-shot step.
     #
-    # So they raise rather than move. move_relative_die (MD) is the verified
-    # path and is bounds-checked; these were not, which is the worse half of
-    # the bug - a mistyped micron value here bypassed every guard.
+    # Two units fit that within the resolution of reading die IDs:
+    #   0.1 mil = 2.54 um   -> 7042 counts = 17886.7 um, 282 um past the die
+    #   2.5 um exactly      -> 7042 counts = 17605.0 um, dead on
+    # 0.1 mil is far the more likely: this prober's Z axis is already in
+    # 0.1-mil units (see the Z limits and SP8Z/SP7Z above), so one unit for
+    # the whole machine is the natural design.
+    #
+    # UNCONFIRMED - the two differ by only 1.6%, which a single step cannot
+    # separate. Multiply the error up before believing either: a ten-quad move
+    # is 70420 um, so command round(70420 / MM_UNIT_UM) and see whether it
+    # lands dead on that touchdown or ~1.1 mm (a third of a die) short.
+    MM_UNIT_UM = 2.54
 
-    _NOT_MICRONS = (
-        "is NOT a micron move. The only verified command list for this prober "
-        "(Keysight IC-CAP) documents MM as 'Move Chuck' in DIE units, and a "
-        "bench test on 2026-08-11 confirmed MMX7042Y0 moved a whole shot "
-        "rather than 7042 um. Use move_relative_die() for die steps. If a real "
-        "micron move exists on this machine it has not been identified yet - "
-        "do not guess it here again.")
+    # Same guard as move_relative_die, in microns. These commands had NO bounds
+    # check at all, which is how a value meant as microns went out as counts
+    # and travelled 2.5x too far with nothing to stop it.
+    DEFAULT_MAX_UM_STEP = 200000
 
-    def move_absolute_m(self, x, y):
-        raise NotImplementedError(f"move_absolute_m (MA) {self._NOT_MICRONS}")
+    def _check_um(self, dx_um, dy_um):
+        limit = getattr(self, "max_um_step", self.DEFAULT_MAX_UM_STEP)
+        if max(abs(dx_um), abs(dy_um)) > limit:
+            raise ValueError(
+                f"Electroglas 2001X: micron move of ({dx_um:.0f},{dy_um:.0f}) um "
+                f"exceeds max_um_step={limit}. Raise it deliberately if this is "
+                f"really intended.")
+
+    def _um_to_counts(self, um):
+        return int(round(float(um) / self.MM_UNIT_UM))
+
+    def move_relative_um(self, dx_um, dy_um):
+        """Relative move in MICRONS, converted to MM's own counts."""
+        self._check_um(dx_um, dy_um)
+        status = self._motion(
+            f"MMX{self._um_to_counts(dx_um)}Y{self._um_to_counts(dy_um)}")
+        self.z_is_up = False
+        return status
+
+    def move_relative_counts(self, dx, dy):
+        """Raw MM counts, for calibrating MM_UNIT_UM. No unit conversion."""
+        status = self._motion(f"MMX{int(dx)}Y{int(dy)}")
+        self.z_is_up = False
+        return status
 
     def move_relative_m(self, dx, dy):
-        raise NotImplementedError(f"move_relative_m (MM) {self._NOT_MICRONS}")
+        """Deprecated alias - 'm' meant microns but sent raw counts, which is
+        the bug above. Kept pointing at the raw form so nothing silently
+        changes meaning; new callers should pick move_relative_um explicitly."""
+        return self.move_relative_counts(dx, dy)
+
+    def move_absolute_m(self, x, y):
+        status = self._motion(f"MAX{int(x)}Y{int(y)}")
+        self.z_is_up = False
+        return status
 
     def move_micro(self, dx, dy):
-        raise NotImplementedError(f"move_micro (FM) {self._NOT_MICRONS}")
+        status = self._motion(f"FMX{int(dx)}Y{int(dy)}")
+        self.z_is_up = False
+        return status
 
     def move_xy_relative(self, dx_index: int, dy_index: int):
         self._not_implemented("move_xy_relative")

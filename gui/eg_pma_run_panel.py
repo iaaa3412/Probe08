@@ -217,17 +217,15 @@ class EgPmaRunPanel(ttk.Frame):
         ttk.Radiobutton(mode, text="die steps (MD)", value=MOTION_DIE,
                         variable=self._motion_var,
                         command=self._on_motion_mode).pack(side="left", padx=(6, 0))
-        # Disabled, not removed: the mode is right in principle - the original
-        # exe did drive microns - but no micron command on this prober has been
-        # identified. MM, which this used to send, is the DIE move; sending it
-        # a micron count moved a whole shot instead of one quad. Leaving the
-        # control visible-but-dead records that this was tried and why it is off.
+        # MM is a fine positional move, but its count is NOT one micron - a
+        # 7042 command travelled 17605 um, a scale of 2.5. The driver now
+        # converts microns to MM counts via MM_UNIT_UM, whose value is still
+        # unconfirmed between 0.1 mil and 2.5 um; see electroglas_2001x.
         self._um_radio = ttk.Radiobutton(
-            mode, text="microns — DISABLED, no verified command",
+            mode, text="microns (MM) — scale UNCONFIRMED",
             value=MOTION_UM, variable=self._motion_var,
             command=self._on_motion_mode)
         self._um_radio.pack(side="left", padx=(8, 0))
-        self._um_radio.state(["disabled"])
         self._motion_note = ttk.Label(lf, font=("Arial", 8), foreground="#888",
                                       justify="left", wraplength=430, text="")
         self._motion_note.pack(anchor="w")
@@ -1045,7 +1043,7 @@ class EgPmaRunPanel(ttk.Frame):
             if self._abort:
                 return False
             try:
-                drv.move_relative_m(hop_x, hop_y)
+                drv.move_relative_um(hop_x, hop_y)
             except Exception as e:
                 msg = f"{type(e).__name__}: {str(e).splitlines()[0][:70]}"
                 self._ui(lambda: self._log(
@@ -1072,10 +1070,10 @@ class EgPmaRunPanel(ttk.Frame):
     def _on_motion_mode(self):
         um = self._motion_var.get() == MOTION_UM
         self._motion_note.config(text=(
-            "Micron mode is off: no micron command on this prober has been "
-            "identified. MM — which this sent — is the DIE move in the only "
-            "verified command list, and a bench test confirmed it: a 7042 um "
-            "step moved a whole shot, not one quad."
+            "Microns, converted to MM counts by the driver. The count size is "
+            "NOT 1 um — measured 2.5 um/count, most likely 0.1 mil (2.54). "
+            "Those two differ by 1.6%, so confirm over a long move before "
+            "trusting this on a wafer that matters."
             if um else
             "Relative die-index moves (MD). The PROBER applies the pitch, so "
             "its SET PRMTR die size must match this recipe or every touchdown "
