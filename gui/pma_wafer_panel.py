@@ -182,14 +182,19 @@ def read_moves_grid(book, sheet_name: str = "MajorMoves") -> Dict[str, Any]:
                 "included": not excluded,
                 "raw_text": "", "dies": [],
             }
-            if not excluded:
-                text = _cell_text(sheet, row0, col0)
-                shot["raw_text"] = text
-                if text:
-                    shot["dies"] = [t.strip() for t in text.split("/")]
-                else:
-                    shot["dies"] = [_pad7(auto_id)]
-                    auto_id += 1
+            # The cell text is read whether or not the shot is included:
+            # "included" means "this recipe probes it", not "this die exists".
+            # A sampled workbook (the electrical gauge marks 15 of 634) still
+            # describes the whole wafer, and the map is drawn from all of it.
+            # Only the auto-numbering of BLANK cells stays included-only, so
+            # existing recipes keep the same generated IDs.
+            text = _cell_text(sheet, row0, col0)
+            shot["raw_text"] = text
+            if text:
+                shot["dies"] = [t.strip() for t in text.split("/")]
+            elif not excluded:
+                shot["dies"] = [_pad7(auto_id)]
+                auto_id += 1
             shots.append(shot)
 
     return {

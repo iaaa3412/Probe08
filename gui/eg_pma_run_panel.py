@@ -48,7 +48,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from electroglas_pma import (parse_pma_file, load_touchdowns, align_site_info,
                              format_quad, expand_touchdowns_to_dies, die_grid_index,
-                             measurement_plan)
+                             measurement_plan, workbook_touchdowns)
 
 # Where LaMP kept its recipes, then the repo's own copies.
 _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
@@ -577,29 +577,67 @@ class EgPmaRunPanel(ttk.Frame):
     # any mapping. Statuses come from WaferMapPanel.update_die:
     # UNTESTED / CURRENT / CONTACT / TESTING / PASS / FAIL / SKIP / CONTACT_FAIL.
 
+    def _map_source_touchdowns(self) -> list:
+        """Every shot the MAP shows - the workbook's, not this recipe's.
+
+        The recipe generator .xls is the wafer; the .PMA is the subset this
+        recipe visits. Deriving the grid from self._touchdowns made a
+        15-touchdown gauge recipe index a 15-shot grid, so its dies landed on
+        cells 0..7 of a wafer that has hundreds - the map drew only the
+        touchdowns, and every row/col was wrong for the real map.
+        """
+        wafer = getattr(self._main_layout, "pma_wafer", None)
+        data = getattr(wafer, "workbook_data", None) if wafer else None
+        if data:
+            try:
+                shots = workbook_touchdowns(data)
+                if shots:
+                    return shots
+            except Exception as e:
+                self._log(f"[PMA] Could not read the wafer map from the recipe "
+                          f"generator workbook ({type(e).__name__}: {e}) — "
+                          "falling back to the PMA's touchdowns.")
+        return self._touchdowns
+
     def _build_rc_index(self):
         """seq -> the map cells that touchdown covers.
 
-        The map now carries one cell per DIE, so a 2x2 shot owns four of them
-        and a single-die recipe owns one. The row/col derivation has to match
+        The map carries one cell per DIE, so a 2x2 shot owns four of them and
+        a single-die recipe owns one. The row/col derivation has to match
         WaferMapPanel._parse_die_list exactly - sorted unique x/y, densely
-        indexed - because that is what decides the cell keys it draws under.
+        indexed - because that is what decides the cell keys it draws under,
+        and it has to be derived from the SAME die set the map was written
+        from or every key is off.
         """
+        map_dies = expand_touchdowns_to_dies(self._map_source_touchdowns(),
+                                             *self._die_um)
+        x_to_col, y_to_row = die_grid_index(map_dies)
         dies = expand_touchdowns_to_dies(self._touchdowns, *self._die_um)
-        x_to_col, y_to_row = die_grid_index(dies)
 
         self._cells = {}
         self._rc = {}
         self._seq_at_rc = {}
         self._die_at_rc = {}
+        missing = 0
         for d in dies:
-            rc = (y_to_row[round(d["y"])], x_to_col[round(d["x"])])
+            try:
+                rc = (y_to_row[round(d["y"])], x_to_col[round(d["x"])])
+            except KeyError:
+                # A touchdown at coordinates the workbook has no shot for -
+                # the two files are for different wafers. Skip it rather than
+                # invent a cell, and say how many.
+                missing += 1
+                continue
             self._cells.setdefault(d["seq"], []).append(rc)
             # Only real dies get a reverse mapping - clicking an NA corner
             # should not select the shot, since nothing is probed there.
             if d["enabled"]:
                 self._seq_at_rc[rc] = d["seq"]
                 self._die_at_rc[rc] = d
+        if missing:
+            self._log(f"[PMA] ⚠ {missing} of {len(dies)} recipe dies are not on "
+                      "the recipe generator's wafer map — the .PMA and the .xls "
+                      "look like they are for different wafers.")
         # Kept for anything that still wants a single representative cell.
         self._rc = {seq: cells[0] for seq, cells in self._cells.items()}
 

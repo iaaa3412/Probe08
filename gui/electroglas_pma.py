@@ -466,6 +466,40 @@ def expand_touchdowns_to_dies(touchdowns: list, die_size_x, die_size_y) -> list:
     return out
 
 
+def workbook_touchdowns(workbook_data: dict) -> list:
+    """Every shot on the wafer, from the recipe generator workbook.
+
+    The two files describe different things and the map must come from the
+    workbook: the .xls MajorMoves grid is the whole wafer, while the .PMA is
+    only the shots that recipe visits. Building the map from the .PMA is what
+    made a 15-touchdown gauge recipe draw a 15-shot "wafer".
+
+    Comes back in the same shape load_touchdowns() returns, so everything
+    downstream - expand_touchdowns_to_dies, die_grid_index, the map writer -
+    works on it unchanged. Shot x/y are already in the same map frame the
+    touchdown coordinates use, both being MajorMoves offsets from the map
+    origin, so no rebasing is needed.
+    """
+    out = []
+    for shot in workbook_data.get("shots", []):
+        # NOT filtered on "included". In a sampled workbook - the gauge is one
+        # - "included" marks the shots that recipe probes, 15 of 634. Those are
+        # the touchdowns, and the .PMA already lists them. Everything with a
+        # device ID in the cell is a real shot on the wafer and belongs on the
+        # map, probed or not; filtering here is what drew a 15-shot "wafer".
+        text = (shot.get("raw_text") or "").strip()
+        if not text:
+            continue
+        out.append({
+            "seq": len(out) + 1,
+            "device_id": text,
+            "devices": list(shot.get("dies") or text.split("/")),
+            "x": float(shot.get("x_um") or 0.0),
+            "y": float(shot.get("y_um") or 0.0),
+        })
+    return out
+
+
 def save_wafer_map_csv(folder: str, touchdowns: list, fields: dict = None) -> str:
     """Write the Run tab's Electroglas map.
 
