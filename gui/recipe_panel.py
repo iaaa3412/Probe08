@@ -361,20 +361,85 @@ def pma_params_to_steps(params: dict) -> list:
     return steps
 
 
-def repeat_steps_per_die(steps: list, dies_per_shot: int) -> list:
+def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None) -> list:
+    """One block of steps per die under the shot.
+
+    The prober lands ONCE on a shot; the relay card then connects each of the
+    co-touched dies in turn and the block is measured against each. So the
+    repetition belongs here, in the steps, and not in the touchdown list -
+    listing the shot four times would move the chuck to the same place four
+    times.
+
+    `channels` is the relay channel per die, in die order. Without it the
+    blocks are identical and every die is measured through whatever routing
+    the previous one left closed, which silently measures die 1 four times.
+    """
     if dies_per_shot <= 1:
         return steps
     names_in_block = {s["name"] for s in steps if s.get("name")}
     out = []
     for i in range(1, dies_per_shot + 1):
         suffix = f" (Die {i})"
+        chan = ""
+        if channels and i <= len(channels):
+            chan = channels[i - 1]
+        # Open everything before connecting this die: the mux would otherwise
+        # hold the previous die closed as well, putting two in parallel.
+        if chan:
+            out.append({"kind": "STEP", "name": f"Isolate{suffix}",
+                        "type": "open", "target": "all", "conn": "all"})
         for s in steps:
             s2 = dict(s)
             if s2.get("name"):
                 s2["name"] = s2["name"] + suffix
             if s2.get("target") in names_in_block:
                 s2["target"] = s2["target"] + suffix
+            # Route only the steps that actually touch the wafer. A delay has
+            # no connection, and giving one a channel would close a relay at
+            # a point the original sequence had it open.
+            if chan and s2.get("type") in ("voltage", "current", "resistance"):
+                s2["conn"] = chan
             out.append(s2)
+    return out
+
+
+def _pma_dies_per_shot(path: str) -> int:
+    """How many devices a touchdown of this .PMA co-touches.
+
+    Taken from the widest device-ID string in the recipe, not from the first:
+    a wafer-edge shot is written "NA/86-14/NA/NA" and still costs four
+    switch positions, while a shot that happens to be full would read the
+    same as a genuine single-die recipe.
+    """
+    try:
+        import electroglas_pma as egpma
+        fields = egpma.parse_pma_file(path)
+        touchdowns = egpma.load_touchdowns(path, fields)
+    except Exception:
+        return 1
+    widths = [len((t.get("device_id") or "").split("/")) for t in touchdowns]
+    return max(widths) if widths else 1
+
+
+def die_channels_for_bench(dies_per_shot: int) -> list:
+    """Relay channel per die for the active Electroglas bench, if known.
+
+    Read from hp_switchbox.BENCH_WIRING rather than assumed, because the two
+    benches differ: probe02's mux switches a HI/LO pair per die (one channel),
+    probe03's form-C card needs two channels for the same job.
+    """
+    try:
+        import eg_profiles
+        from instruments.hp_switchbox import bench_wiring
+        die_sets = bench_wiring(eg_profiles.active_name()).get("die_sets") or {}
+    except Exception:
+        return []
+    out = []
+    for die in range(1, dies_per_shot + 1):
+        chans = die_sets.get(die)
+        if not chans:
+            return []
+        out.append(",".join(f"{int(c):02d}" for c in chans))
     return out
 
 
@@ -1911,6 +1976,14 @@ class RecipePanel(ttk.Frame):
                 "averaging, current limit) were found in that file.")
             return False
         steps = pma_params_to_steps(useful)
+        # A .PMA whose touchdowns name several devices is a multi-die shot,
+        # and the block has to run once per die. This path never did that -
+        # only the workbook import did - so a LOAD ALL of a quad recipe built
+        # a recipe that measured one die and called the shot done.
+        dies_per_shot = _pma_dies_per_shot(path)
+        if dies_per_shot > 1:
+            steps = repeat_steps_per_die(steps, dies_per_shot,
+                                         die_channels_for_bench(dies_per_shot))
 
         name = os.path.splitext(os.path.basename(path))[0]
         orig_name, n = name, 2

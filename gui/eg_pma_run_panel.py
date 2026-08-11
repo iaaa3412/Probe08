@@ -618,6 +618,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._rc = {}
         self._seq_at_rc = {}
         self._die_at_rc = {}
+        self._anchor_rc = {}
         missing = 0
         for d in dies:
             try:
@@ -634,6 +635,12 @@ class EgPmaRunPanel(ttk.Frame):
             if d["enabled"]:
                 self._seq_at_rc[rc] = d["seq"]
                 self._die_at_rc[rc] = d
+                # One cell stands for the whole touchdown wherever a shot has
+                # to be named by a single square. It must be an ENABLED die's
+                # cell, because that is the only kind _seq_at_rc maps back -
+                # a shot like NA/NA/NA/81-10 has just one, and it is not the
+                # top-left corner.
+                self._anchor_rc.setdefault(d["seq"], rc)
         if missing:
             self._log(f"[PMA] ⚠ {missing} of {len(dies)} recipe dies are not on "
                       "the recipe generator's wafer map — the .PMA and the .xls "

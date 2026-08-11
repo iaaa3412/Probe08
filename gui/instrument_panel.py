@@ -2719,6 +2719,58 @@ class MainLayout(ttk.Frame):
         return (os.path.join(self._ata_folder, self._SELECTED_MAP_FILENAME)
                 if self._ata_folder else None)
 
+    def _exec2_picks_as_touchdowns(self, picks) -> list:
+        """Collapse picked map cells to one cell per PROBER TOUCHDOWN.
+
+        On Accretech a square already is a touchdown, so this is a no-op. On
+        Electroglas a square is a die and a 2x2 shot owns four of them - the
+        chuck lands once and the recipe switches the mux through the dies
+        under it, so clicking all four dies of a shot must still produce ONE
+        touchdown, not four visits to the same place.
+        """
+        picks = [(int(r), int(c)) for r, c in picks]
+        run = getattr(self, "eg_pma_run", None)
+        seq_at_rc = getattr(run, "_seq_at_rc", None) or {}
+        anchor_rc = getattr(run, "_anchor_rc", None) or {}
+        if self._system != "electroglas" or not seq_at_rc:
+            return picks
+        out, seen = [], set()
+        for rc in picks:
+            seq = seq_at_rc.get(rc)
+            if seq is None:
+                # Not part of any touchdown this recipe knows - keep it as
+                # itself rather than dropping the operator's selection.
+                if rc not in seen:
+                    seen.add(rc)
+                    out.append(rc)
+                continue
+            if seq in seen:
+                continue
+            seen.add(seq)
+            out.append(anchor_rc.get(seq, rc))
+        return out
+
+    def _exec2_touchdown_cells(self, picks) -> list:
+        """The inverse: every cell belonging to the touchdowns in `picks`.
+
+        Used for DISPLAY, so selecting a recipe lights up whole shots rather
+        than one corner die of each.
+        """
+        picks = [(int(r), int(c)) for r, c in picks]
+        run = getattr(self, "eg_pma_run", None)
+        seq_at_rc = getattr(run, "_seq_at_rc", None) or {}
+        cells = getattr(run, "_cells", None) or {}
+        if self._system != "electroglas" or not seq_at_rc:
+            return picks
+        out, seen = [], set()
+        for rc in picks:
+            seq = seq_at_rc.get(rc)
+            for cell in (cells.get(seq) or [rc]):
+                if cell not in seen:
+                    seen.add(cell)
+                    out.append(cell)
+        return out
+
     def _exec2_loaded_recipe_name(self) -> str:
         """The recipe the Run tab currently has loaded, if any."""
         if not getattr(self, "_exec2_steps", None):
@@ -2753,8 +2805,7 @@ class MainLayout(ttk.Frame):
         set_sites = getattr(self.recipe_panel, "set_sites", None)
         if recipe and set_sites:
             sites = []
-            for rc in picks:
-                rc = (int(rc[0]), int(rc[1]))
+            for rc in self._exec2_picks_as_touchdowns(picks):
                 sites.append({
                     "die_id": (self._exec2_overlay_die_ids.get(rc)
                                or self._exec2_wafer_map.die_ids.get(rc, "")),
@@ -2804,6 +2855,8 @@ class MainLayout(ttk.Frame):
                 picks = [(s["row"], s["col"]) for s in sites]
                 ids = {(s["row"], s["col"]): s["die_id"]
                        for s in sites if s.get("die_id")}
+                picks = [rc for rc in self._exec2_touchdown_cells(picks)
+                         if rc in self._exec2_wafer_map.dies] or picks
                 self._exec2_wafer_map.set_picked(picks)
                 self._exec2_on_sites_changed(picks)
                 if ids:
@@ -3247,7 +3300,7 @@ class MainLayout(ttk.Frame):
         if not sites:
             return
         known = self._exec2_wafer_map.dies
-        on_map = [rc for rc in sites if rc in known]
+        on_map = [rc for rc in self._exec2_touchdown_cells(sites) if rc in known]
         self._exec2_wafer_map.set_picked(on_map)
         self._exec2_on_sites_changed(on_map)
         missing = len(sites) - len(on_map)

@@ -688,7 +688,7 @@ class PmaProcessPanel(ttk.Frame):
             self._log("[PMA] LOAD ALL: this Recipe tab has no touchdown list.")
             return 0
         touchdowns = getattr(run, "_touchdowns", None) or []
-        cells = getattr(run, "_cells", None) or {}
+        cells = getattr(run, "_anchor_rc", None) or {}
         # The row/col index is derived from the recipe alone, not from the
         # loaded map, so it can always be rebuilt. Do that rather than attach
         # an empty list if the Run tab has not built it yet - silently saving
@@ -696,14 +696,20 @@ class PmaProcessPanel(ttk.Frame):
         if touchdowns and not cells and hasattr(run, "_build_rc_index"):
             try:
                 run._build_rc_index()
-                cells = getattr(run, "_cells", None) or {}
+                cells = getattr(run, "_anchor_rc", None) or {}
             except Exception as exc:
                 self._log(f"[PMA] LOAD ALL: could not index the touchdowns: {exc}")
+        # ONE entry per TOUCHDOWN, not per die. The prober lands once on a
+        # shot and the recipe's steps switch the mux through the dies under
+        # it, so a 2x2 shot is one touchdown, not four. Listing it four times
+        # said the chuck should visit the same place four times over.
         sites = []
         for t in touchdowns:
-            for rc in cells.get(t["seq"], []):
-                sites.append({"die_id": t.get("device_id", ""),
-                              "row": rc[0], "col": rc[1]})
+            rc = cells.get(t["seq"])
+            if rc is None:
+                continue
+            sites.append({"die_id": t.get("device_id", ""),
+                          "row": rc[0], "col": rc[1]})
         if not sites:
             self._log("[PMA] LOAD ALL: the recipe has no touchdowns to attach "
                       "(is the Run tab's wafer map synced?).")
