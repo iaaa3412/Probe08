@@ -2023,7 +2023,7 @@ class MainLayout(ttk.Frame):
 
     def _tab_recipe_gen(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="Recipe Gen")
+        nb.add(tab, text="Wafer Map")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
         self.recipe_gen = RecipeGenPanel(tab, controller=self.controller, main_layout=self)

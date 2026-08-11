@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import csv
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
@@ -123,9 +124,13 @@ class RecipeGenPanel(ttk.Frame):
             side="left", padx=(4, 12))
         ttk.Button(bar, text="🧱 Build Major Grid…", command=self._build_grid_dialog).pack(
             side="left", padx=(0, 6))
-        ttk.Button(bar, text="📥 Import Recipe Generator (.xls) as Template…",
+        ttk.Button(bar, text="📥 Import .xls…",
                   command=self._import_xls_template).pack(side="left", padx=(0, 6))
-        ttk.Button(bar, text="💾 Create All Files", command=self._create_all_files).pack(
+        ttk.Button(bar, text="📥 Import die-ID CSV…",
+                  command=self._import_csv_template).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="🗺 Save Wafer Map", command=self._save_wafer_map).pack(
+            side="left", padx=(0, 6))
+        ttk.Button(bar, text="💾 Create Legacy Files", command=self._create_all_files).pack(
             side="left", padx=(0, 6))
         ttk.Label(bar, textvariable=self._status_var, foreground="#374151").pack(
             side="left", padx=10)
@@ -407,6 +412,135 @@ class RecipeGenPanel(ttk.Frame):
         return messagebox.askyesno(
             "Replace Grid",
             "This will discard the current grid's device IDs and exclusions. Continue?")
+
+    # -- plain die-ID CSV ---------------------------------------------------
+    #
+    # The simple way in, and the one that does not need a legacy workbook: a
+    # CSV laid out like the wafer. One cell per SHOT, holding that shot's
+    # device ID - or the slash-joined IDs of the dies it co-touches, exactly
+    # as the workbook writes them. Blank cells are off-wafer. Nothing else:
+    # no headers, no coordinates. The pitch comes from the Die Size fields,
+    # which is the one thing a bare grid cannot tell us.
+
+    def _import_csv_template(self):
+        self._close_cell_editor(commit=False)
+        path = filedialog.askopenfilename(
+            title="Import a die-ID CSV (laid out like the wafer)",
+            filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as fh:
+                rows = [r for r in csv.reader(fh)]
+        except OSError as exc:
+            messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
+            return
+        # Trim fully blank leading/trailing rows so a file with padding still
+        # lands with the wafer at the origin.
+        while rows and not any((c or "").strip() for c in rows[0]):
+            rows.pop(0)
+        while rows and not any((c or "").strip() for c in rows[-1]):
+            rows.pop()
+        if not rows:
+            messagebox.showerror("Empty File",
+                                 f"{os.path.basename(path)} has no die IDs in it.")
+            return
+
+        pitch_x = _to_float(self._die_size_x_var.get())
+        pitch_y = _to_float(self._die_size_y_var.get())
+        if not pitch_x or not pitch_y:
+            messagebox.showerror(
+                "Die Size Needed",
+                "Set Die Size X and Y (in microns) before importing a die-ID "
+                "CSV.\n\nA bare grid of IDs says where dies are relative to "
+                "each other but not how far apart they are, and the pitch is "
+                "what every move on the Run tab is computed from.")
+            return
+        if not self._confirm_discard_edits():
+            return
+
+        cols = max(len(r) for r in rows)
+        grid = egpma.new_grid(len(rows), cols, 0.0, 0.0, pitch_x, pitch_y)
+        n = 0
+        for r, row in enumerate(rows):
+            for c in range(cols):
+                text = (row[c].strip() if c < len(row) else "")
+                cell = grid["cells"][(r, c)]
+                cell["device_id"] = text
+                # A blank cell is off the wafer, not an unnamed die - that is
+                # what makes the grid wafer-shaped.
+                cell["excluded"] = not text
+                if text:
+                    n += 1
+
+        self._major = grid
+        self._selected_rc = None
+        self._redraw_grid()
+        self._status_var.set(f"Imported {n} shot(s) from "
+                             f"{os.path.basename(path)} ({cols}x{len(rows)} grid).")
+        self._log(f"[WAFER MAP] Imported '{os.path.basename(path)}' — {cols}x"
+                  f"{len(rows)} grid, {n} shot(s) with a device ID, pitch "
+                  f"{pitch_x:g} x {pitch_y:g} um. Blank cells are treated as "
+                  "off-wafer.")
+
+    def _save_wafer_map(self):
+        """Write the Run tab's wafer map straight from this grid.
+
+        The point of this tab: a map without going through .PMA/.PMS/.PMV at
+        all. Writes the same ata_wafer_map_electroglas.csv the PMA Process
+        path produces, so the Run tab, the die-ID overlay and the exports all
+        read it the same way and cannot tell where it came from.
+        """
+        self._close_cell_editor(commit=True)
+        pitch_x = _to_float(self._die_size_x_var.get())
+        pitch_y = _to_float(self._die_size_y_var.get())
+        if not pitch_x or not pitch_y:
+            messagebox.showerror("Die Size Needed",
+                                 "Set Die Size X and Y (in microns) first.")
+            return
+        folder = getattr(self._main_layout, "_exec2_map_folder", None) or \
+            getattr(self._main_layout, "_ata_folder", None)
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+
+        shots = []
+        for (r, c), cell in sorted(self._major["cells"].items()):
+            text = (cell.get("device_id") or "").strip()
+            if not text or cell.get("excluded"):
+                continue
+            shots.append({"seq": len(shots) + 1, "device_id": text,
+                          "devices": [t.strip() for t in text.split("/")],
+                          "x": self._major["x_headers"][c],
+                          "y": self._major["y_headers"][r]})
+        if not shots:
+            messagebox.showerror("Empty Map",
+                                 "No included cell has a device ID, so there is "
+                                 "no wafer map to write.")
+            return
+        n_dies = len(egpma.expand_touchdowns_to_dies(shots, pitch_x, pitch_y))
+        if not messagebox.askokcancel(
+                "Save Wafer Map",
+                f"Write {len(shots)} shot(s) / {n_dies} die(s) to\n"
+                f"ata_wafer_map_electroglas.csv in\n{folder}?\n\n"
+                "This replaces the Run tab's Electroglas wafer map."):
+            return
+        try:
+            path = egpma.save_wafer_map_csv(
+                folder, shots, {"DieSizeX": pitch_x, "DieSizeY": pitch_y})
+        except OSError as exc:
+            messagebox.showerror("Write Failed", str(exc))
+            return
+        self._status_var.set(f"Wrote {len(shots)} shot(s) / {n_dies} die(s) "
+                             "to the Run tab's wafer map.")
+        self._log(f"[WAFER MAP] Wrote {path} — {len(shots)} shot(s), {n_dies} die(s).")
+        try:
+            self._main_layout._exec2_map_folder = folder
+            self._main_layout._exec2_map_source_var.set("Electroglas")
+            self._main_layout._exec2_draw_wafer_map()
+        except Exception as exc:
+            self._log(f"[WAFER MAP] Map written, but the Run tab did not redraw: "
+                      f"{type(exc).__name__}: {exc}")
 
     def _import_xls_template(self):
         self._close_cell_editor(commit=False)
