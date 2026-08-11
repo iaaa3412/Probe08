@@ -112,7 +112,10 @@ class EgPmaRunPanel(ttk.Frame):
 
         self._selected = None
         self._seq_at_rc = {}        # (row, col) -> touchdown seq, for map clicks
+        self._die_at_rc = {}        # (row, col) -> that die's record, for naming it
+        self._sel_rc = None         # the exact cell clicked, so we can name the corner
         self._shot_window_items = []   # canvas ids for the 2x2 "you are here" box
+        self._sel_window_items = []    # canvas ids for the selected touchdown's box
         # Microns asked for but not yet delivered, because MM only moves in
         # whole 2.5 um counts. Carried into the next move - see _move_um.
         self._um_residual = [0.0, 0.0]
@@ -585,6 +588,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._cells = {}
         self._rc = {}
         self._seq_at_rc = {}
+        self._die_at_rc = {}
         for d in dies:
             rc = (y_to_row[round(d["y"])], x_to_col[round(d["x"])])
             self._cells.setdefault(d["seq"], []).append(rc)
@@ -592,6 +596,7 @@ class EgPmaRunPanel(ttk.Frame):
             # should not select the shot, since nothing is probed there.
             if d["enabled"]:
                 self._seq_at_rc[rc] = d["seq"]
+                self._die_at_rc[rc] = d
         # Kept for anything that still wants a single representative cell.
         self._rc = {seq: cells[0] for seq, cells in self._cells.items()}
 
@@ -633,13 +638,20 @@ class EgPmaRunPanel(ttk.Frame):
     # the block has no die drawn (an NA position, or the wafer edge).
 
     def _clear_shot_window(self):
+        self._clear_items(self._shot_window_items)
+        self._shot_window_items = []
+
+    def _clear_selection_window(self):
+        self._clear_items(self._sel_window_items)
+        self._sel_window_items = []
+
+    def _clear_items(self, items):
         wmap = self._run_map()
-        for item in self._shot_window_items:
+        for item in items:
             try:
                 wmap.canvas.delete(item)
             except Exception:
                 pass
-        self._shot_window_items = []
 
     def _cell_pitch(self, wmap):
         """Canvas (dx, dy) between horizontally and vertically adjacent cells."""
@@ -684,7 +696,62 @@ class EgPmaRunPanel(ttk.Frame):
         ox, oy = (rc[1] - bc) * px, (rc[0] - br) * py
         return [base[0] + ox, base[1] + oy, base[2] + ox, base[3] + oy]
 
+    def _block_box(self, wmap, cells):
+        """Bounding canvas box of a set of cells, or None if none are placeable."""
+        pitch = self._cell_pitch(wmap)
+        boxes = [b for b in (self._cell_box(wmap, rc, pitch) for rc in cells) if b]
+        if not boxes:
+            return None
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes))
+
     def update_shot_window(self):
+        """Redraw both canvas overlays this panel owns.
+
+        The Run tab's redraw/zoom hook calls this one name, so the selected
+        touchdown's outline rides along with the "you are here" box rather
+        than needing its own hook - a zoom scales items in place instead of
+        rebuilding, so anything not redrawn here is left behind at the wrong
+        size.
+        """
+        self._draw_shot_window()
+        self.update_selection_window()
+
+    def update_selection_window(self):
+        """Outline the touchdown the selected die belongs to.
+
+        Deliberately a different colour and dash from the chuck's box: the two
+        coincide only when the selection is where the prober already is, and
+        the operator needs to see at a glance which is which.
+        """
+        self._clear_selection_window()
+        wmap = self._run_map()
+        idx = self._selected
+        # The index can outlive the recipe it pointed into (reload, re-sync),
+        # so range-check it here rather than trusting every caller to clear it.
+        if wmap is None or not self._cells or idx is None \
+                or not (0 <= idx < len(self._touchdowns)):
+            return
+        seq = self._touchdowns[idx]["seq"]
+        cells = self._cells.get(seq) or []
+        box = self._block_box(wmap, cells) if cells else None
+        if not box:
+            return
+        rect = wmap.canvas.create_rectangle(*box, outline="#d97706", width=2,
+                                            dash=(4, 3))
+        wmap.canvas.tag_raise(rect)
+        self._sel_window_items.append(rect)
+        # The one die that was actually clicked gets a tighter ring inside the
+        # touchdown box, so "which corner am I on" is answerable too.
+        if self._sel_rc is not None:
+            cell = self._cell_box(wmap, self._sel_rc, self._cell_pitch(wmap))
+            if cell:
+                inner = wmap.canvas.create_rectangle(*cell, outline="#d97706",
+                                                     width=2)
+                wmap.canvas.tag_raise(inner)
+                self._sel_window_items.append(inner)
+
+    def _draw_shot_window(self):
         """Outline the 2x2 (or 1x1) block the chuck is currently on."""
         self._clear_shot_window()
         wmap = self._run_map()
@@ -696,17 +763,11 @@ class EgPmaRunPanel(ttk.Frame):
         if not cells:
             self._shot_window_var.set("Shot window: not on the map")
             return
-        pitch = self._cell_pitch(wmap)
-        boxes = [b for b in (self._cell_box(wmap, rc, pitch) for rc in cells) if b]
-        if not boxes:
+        box = self._block_box(wmap, cells)
+        if not box:
             self._shot_window_var.set("Shot window: off the drawn map")
             return
-        x1 = min(b[0] for b in boxes)
-        y1 = min(b[1] for b in boxes)
-        x2 = max(b[2] for b in boxes)
-        y2 = max(b[3] for b in boxes)
-        rect = wmap.canvas.create_rectangle(x1, y1, x2, y2,
-                                            outline="#2563eb", width=3)
+        rect = wmap.canvas.create_rectangle(*box, outline="#2563eb", width=3)
         wmap.canvas.tag_raise(rect)
         self._shot_window_items.append(rect)
 
@@ -1108,7 +1169,7 @@ class EgPmaRunPanel(ttk.Frame):
             self._select(None)
             return
         idx = next((i for i, t in enumerate(self._touchdowns) if t["seq"] == seq), None)
-        self._select(idx)
+        self._select(idx, clicked_rc=(row, col))
         if idx is not None:
             self._tree.selection_set(str(idx))
             self._tree.see(str(idx))
@@ -1117,23 +1178,35 @@ class EgPmaRunPanel(ttk.Frame):
         sel = self._tree.selection()
         self._select(int(sel[0]) if sel else None)
 
-    def _select(self, index):
+    def _select(self, index, clicked_rc=None):
         self._selected = index
+        self._sel_rc = clicked_rc
         if index is None:
             self._sel_var.set("no die selected")
             self._goto_btn.state(["disabled"])
+            self.update_selection_window()
             return
         t = self._touchdowns[index]
         qx, qy = self._quad(t)
         dies = [d for d in t["devices"] if d.strip().upper() != "NA"]
         na = len(t["devices"]) - len(dies)
         detail = format_quad(t["device_id"])
+        # Name the die that was actually clicked, not just the touchdown: on a
+        # per-die map the two are different questions.
+        die = self._die_at_rc.get(clicked_rc) if clicked_rc else None
+        picked = ""
+        if die:
+            corner = die.get("quad_pos") or "single"
+            picked = (f"  clicked {die.get('device_id') or '?'} "
+                      f"({corner}) — touchdown #{t['seq']}\n")
         self._sel_var.set(
+            f"{picked}"
             f"#{t['seq']}  quad ({qx},{qy})   {len(dies)} die"
             f"{'' if len(dies) == 1 else 's'}"
             f"{f', {na} empty' if na else ''}\n"
             f"  {detail}\n"
             f"  x={t['x']:.0f} um  y={t['y']:.0f} um")
+        self.update_selection_window()
         here = "" if self._index is None else \
             f"  ({index - self._index:+d} from here)"
         self._goto_btn.config(text=f"➤ Move to #{t['seq']}{here}")

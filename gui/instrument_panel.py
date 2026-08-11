@@ -2629,14 +2629,37 @@ class MainLayout(ttk.Frame):
 
 
     def _exec2_on_sites_changed(self, picks):
-        self._exec2_sites_var.set(
-            f"Test sites: {len(picks)} picked (click dies to add/remove)")
+        self._exec2_sites_var.set(self._exec2_sites_label(picks))
         btn = getattr(self, "_exec2_select_all_btn", None)
         dies = self._exec2_wafer_map._last_dies
         if btn and dies:
             all_rc = {(d["row"], d["col"]) for d in dies}
             is_all = bool(all_rc) and set(picks) == all_rc
             btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
+
+    def _exec2_sites_label(self, picks) -> str:
+        """Header over the map. One pick names the touchdown that die is in.
+
+        Every square on this map is one PROBER die, which for a quad product
+        is one touchdown covering up to four devices - so with a single die
+        picked the useful thing to show is which devices come down with it.
+        The overlay is where those IDs live, so this reads whatever the PMA
+        overlay put on that cell and says nothing when there is no overlay.
+        Multi-pick falls back to the count: naming touchdowns one at a time
+        is only legible for one.
+        """
+        n = len(picks)
+        if n != 1:
+            return f"Test sites: {n} picked (click dies to add/remove)"
+        rc = tuple(picks[0])
+        ids = (self._exec2_overlay_die_ids or {}).get(rc, "")
+        where = f"Test site: 1 picked — R{rc[0]}C{rc[1]}"
+        if not ids:
+            return (f"{where} (no PMA overlay on this die — "
+                    "🔀 Compare/Merge PMA to name it)")
+        devices = [d for d in ids.split("/") if d.strip()]
+        return (f"{where}, touchdown of {len(devices)} device"
+                f"{'' if len(devices) == 1 else 's'}: {ids}")
 
     def _exec2_randomize_sites(self):
         dies = self._exec2_wafer_map._last_dies
