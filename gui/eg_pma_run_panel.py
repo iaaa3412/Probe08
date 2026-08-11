@@ -378,6 +378,10 @@ class EgPmaRunPanel(ttk.Frame):
             f"= {dx / 1000:.3f} x {dy / 1000:.3f} mm",
             f"touchdowns             {n}",
         ]
+        enabled = self._enabled_indices()
+        if len(enabled) != n:
+            lines.append(f"probed this run        {len(enabled)}  "
+                         "(recipe's touchdown list overrides the PMA)")
         if align:
             lines.append(f"align site             quad ({align[0]:.0f},{align[1]:.0f})")
         n_minor = int(f.get("CountMovesMinor") or 1)
@@ -940,6 +944,41 @@ class EgPmaRunPanel(ttk.Frame):
             return False
         return True
 
+    # -- which touchdowns this run actually probes ---------------------------
+    #
+    # The .PMA's move list is the default, not the last word. A recipe may
+    # carry its own touchdown list - saved from this tab's map selection - and
+    # when it does it OVERRIDES the PMA: the operator picked a subset on
+    # purpose. Without this the override was visible on the map and ignored by
+    # the run, which is the worst of both.
+
+    def _probe_seqs(self):
+        """Touchdown seqs the loaded recipe restricts the run to, or None."""
+        panel = getattr(self._main_layout, "recipe_panel", None)
+        get_sites = getattr(panel, "get_sites", None)
+        if not get_sites:
+            return None
+        try:
+            sites = list(get_sites())
+        except Exception:
+            return None
+        if not sites:
+            return None
+        seqs = {self._seq_at_rc[rc] for rc in sites if rc in self._seq_at_rc}
+        return seqs or None
+
+    def _enabled_indices(self):
+        seqs = self._probe_seqs()
+        if seqs is None:
+            return list(range(len(self._touchdowns)))
+        return [i for i, t in enumerate(self._touchdowns) if t["seq"] in seqs]
+
+    def _next_enabled_index(self, after: int):
+        for i in self._enabled_indices():
+            if i > after:
+                return i
+        return None
+
     def _step_once(self):
         if self._guard():
             self._start(1)
@@ -947,12 +986,18 @@ class EgPmaRunPanel(ttk.Frame):
     def _run_all(self):
         if not self._guard():
             return
-        remaining = len(self._touchdowns) - 1 - self._index
+        enabled = self._enabled_indices()
+        ahead = [i for i in enabled if i > self._index]
+        remaining = len(ahead)
         if remaining <= 0:
-            self._log("[PMA] Already at the last touchdown")
+            self._log("[PMA] Already at the last touchdown of this run")
             return
+        total = len(self._touchdowns)
+        subset = (f"\n\nThe loaded recipe restricts this run to {len(enabled)} "
+                  f"of the PMA's {total} touchdown(s); the rest are skipped."
+                  if len(enabled) != total else "")
         if not messagebox.askokcancel(
-                "Run", f"Step through {remaining} more touchdown(s)?\n\n"
+                "Run", f"Step through {remaining} more touchdown(s)?{subset}\n\n"
                        "No measurement is taken and Z is not raised — this walks "
                        "the move list only."):
             return
@@ -1013,7 +1058,14 @@ class EgPmaRunPanel(ttk.Frame):
             return None
 
     def _move_next(self, drv, cap: int) -> bool:
-        return self._move_to_index(drv, cap, self._index + 1)
+        nxt = self._next_enabled_index(self._index)
+        if nxt is None:
+            self._ui(lambda: self._log(
+                "[PMA] No further touchdowns in this recipe's list."))
+            return False
+        # Skipped touchdowns are still MOVED THROUGH by _move_to_index, which
+        # steps die by die - this only decides where to stop and probe.
+        return self._move_to_index(drv, cap, nxt)
 
     def _move_to_index(self, drv, cap: int, target: int) -> bool:
         """Move to any touchdown, forward or back. Returns False to stop.
