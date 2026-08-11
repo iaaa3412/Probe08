@@ -2004,14 +2004,19 @@ class MainLayout(ttk.Frame):
         self._exec2_full_btn = ttk.Button(
             ctrl, text="▶  Full Die", command=self._exec2_start_full_die)
         self._exec2_full_btn.pack(side="left", padx=4, pady=5)
+        # Kept but not packed for Accretech - Test Selected replaces it as
+        # the sole "test some dies" entry point there, but _exec2_abort/
+        # _exec2_finish_run/_exec2_start_test_die still toggle its state
+        # alongside _exec2_full_btn regardless of which system this is, so
+        # the attribute stays around either way.
         self._exec2_test_btn = ttk.Button(
             ctrl, text="▶  Test Die", command=self._exec2_start_test_die)
-        self._exec2_test_btn.pack(side="left", padx=2, pady=5)
         if self._system == "accretech":
             self._exec2_test_selected_btn = ttk.Button(
                 ctrl, text="▶  Test Selected", command=self._exec2_start_test_selected)
             self._exec2_test_selected_btn.pack(side="left", padx=2, pady=5)
         else:
+            self._exec2_test_btn.pack(side="left", padx=2, pady=5)
             self._exec2_test_pma_btn = ttk.Button(
                 ctrl, text="▶  Test PMA", command=self._exec2_start_test_pma)
             self._exec2_test_pma_btn.pack(side="left", padx=2, pady=5)
