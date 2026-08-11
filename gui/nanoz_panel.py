@@ -240,14 +240,6 @@ class NanoZPanel(ttk.Frame):
             self._board_tree.heading(cid, text=text)
             self._board_tree.column(cid, width=width, anchor="center" if cid != "sn" else "w")
         self._board_tree.pack(fill="x", padx=6, pady=6)
-        ttk.Label(boards_lf,
-                  text="Each of the 10 NanoZ boards has two independent chips (0 and 1), each "
-                       "wired to its own die position on the probe head — double-click a "
-                       "board's Slot (chip 0) / Slot (chip 1) cell to assign that chip's "
-                       "physical position (1-20, top to bottom). This is what lets the Recipe "
-                       "tab's wafer-plan import know which board+chip sits where.",
-                  foreground="#6b7280", wraplength=760, justify="left").pack(
-                  anchor="w", padx=6, pady=(0, 6))
         self._board_tree.bind("<Double-1>", self._on_board_tree_double_click)
 
         # Board Console - was its own tab; Connect Prober lived here too but
@@ -379,14 +371,6 @@ class NanoZPanel(ttk.Frame):
         self._recipe_tab = tab.nb_page
         tab.columnconfigure(0, weight=1)
 
-        ttk.Label(tab,
-                  text="Each row is one prober shot (a single touchdown that contacts several "
-                       "dies at once). Click a board's cell to include/exclude it from that "
-                       "shot — included boards all run their cycle together when the shot "
-                       "lands. Shot order is top → bottom.",
-                  foreground="#6b7280", wraplength=760, justify="left").grid(
-                  row=0, column=0, sticky="w", padx=8, pady=(8, 4))
-
         name_row = ttk.Frame(tab)
         name_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
         ttk.Label(name_row, text="Recipe:").pack(side="left")
@@ -465,15 +449,6 @@ class NanoZPanel(ttk.Frame):
             ttk.Entry(pf_row, textvariable=mn_var, width=7).pack(side="left")
             ttk.Label(pf_row, text="–").pack(side="left", padx=2)
             ttk.Entry(pf_row, textvariable=mx_var, width=7).pack(side="left", padx=(0, 12))
-        ttk.Label(pf_lf,
-                  text="Each die under test has its own S1-S4 sensor pads — a die only PASSes "
-                       "if every sensor value (in the chosen metric) falls within its min/max "
-                       "here. Leave a bound blank to not check it for that sensor. Applied per "
-                       "die during Recipe runs; raw S1-S4 readings are always in the SPL CSV "
-                       "export regardless of pass/fail.",
-                  foreground="#6b7280", wraplength=760, justify="left").pack(
-                  anchor="w", padx=6, pady=(0, 6))
-
         self._rebuild_recipe_columns()
 
     def _recipe_ports(self) -> list:
@@ -888,17 +863,6 @@ class NanoZPanel(ttk.Frame):
         nb.add(tab, text="Wafer Map")
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(2, weight=1)
-
-        ttk.Label(tab,
-                  text="Probe Plan is the wafer geometry extracted from the imported "
-                       ".xlsx (Recipe tab → Import Wafer Plan) — product dies are blue, "
-                       "reference/monitor dies are dark red, and it carries computed die "
-                       "serials. Accretech is the wafer map extracted on the Run tab. CSV "
-                       "is a plain row/col die-ID grid you load below — it's also what the "
-                       "Run tab's Overlay… button uses. All are independent views of the "
-                       "same physical wafer, not combined. Click a die to see its details.",
-                  foreground="#6b7280", wraplength=760, justify="left").grid(
-                  row=0, column=0, sticky="w", padx=8, pady=(8, 4))
 
         src_row = ttk.Frame(tab)
         src_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
@@ -1810,15 +1774,6 @@ class NanoZPanel(ttk.Frame):
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(2, weight=1)
 
-        top = ttk.Frame(tab)
-        top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        ttk.Label(top, text="Latest current/voltage/resistance per board, chip, sensor (S1-S4) "
-                            "and heater (H1-H2). Resistance = V/I. Avg is over readings since "
-                            "the last Reset Counts / run start. Every raw reading (not just "
-                            "this average) is logged to the SPL CSV, tagged with the die it "
-                            "was taken on.",
-                 foreground="#6b7280", wraplength=700, justify="left").pack(side="left")
-
         export_frame = ttk.LabelFrame(tab, text="Data Export")
         export_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
 
@@ -2493,18 +2448,6 @@ class NanoZPanel(ttk.Frame):
         nb.add(tab, text="NanoZ_EK")
         tab.columnconfigure(0, weight=1)
 
-        ttk.Label(tab,
-                  text="Replica of Nanoz_EK.exe's Configuration window (see references/250723_User "
-                       "manual EK IV.pdf section IV.B-D), decoded from the board's EEPROM. Duration "
-                       "is confirmed field-accurate against real hardware; other D.a/D.b fields are "
-                       "high-confidence matches against a real sequence but not yet individually "
-                       "isolated. \"Write Sequence to Device\" sends REAL writes for the D.a Sequence "
-                       "settings + D.b Heater settings fields only (edit them, then click Write) - "
-                       "Chip, Resolution, and everything in Cycle/Configuration are preserved exactly "
-                       "as last read, never guessed at. Always read a sequence before editing/writing it.",
-                  foreground="#6b7280", wraplength=1000, justify="left").grid(
-                  row=0, column=0, sticky="w", padx=8, pady=(8, 4))
-
         pick = ttk.Frame(tab)
         pick.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
         ttk.Label(pick, text="Board:").pack(side="left")
@@ -2641,7 +2584,7 @@ class NanoZPanel(ttk.Frame):
             ttk.Label(heat_lf, text=lo, foreground="#9ca3af").grid(row=i, column=3)
             ttk.Label(heat_lf, text=hi, foreground="#9ca3af").grid(row=i, column=4)
         ttk.Label(heat_lf, text="Rows 6/7 pairing and the Chip/Resolution offset ambiguity are "
-                       "best-effort — see the tab description and project notes.",
+                       "best-effort.",
                  foreground="#9ca3af", wraplength=380, justify="left").grid(
                  row=len(heater_rows) + 1, column=0, columnspan=5, sticky="w", padx=4, pady=(4, 2))
 
