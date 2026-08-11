@@ -18,6 +18,7 @@ CONTENTS
   6.  Command reference
   7.  Wiring an actual measurement
   8.  probe03's form C wiring (the 2x2 die map)
+  8B. probe02's multiplexer wiring (measured on the bench)
   9.  What is NOT established
   10. Ways to fool yourself (read this one)
   11. Quick reference card
@@ -357,22 +358,99 @@ Each channel has three terminals:
 
 
 ===============================================================================
+ 8B. probe02's MULTIPLEXER WIRING (MEASURED ON THE BENCH)
+===============================================================================
+
+  Card is the E1345A at 9::15 (LADDR 120) - RELAY1, the one LaMP's own
+  tblInstruments flags fldIsLampElectrical=True. The other two cards on this
+  bench (E1343A at 9::9, E1364A at 9::14) are present but were confirmed
+  unused by that application, and nothing was found wired to them.
+
+  ONLY FOUR CHANNELS GO ANYWHERE: CH00, CH01, CH02, CH03.       [MEASURED]
+
+    channel   die of the 2x2 shot   LaMP fldSwitch   added at 10 V
+    ----------------------------------------------------------------
+     CH00            1                    1           ~155 pA   64 GOhm
+     CH01            2                    2           ~148 pA   67 GOhm
+     CH02            3                    3           ~155 pA   65 GOhm
+     CH03            4                    4           ~101 pA   99 GOhm
+     CH04..CH15    unwired                -           within noise
+
+  A MUX CHANNEL SWITCHES A HI/LO PAIR, so one die costs ONE channel here -
+  unlike probe03's form C card, where a die costs two. That is what makes the
+  four channels line up one-for-one with LaMP's fldSwitch 1,2,3,4.  [MEASURED]
+
+  THE ANALOG BUS IS NOT IN THE PATH. The Keithley 2400 is on the card's own
+  terminals via rear triax. Closing tree switch 90, 91 or 92 - alone, or
+  together with a wired channel - moved the reading by less than the noise.
+  So the AT/BT/AT2 tree switches are irrelevant on this bench and should be
+  left open.                                                      [MEASURED]
+
+  HOW IT WAS MEASURED (2026-08-10, scrap wafer, pins in contact):
+    Keithley 2400 sourcing 10 V into a 1 uA compliance - 10 uW worst case,
+    which is why this was safe to sweep blind. Each channel was closed and
+    read against an ALL-OPEN reference taken IMMEDIATELY BEFORE IT, then the
+    whole sweep repeated in reverse order. CH00-CH03 came out positive in
+    both directions and far outside the +-40 pA noise band; every other
+    channel sat inside it and six of them CHANGED SIGN between passes.
+    That sign flip is the tell - see section 10.
+
+  OPERATING RULE: exactly one of CH00-CH03 closed at a time. Nothing here can
+  be damaged by closing two - a mux channel carries a whole pair, so there is
+  no pin-to-pin short of the kind probe03 can produce - but two closed
+  channels put two dies in PARALLEL, and the reading is then the pair, not
+  the die.
+
+  SETTLING - THE PART LaMP GOT WRONG. This path has a time constant of
+  several seconds (RC: roughly 10 GOhm against ~1 nF of probe card and
+  cabling). A reading taken straight after switching is NOT settled.
+  LaMP's own production database shows the consequence:      [MEASURED]
+
+      switch 1 : mean -1.1449e-09 A     <-- +97 pA less negative
+      switch 2 : mean -1.2330e-09 A
+      switch 3 : mean -1.2439e-09 A
+      switch 4 : mean -1.2474e-09 A          (n = 60 quads each)
+
+  Switch 1 reads systematically high across all 60 quads because it is the
+  first reading after the source steps. That is a per-POSITION artifact, not
+  a per-die one, and it means LaMP's historical switch-1 numbers are ~8% off.
+  Allow >10 s of settling after each switch before reading.
+
+  TYPICAL RESULT on the scrap wafer used: ~-1.0 nA at 10 V, i.e. 10 GOhm,
+  with each die adding 65-99 GOhm on top of a -700 pA instrument offset.
+  For comparison LaMP's own logged readings are -1.00 to -1.34 nA at 10 V,
+  so this reproduces the original system's numbers.                [MEASURED]
+
+
+===============================================================================
  9.  WHAT IS NOT ESTABLISHED
 ===============================================================================
 
   - Which physical die of the 2x2 quad is quad position 1, 2, 3 or 4.
-    The device IDs show positions 1 and 3 share a prefix and 2 and 4 share
-    another, so 1,3 are one row and 2,4 the other - but which row is upper is
-    not determined by any data seen so far. This blocks tying relay switch N
-    to a physical die.                                                [INFERRED]
+    The slash-separated device ID is now known to be COLUMN-major -
+    TL / BL / TR / BR (confirmed on a real align site, 54-00/44-70/54-01/
+    44-71) - so "die 1..4" here means the 1st..4th entry of that string. What
+    is NOT established is that relay CH00 addresses the FIRST entry rather
+    than some other corner.                                        [INFERRED]
 
-  - Whether probe02's multiplexer channels are wired to a probe card at all,
-    and if so in what order. Nothing was traced on that bench.
+    An attempt to settle it from LaMP's production data FAILED and is worth
+    recording so nobody repeats it: if switch N addressed entry N, a switch
+    pointing at an 'NA' position should read like an open circuit. It does
+    not - NA rows mean -1.166e-09 A against -1.221e-09 A for real dies,
+    statistically indistinguishable. The reason is now obvious from the
+    numbers above: a connected die only shifts the reading ~150 pA on a
+    ~700 pA offset, so "connected" versus "open" is a ~15% change buried in
+    the spread. The isolation test simply is not sensitive enough to
+    self-identify which corner it is looking at.                   [MEASURED]
 
-  - The strap question in section 8.
+    To settle it you need an asymmetry: a wafer with a known-different
+    structure at one corner, or a continuity check from a named pad.
 
-  - Whether LaMP used 2-wire or 4-wire. Its recipes give a current LIMIT
-    (1 uA) and a meter RANGE (100 uA) but not a wiring mode.
+  - The strap question in section 8 (probe03 only).
+
+  - Whether LaMP used 2-wire or 4-wire is now ANSWERED, not open: strings in
+    the exe include "syst:rsen off", i.e. 2-wire. It also sent
+    "rout:term rear" and "syst:guar cabl".                          [MEASURED]
 
 
 ===============================================================================
@@ -420,6 +498,34 @@ Each channel has three terminals:
       access violation rather than a clean error; afterwards 500 ms is fine
       forever. instruments/gpib_base.py now retries at 2500 ms.       [MEASURED]
 
+  (g) READING BEFORE THE RC HAS SETTLED. Same family of error as (a), and it
+      caught the probe02 mapping twice.
+
+      The measurement path is ~10 GOhm against ~1 nF, so several seconds.
+      A first attempt used 0.35 s per channel and concluded "no channel
+      changes anything" - which proved nothing, because nothing had settled.
+      A later I-V sweep at 0.8 s per point produced a beautifully linear fit
+      giving 4.26 GOhm; that number was also meaningless. The tell was in the
+      data: the MEASURED voltages lagged the COMMANDED ones by a gap that
+      grew to ~6 V. Always read back the source value, not just the current -
+      if V has not arrived, neither has I.                          [MEASURED]
+
+  (h) PEAK-OF-N-NOISY-SAMPLES IS NOT A SIGNAL.
+      An attempt to find connected channels quickly by looking for a
+      charging-current spike at NPLC 0.01 flagged 8 of 16 channels. It was
+      comparing the peak of 12 noisy fast samples against a quiet NPLC 10
+      baseline, so the "ratio" mostly measured fast-mode noise. The traces
+      gave it away - a real charging transient decays monotonically in ONE
+      direction, and these swung bipolar sample to sample.           [MEASURED]
+
+  (i) DRIFT IN A SWEEP LOOKS LIKE A GROUPING.
+      Sweeping channels in order and comparing each to ONE baseline taken at
+      the start attributes the drift since then to whatever channel is being
+      measured, producing a tidy-looking trend. Take the reference
+      IMMEDIATELY BEFORE each channel, and sweep in both directions: a real
+      effect keeps its sign when the order reverses, drift does not. On
+      probe02 six channels changed sign between passes - all of them noise.
+
 
 ===============================================================================
  11. QUICK REFERENCE CARD
@@ -445,6 +551,12 @@ Each channel has three terminals:
       ROUT:CLOS (@1HH)                  one HI channel: 00 02 08 10
       ROUT:CLOS (@1LL)                  one LO channel: 01 03 09 11
       never two on the same side
+
+  MULTIPLEXER, one die on probe02  (E1345A at 9::15)
+      ROUT:OPEN (@100:103)              drop the other three dies first
+      ROUT:CLOS (@10N)                  N = 0,1,2,3 for die 1,2,3,4
+      ... then WAIT >10 s before reading - see section 8B
+      no tree switch needed; the analog bus is not in the path
 
   CHECK
       ROUT:CLOS? (@1nn)                 -> 1 or 0

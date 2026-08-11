@@ -259,6 +259,112 @@ def conflicts_with(channel: int, already_closed) -> list:
             if int(c) != channel and POLARITY_OF_CHANNEL.get(int(c)) == side]
 
 
+# ---------------------------------------------------------------------------
+# PER-BENCH WIRING
+#
+# The two benches are wired to different cards in different ways, so the panel
+# needs to know which bench it is looking at rather than assuming probe03's
+# form-C build. Everything above stays as it was - probe03's constants are the
+# probe03 entry here, re-exported so existing callers keep working.
+#
+# probe02 (RELAY1, E1345A @ 9::15) was mapped ON THE BENCH, 2026-08-10, by
+# closing each channel in turn against an all-open reference taken immediately
+# before it, forward then reverse, with the Keithley 2400 sourcing 10 V into
+# a 1 uA compliance. Channels 0-3 added +101..+155 pA (65-99 GOhm per die) in
+# BOTH directions; every other channel stayed inside a +-40 pA noise band and
+# six of them changed sign between passes. Tree switches 90/91/92 moved the
+# reading by less than the noise, alone or combined with a channel - so the
+# SMU is on the card's own terminals and the VXI analog bus is not in the
+# path. That matches the original LaMP executable, whose database logs
+# fldSwitch cycling 1,2,3,4 per quad against this one card.
+# ---------------------------------------------------------------------------
+
+BENCH_WIRING = {
+    "probe03": {
+        "driver_key": "relay2_eg",
+        "card_type": "E1364A",
+        "family": FAMILY_FORM_C,
+        "wires_per_die": 2,
+        "die_sets": DIE_SETS,
+        "coax_of_channel": COAX_OF_CHANNEL,
+        "node_of_channel": NODE_OF_CHANNEL,
+        "conflict_groups": CONFLICT_GROUPS,
+        "ground_channel": GROUND_TERMINAL_CHANNEL,
+        "uses_analog_bus": False,
+        "instrument": "HP 3458A / E1326B at the card's terminals",
+        "summary": ("Form C SPDT, 8 wired channels: two per die (one HI, one LO) "
+                    "for the four dies of a 2x2 shot. Open grounds the pin via "
+                    "the chained NC bus."),
+        "evidence": "transcribed from the physical wiring (references/probe03mapping)",
+    },
+    "probe02": {
+        "driver_key": "relay1_eg",
+        "card_type": "E1345A",
+        "family": FAMILY_MUX,
+        # A mux channel switches a HI/LO PAIR, so one die needs one channel -
+        # unlike probe03's form-C card, where a die costs two.
+        "wires_per_die": 1,
+        "die_sets": {1: (0,), 2: (1,), 3: (2,), 4: (3,)},
+        "coax_of_channel": {},
+        "node_of_channel": {},
+        # Nothing here can damage anything: closing two channels just puts two
+        # dies in parallel, which spoils the reading rather than shorting pins.
+        "conflict_groups": (),
+        "ground_channel": None,
+        "uses_analog_bus": False,
+        "instrument": "Keithley 2400 SMU, rear triax, 2-wire (SYST:RSEN OFF)",
+        "summary": ("16-channel relay multiplexer, 4 wired channels: CH00-CH03, "
+                    "one per die of a 2x2 shot, each switching a HI/LO pair. "
+                    "CH04-CH15 unwired. Tree switches unused."),
+        "evidence": "measured on the bench 2026-08-10 (see module header)",
+    },
+}
+
+# Same numbering the original LaMP executable logged in fldSwitch.
+LAMP_SWITCH_OF_CHANNEL = {0: 1, 1: 2, 2: 3, 3: 4}
+
+
+def bench_wiring(name: str) -> dict:
+    """Wiring model for a bench, or an empty-but-valid one if unknown."""
+    return BENCH_WIRING.get(str(name), {
+        "driver_key": "", "card_type": "", "family": FAMILY_UNKNOWN,
+        "wires_per_die": 0, "die_sets": {}, "coax_of_channel": {},
+        "node_of_channel": {}, "conflict_groups": (), "ground_channel": None,
+        "uses_analog_bus": False, "instrument": "",
+        "summary": "No wiring recorded for this bench yet.", "evidence": "",
+    })
+
+
+def wired_channels(name: str) -> tuple:
+    wiring = bench_wiring(name)
+    out = []
+    for chans in wiring["die_sets"].values():
+        out.extend(chans)
+    return tuple(sorted(set(out)))
+
+
+def die_of_channel_on(name: str, channel: int):
+    for die, chans in bench_wiring(name)["die_sets"].items():
+        if int(channel) in chans:
+            return die
+    return None
+
+
+def describe_channel_on(name: str, channel: int) -> str:
+    """What closing this channel connects, for the named bench."""
+    channel = int(channel)
+    wiring = bench_wiring(name)
+    if name == "probe03":
+        return describe_channel(channel)
+    die = die_of_channel_on(name, channel)
+    if die is None:
+        return f"CH{channel:02d} - not wired on {name}"
+    sw = LAMP_SWITCH_OF_CHANNEL.get(channel)
+    tail = f"  (LaMP switch {sw})" if sw else ""
+    return (f"CH{channel:02d} - die {die} of the 2x2 shot, HI+LO pair "
+            f"-> {wiring['instrument'].split(',')[0]}{tail}")
+
+
 def _chan_spec(channel, card: int = 1) -> str:
     """(@ccnn) - card number then two-digit channel, per the manual."""
     return f"(@{int(card):02d}{int(channel):02d})"

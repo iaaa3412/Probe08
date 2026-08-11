@@ -41,10 +41,10 @@ from tkinter import filedialog, messagebox, ttk
 from instruments import eg_profiles
 from instruments.hp_switchbox import (
     BANK0, BANK1, CHANNELS, COAX_OF_CHANNEL, DIE_SETS, FAMILY_FORM_C,
-    FAMILY_MUX, GROUND_TERMINAL_CHANNEL, NODE_LABELS, NODE_OF_CHANNEL,
-    POLARITY_OF_CHANNEL, TREE_AT, TREE_AT2, TREE_BT, TREE_LABELS,
-    TREE_SWITCHES, conflicts_with, describe_channel, die_of_channel,
-    fres_partner,
+    FAMILY_MUX, GROUND_TERMINAL_CHANNEL, LAMP_SWITCH_OF_CHANNEL, NODE_LABELS,
+    NODE_OF_CHANNEL, POLARITY_OF_CHANNEL, TREE_AT, TREE_AT2, TREE_BT,
+    TREE_LABELS, TREE_SWITCHES, bench_wiring, conflicts_with, describe_channel,
+    describe_channel_on, die_of_channel, die_of_channel_on, fres_partner,
 )
 
 # Driver keys, in the order the profile lists them.
@@ -287,10 +287,16 @@ class SwitchboxTestPanel(ttk.Frame):
         c = self._canvas
         col_ch, col_bus, col_tree = _LBL_W, _LBL_W + 210, _LBL_W + 120
         y = 30
+        wiring = self._wiring()
         c.create_text(14, 10, anchor="nw", fill=_C_TEXT,
                       font=("Segoe UI", 9, "bold"),
                       text=f"{self._card_type or 'multiplexer'}    "
                            f"SCAN:PORT {getattr(self, '_scan_port', '?')}")
+        if wiring:
+            c.create_text(14, 26, anchor="nw", fill=_C_DEAD,
+                          font=("Segoe UI", 8),
+                          text=f"WIRED on {self._bench()} — {wiring['summary']}")
+            y = 46
 
         for bank, channels, tree, bus in (
                 (0, BANK0, TREE_AT, "analog bus  H / L / G   (sense)"),
@@ -299,7 +305,9 @@ class SwitchboxTestPanel(ttk.Frame):
             top = y
             for ch in channels:
                 closed = bool(self._state.get(ch))
-                c.create_text(_LBL_W - 12, y, anchor="e", fill=_C_TEXT,
+                die = die_of_channel_on(self._bench(), ch) if wiring else None
+                c.create_text(_LBL_W - 12, y, anchor="e",
+                              fill=_C_TEXT if (die or not wiring) else _C_DIM,
                               font=("Consolas", 9),
                               text=f"ch{ch:02d}")
                 self._dot(col_ch, y, closed, ch)
@@ -307,6 +315,16 @@ class SwitchboxTestPanel(ttk.Frame):
                 c.create_line(col_ch + _DOT_R, y, col_tree - 18, y,
                               fill=_C_PATH if closed else _C_DIM,
                               width=3 if closed else 1)
+                if wiring:
+                    if die:
+                        sw = LAMP_SWITCH_OF_CHANNEL.get(ch)
+                        c.create_text(col_ch + 22, y, anchor="w", fill=_C_DEAD,
+                                      font=("Segoe UI", 8, "bold"),
+                                      text=f"die {die}  HI+LO"
+                                           + (f"   (LaMP sw {sw})" if sw else ""))
+                    else:
+                        c.create_text(col_ch + 22, y, anchor="w", fill=_C_DIM,
+                                      font=("Segoe UI", 8), text="not wired")
                 y += _ROW_H
             bottom = y - _ROW_H
             mid = (top + bottom) // 2
@@ -325,9 +343,14 @@ class SwitchboxTestPanel(ttk.Frame):
             c.create_line(col_tree + _DOT_R, mid, col_bus, mid,
                           fill=_C_PATH if tree_closed else _C_DIM,
                           width=3 if tree_closed else 1)
+            bus_text = bus
+            if wiring and not wiring.get("uses_analog_bus", True):
+                # Measured, not assumed: closing a tree alone or with a channel
+                # moved the reading by less than the noise on this bench.
+                bus_text = bus + "   — NOT in the path on this bench"
             c.create_text(col_bus + 8, mid, anchor="w",
                           fill=_C_TEXT if tree_closed else _C_DIM,
-                          font=("Segoe UI", 8), text=bus)
+                          font=("Segoe UI", 8), text=bus_text)
             y += 22
 
         # AT2 sits between the banks
@@ -385,21 +408,46 @@ class SwitchboxTestPanel(ttk.Frame):
                               text="NC is the ground entry for the whole bus")
             y += _ROW_H
 
-    def _is_probe03_card(self) -> bool:
-        """The coax/die map in hp_switchbox describes ONE physical card - the
-        wired E1364A on probe03. Showing it against any other card would be
-        inventing wiring."""
+    def _bench(self) -> str:
         try:
-            return (eg_profiles.active_name() == "probe03"
-                    and self._key == "relay2_eg")
+            return eg_profiles.active_name()
         except Exception:
-            return False
+            return ""
+
+    def _wiring(self) -> dict:
+        """The active bench's wiring, but ONLY when the selected card is the
+        one that wiring describes. Every bench has spare cards that go
+        nowhere; drawing a die map against one of those would be inventing
+        connections."""
+        wiring = bench_wiring(self._bench())
+        if wiring.get("driver_key") and self._key == wiring["driver_key"]:
+            return wiring
+        return {}
+
+    def _is_probe03_card(self) -> bool:
+        """probe03's form-C coax map specifically - the E1364A drawing needs
+        the coax numbers, which no other bench has."""
+        return self._bench() == "probe03" and bool(self._wiring())
 
     # -- family-specific buttons -------------------------------------------
 
     def _build_family_actions(self):
         for w in self._actions.winfo_children():
             w.destroy()
+        wiring = self._wiring()
+        if self._family == FAMILY_MUX and wiring:
+            # This card is the wired one - lead with the die buttons, which is
+            # what anyone actually wants, and keep the raw routing behind them.
+            ttk.Label(self._actions,
+                      text=f"{self._bench()} 2×2 shot:").pack(side="left")
+            for die in sorted(wiring["die_sets"]):
+                ttk.Button(self._actions, text=f"Die {die}", width=7,
+                           command=lambda d=die: self._route_die_mux(d)).pack(
+                    side="left", padx=2)
+            ttk.Button(self._actions, text="Open all", width=9,
+                       command=self._open_all_dies).pack(side="left", padx=(8, 0))
+            ttk.Separator(self._actions, orient="vertical").pack(
+                side="left", fill="y", padx=8)
         if self._family == FAMILY_MUX:
             ttk.Label(self._actions, text="Route:").pack(side="left")
             ttk.Label(self._actions, text="ch").pack(side="left", padx=(8, 2))
@@ -523,6 +571,40 @@ class SwitchboxTestPanel(ttk.Frame):
                 states, f"4-wire: AT+BT + ch{ch:02d} + ch{fres_partner(ch):02d}")
         self._run(f"4-wire ch{ch:02d}", _work)
 
+    def _route_die_mux(self, die):
+        """Select one die on a multiplexer bench (probe02-style).
+
+        Exactly one channel closed at a time. Closing two does not short
+        anything here - a mux channel switches a whole HI/LO pair - but it
+        puts two dies in parallel, so the reading would be the pair, not the
+        die. Opening the others first is what makes the number mean something.
+        """
+        wiring = self._wiring()
+        channels = wiring["die_sets"][die]
+        others = [c for d, chans in wiring["die_sets"].items()
+                  for c in chans if d != die]
+        def _work(d):
+            for c in others:
+                d.open_channel(c)
+            for c in channels:
+                d.close_channel(c)
+            states = d.mux_states()
+            return lambda: self._apply(
+                states, f"die {die} selected — CH"
+                        + ", CH".join(f"{c:02d}" for c in channels)
+                        + " closed, the other dies open")
+        self._run(f"die {die}", _work)
+
+    def _open_all_dies(self):
+        wiring = self._wiring()
+        chans = [c for chans in wiring["die_sets"].values() for c in chans]
+        def _work(d):
+            for c in chans:
+                d.open_channel(c)
+            states = d.mux_states()
+            return lambda: self._apply(states, "all dies open")
+        self._run("open all dies", _work)
+
     def _route_die(self, die):
         channels = DIE_SETS[die]
         if not messagebox.askokcancel(
@@ -550,7 +632,7 @@ class SwitchboxTestPanel(ttk.Frame):
         for ch in CHANNELS:
             lines.append(f"ch{ch:02d}  "
                          f"{'CLOSED' if self._state.get(ch) else 'open  '}  "
-                         f"{describe_channel(ch) if self._is_probe03_card() else ''}")
+                         f"{describe_channel_on(self._bench(), ch) if self._wiring() else ''}")
         if self._family == FAMILY_MUX:
             for t in TREE_SWITCHES:
                 lines.append(f"ch{t}  "
