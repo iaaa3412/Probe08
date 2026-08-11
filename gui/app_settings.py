@@ -39,3 +39,25 @@ def set_default_ata_folder(system: str, folder: str) -> None:
     data = load_settings()
     data.setdefault("default_ata_folder", {})[system] = folder
     save_settings(data)
+
+
+# The prober the GUI should come up on. Stored as (system, bench) together
+# rather than just a bench name, because the system is what decides which
+# whole UI is shown and a bench name alone would need a lookup to resolve -
+# one that would break the moment a bench is renamed or removed.
+def get_default_prober() -> "tuple[str, str] | tuple[None, None]":
+    entry = load_settings().get("default_prober") or {}
+    system, bench = entry.get("system"), entry.get("bench")
+    return (system, bench) if system else (None, None)
+
+
+def set_default_prober(system: str, bench: str) -> None:
+    data = load_settings()
+    data["default_prober"] = {"system": system, "bench": bench}
+    save_settings(data)
+
+
+def clear_default_prober() -> None:
+    data = load_settings()
+    data.pop("default_prober", None)
+    save_settings(data)

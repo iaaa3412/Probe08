@@ -573,6 +573,27 @@ class PmaProcessPanel(ttk.Frame):
         if recipe_panel.import_legacy_from_path(self._pma_path):
             self.recipe_name_var.set(recipe_panel.get_active_recipe())
 
+    def _push_to_run_tab(self):
+        """Hand the loaded recipe to the Run tab, so it no longer needs its own
+        loader - the default recipe auto-loads here at startup and the Run tab
+        picks it up with no clicks.
+
+        NOT while a run is anchored: re-adopting resets the anchor, and losing
+        where the chuck is mid-wafer is far worse than having to press
+        '↙ From PMA Process' by hand. The button is still there for that.
+        """
+        run = getattr(self._main_layout, "eg_pma_run", None)
+        if run is None or not hasattr(run, "adopt_from_process"):
+            return
+        if getattr(run, "_anchored", False):
+            self._log("[PMA] Run tab left alone — it is anchored to a die. "
+                      "Use '↙ From PMA Process' there to re-adopt.")
+            return
+        try:
+            run.adopt_from_process(quiet=True)
+        except Exception as exc:
+            self._log(f"[PMA] Could not hand the recipe to the Run tab: {exc}")
+
     def load_path(self, path: str):
         try:
             fields = egpma.parse_pma_file(path)
@@ -606,6 +627,7 @@ class PmaProcessPanel(ttk.Frame):
             pma_wafer.show_touchdowns(shot_data)
 
         self.refresh_align_site()
+        self._push_to_run_tab()
 
         move_list = egpma.build_move_list(touchdowns)
         self._move_list = move_list

@@ -149,10 +149,13 @@ class EgPmaRunPanel(ttk.Frame):
         self._recipe_var = tk.StringVar(value="(none loaded)")
         ttk.Label(row, textvariable=self._recipe_var, foreground="#0077cc",
                   font=("Consolas", 9)).grid(row=0, column=1, sticky="w", padx=6)
+        # No "Load .PMA" here on purpose: the PMA Process tab is the one that
+        # parses recipes and owns the source folder, and two tabs disagreeing
+        # about which recipe is loaded is worse than a missing shortcut. This
+        # button just re-pulls whatever that tab has; it also runs by itself
+        # at startup - see adopt_from_process().
         ttk.Button(row, text="↙ From PMA Process", command=self._use_loaded_pma).grid(
             row=0, column=2, sticky="e", padx=(0, 4))
-        ttk.Button(row, text="Load .PMA…", command=self._load_recipe).grid(
-            row=0, column=3, sticky="e")
 
     def _build_info(self):
         lf = ttk.LabelFrame(self, text="Recipe", padding=6)
@@ -271,25 +274,33 @@ class EgPmaRunPanel(ttk.Frame):
 
     # -- recipe -------------------------------------------------------------
 
-    def _use_loaded_pma(self):
-        """Take whatever the PMA Process tab already has open.
+    def adopt_from_process(self, quiet: bool = True) -> bool:
+        """Pull the PMA Process tab's recipe. Returns True if one was taken.
 
-        That tab is the one that parses recipes, keeps the PMA source folder and
-        feeds the wafer map, so there is no reason to parse a second copy here -
-        and two tabs disagreeing about which recipe is loaded would be worse
-        than useless.
+        `quiet` suppresses the "nothing loaded" dialogs so this can run at
+        startup, where an empty PMA Process tab is normal rather than an
+        error worth interrupting anyone about.
         """
         proc = getattr(self._main_layout, "pma_process", None)
         if proc is None:
-            messagebox.showinfo("PMA", "The PMA Process tab is not available.")
-            return
+            if not quiet:
+                messagebox.showinfo("PMA", "The PMA Process tab is not available.")
+            return False
         path = getattr(proc, "_pma_path", None)
         fields = getattr(proc, "_fields", None)
         touchdowns = getattr(proc, "_touchdowns", None)
         if not (path and fields and touchdowns):
-            messagebox.showinfo("PMA", "No recipe is loaded in the PMA Process tab yet.")
-            return
+            if not quiet:
+                messagebox.showinfo(
+                    "PMA", "No recipe is loaded in the PMA Process tab yet.")
+            return False
         self._adopt(path, fields, touchdowns)
+        return True
+
+    def _use_loaded_pma(self):
+        """Button handler - same as adopt_from_process, but it says so when
+        there is nothing to take."""
+        self.adopt_from_process(quiet=False)
 
     def _align_die_from_wafer_tab(self):
         """The align die named by the recipe-generator workbook, if one is loaded.

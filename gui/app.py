@@ -79,6 +79,10 @@ class AtomicaDashboard(tk.Tk):
 
         self._build_bottom_routing()
         self._autoload_default_ata_folders()
+        # After the folders, so switching system finds its folder already
+        # loaded; before init_hardware, so the first connect sweep runs
+        # against the bench that was actually chosen.
+        self._apply_default_prober()
         self.after(500, self.init_hardware)
         self.update_statistics_visuals()
         self.check_system_ready()
@@ -294,6 +298,44 @@ class AtomicaDashboard(tk.Tk):
         self._routing_visible = False
         holder, self.bottom_routing = scrollable_routing(lf, self)
         holder.pack(fill="both", expand=True)
+
+    def accretech_benches(self) -> list:
+        return list(ACCRETECH_BENCHES)
+
+    def electroglas_benches(self) -> list:
+        try:
+            return eg_profiles.profile_names()
+        except Exception:
+            return []
+
+    def apply_prober(self, system: str, bench: str):
+        """Switch the whole GUI to a prober: system first, then bench.
+
+        Order matters - cmd_set_eg_profile reconnects instruments and pokes
+        the Electroglas UI, so the Electroglas side has to be the active one
+        before it runs.
+        """
+        if system not in self._by_system:
+            self.log(f"[SYSTEM] Unknown system {system!r}")
+            return
+        if system != self.active_system:
+            self.cmd_set_active_system(system)
+        if system == "electroglas" and bench:
+            try:
+                if bench != eg_profiles.active_name():
+                    self.cmd_set_eg_profile(bench)
+            except Exception as e:
+                self.log(f"[SYSTEM] Could not select {bench!r}: {e}")
+        self._refresh_bench_picker()
+
+    def _apply_default_prober(self):
+        """Startup only. Silent when nothing is set - Accretech stays the
+        fallback, which is what the app did before this setting existed."""
+        system, bench = app_settings.get_default_prober()
+        if not system:
+            return
+        self.log(f"[SYSTEM] Default prober: {system} / {bench}")
+        self.apply_prober(system, bench)
 
     def _refresh_routing_button(self):
         """Switch Routing is an Accretech-only view, so hide its toggle on the

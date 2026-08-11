@@ -1267,10 +1267,86 @@ class MainLayout(ttk.Frame):
         ttk.Label(resp_row, textvariable=resp_var, foreground="#0055aa",
                   font=("Consolas", 9)).pack(side="left", padx=4)
 
+    def _build_default_prober_row(self, tab):
+        """Which prober the GUI comes up on, across BOTH systems.
+
+        Deliberately not per-system: the point is to decide whether the app
+        starts on Accretech or Electroglas at all, so one list spans both and
+        picking an entry sets the system as well as the bench.
+        """
+        lf = ttk.LabelFrame(tab, text="Default prober (used at startup)", padding=6)
+        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+
+        ttk.Label(lf, text="Start the GUI on:").pack(side="left", padx=(0, 4))
+        self._default_prober_var = tk.StringVar()
+        self._default_prober_cb = ttk.Combobox(
+            lf, textvariable=self._default_prober_var, state="readonly", width=32,
+            postcommand=self._refresh_default_prober_choices)
+        self._default_prober_cb.pack(side="left", padx=(0, 6))
+        ttk.Button(lf, text="⭐ Set as Default",
+                   command=self._set_default_prober).pack(side="left", padx=(0, 4))
+        ttk.Button(lf, text="✖ Clear",
+                   command=self._clear_default_prober).pack(side="left", padx=(0, 10))
+
+        self._default_prober_lbl = ttk.Label(lf, text="", foreground="#374151",
+                                             font=("Segoe UI", 8, "italic"))
+        self._default_prober_lbl.pack(side="left")
+        self._refresh_default_prober_choices()
+        self._update_default_prober_label()
+
+    def _prober_choices(self) -> list:
+        """[(label, system, bench)] for every prober on both systems."""
+        out = [(f"Accretech — {b}", "accretech", b)
+               for b in self.controller.accretech_benches()]
+        for b in self.controller.electroglas_benches():
+            out.append((f"Electroglas — {b}", "electroglas", b))
+        return out
+
+    def _refresh_default_prober_choices(self):
+        self._prober_choice_map = {lab: (s, b) for lab, s, b in self._prober_choices()}
+        self._default_prober_cb.config(values=list(self._prober_choice_map))
+        if not self._default_prober_var.get():
+            system, bench = app_settings.get_default_prober()
+            match = next((lab for lab, (s, b) in self._prober_choice_map.items()
+                          if s == system and b == bench), "")
+            self._default_prober_var.set(match)
+
+    def _update_default_prober_label(self):
+        system, bench = app_settings.get_default_prober()
+        if not system:
+            self._default_prober_lbl.config(
+                text="no default — the GUI starts on Accretech", foreground="#6b7280")
+        else:
+            self._default_prober_lbl.config(
+                text=f"default: {system} / {bench}", foreground="#166534")
+
+    def _set_default_prober(self):
+        from tkinter import messagebox
+        label = self._default_prober_var.get()
+        pick = getattr(self, "_prober_choice_map", {}).get(label)
+        if not pick:
+            messagebox.showinfo("Default prober", "Pick a prober from the list first.")
+            return
+        system, bench = pick
+        app_settings.set_default_prober(system, bench)
+        self._update_default_prober_label()
+        self.controller.log(
+            f"[SYSTEM] Default prober set to {system} / {bench} — the GUI will "
+            f"start on {'Electroglas' if system == 'electroglas' else 'Accretech'}.")
+        # Switch to it now too, so the setting is visibly what you just chose
+        # rather than something that only takes effect next launch.
+        self.controller.apply_prober(system, bench)
+
+    def _clear_default_prober(self):
+        app_settings.clear_default_prober()
+        self._default_prober_var.set("")
+        self._update_default_prober_label()
+        self.controller.log("[SYSTEM] Default prober cleared.")
+
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="ATA Folder")
-        tab.rowconfigure(1, weight=1)
+        nb.add(tab, text="Internal")
+        tab.rowconfigure(2, weight=1)          # the file list / map split
         tab.columnconfigure(0, weight=1)
 
         ctrl = ttk.Frame(tab)
@@ -1298,11 +1374,13 @@ class MainLayout(ttk.Frame):
         self._default_ata_lbl.pack(side="left", padx=(0, 10))
         self._update_default_ata_label()
 
+        self._build_default_prober_row(tab)
+
         self._map_source_var = tk.StringVar(
             value="Accretech" if self._system == "accretech" else "Electroglas")
 
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
-        split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        split.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
         list_frame = ttk.LabelFrame(split, text="ATA Files", width=240)
         split.add(list_frame, weight=0)
