@@ -2069,10 +2069,6 @@ class MainLayout(ttk.Frame):
         self._exec2_last_run_start_idx = 0
         self._exec2_steps    = []
         self._exec2_current_rc = None
-        self._exec2_pma_row_offset = 0
-        self._exec2_pma_col_offset = 0
-        self._exec2_pma_offset_confirmed = False
-        self._exec2_current_pma_shot = None
         self._exec2_overlay_row_offset = 0
         self._exec2_overlay_col_offset = 0
         self._exec2_overlay_offset_confirmed = False
@@ -2113,10 +2109,6 @@ class MainLayout(ttk.Frame):
             self._exec2_test_selected_btn = ttk.Button(
                 ctrl, text="▶  Test Selected", command=self._exec2_start_test_selected)
             self._exec2_test_selected_btn.pack(side="left", padx=2, pady=5)
-        else:
-            self._exec2_test_pma_btn = ttk.Button(
-                ctrl, text="▶  Test PMA", command=self._exec2_start_test_pma)
-            self._exec2_test_pma_btn.pack(side="left", padx=2, pady=5)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
@@ -2247,9 +2239,6 @@ class MainLayout(ttk.Frame):
             self._exec2_select_all_btn = ttk.Button(
                 map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
             self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
-        else:
-            ttk.Button(map_bar, text="🔀 Compare/Merge PMA…",
-                       command=self._exec2_open_pma_compare_dialog).pack(side="left")
 
         self._exec2_wafer_map = WaferMapPanel(map_lf)
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
@@ -2557,7 +2546,6 @@ class MainLayout(ttk.Frame):
     def _exec2_full_die_thread(self, my_token: int):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
-        self._exec2_current_pma_shot = None
         error_msg = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
@@ -2638,28 +2626,27 @@ class MainLayout(ttk.Frame):
             btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
 
     def _exec2_sites_label(self, picks) -> str:
-        """Header over the map. One pick names the touchdown that die is in.
+        """Header over the map. One pick names what sits on that square.
 
-        Every square on this map is one PROBER die, which for a quad product
-        is one touchdown covering up to four devices - so with a single die
-        picked the useful thing to show is which devices come down with it.
-        The overlay is where those IDs live, so this reads whatever the PMA
-        overlay put on that cell and says nothing when there is no overlay.
-        Multi-pick falls back to the count: naming touchdowns one at a time
-        is only legible for one.
+        On Accretech a square is one prober die, which for a quad product is a
+        whole touchdown carrying up to four devices, so naming them answers
+        "what comes down with this". Same ID sources and priority the exports
+        use, so the header can never disagree with the recorded die_id.
+        Multi-pick falls back to the count: this is only legible for one.
         """
         n = len(picks)
         if n != 1:
             return f"Test sites: {n} picked (click dies to add/remove)"
         rc = tuple(picks[0])
-        ids = (self._exec2_overlay_die_ids or {}).get(rc, "")
+        ids = ((self._exec2_overlay_die_ids or {}).get(rc, "")
+               or self._exec2_wafer_map.die_ids.get(rc, ""))
         where = f"Test site: 1 picked — R{rc[0]}C{rc[1]}"
         if not ids:
-            return (f"{where} (no PMA overlay on this die — "
-                    "🔀 Compare/Merge PMA to name it)")
+            return f"{where} (no die ID on this square)"
         devices = [d for d in ids.split("/") if d.strip()]
-        return (f"{where}, touchdown of {len(devices)} device"
-                f"{'' if len(devices) == 1 else 's'}: {ids}")
+        if len(devices) < 2:
+            return f"{where}:  {ids}"
+        return f"{where}, touchdown of {len(devices)} devices:  {ids}"
 
     def _exec2_randomize_sites(self):
         dies = self._exec2_wafer_map._last_dies
@@ -2776,170 +2763,6 @@ class MainLayout(ttk.Frame):
         self._exec2_log(f"[RUN] ▶ Test Selected — {len(sites)} selected die(s): "
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
         self._exec2_start_test_die()
-
-    def _exec2_pma_accretech_rc(self):
-        accr_wafer = getattr(self, "accr_wafer", None)
-        if accr_wafer is None:
-            return set()
-        return {(y, x) for (x, y, _raw) in accr_wafer._dies}
-
-    def _exec2_compute_pma_merge(self, row_offset: int = 0, col_offset: int = 0):
-        data = self.pma_wafer.workbook_data
-        if not data:
-            self._exec2_log("[RUN] Test PMA / Compare: no PMA workbook loaded — "
-                            "open one on the PMA tab first.")
-            return None, None, None
-        accretech_rc = self._exec2_pma_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Test PMA / Compare: no Accretech wafer map loaded — "
-                            "extract one on the Accr Wafer tab (or load an ATA folder "
-                            "that already has ata_wafer_map_accretech.csv).")
-            return None, None, None
-        pma_grid = pma_shots_to_grid(data)
-        merged = merge_with_accretech(pma_grid, accretech_rc, row_offset, col_offset)
-        return merged, pma_grid, accretech_rc
-
-    def _exec2_pma_starting_offset(self, pma_grid, accretech_rc):
-        if self._exec2_pma_offset_confirmed:
-            return self._exec2_pma_row_offset, self._exec2_pma_col_offset
-        return centroid_offset(pma_grid, accretech_rc)
-
-    def _exec2_save_pma_merge_to_ata(self, merged):
-        from tkinter import messagebox
-        import csv
-        if not merged:
-            messagebox.showinfo("No Data", "No merged dies to save — check the "
-                                "Compare/Merge counts (row/col offset may be off).")
-            return
-        folder = self._ata_folder
-        if not folder:
-            messagebox.showerror(
-                "No ATA Folder",
-                "No ATA folder is loaded — use 📁 Load ATA Folder on the top "
-                "toolbar first.")
-            return
-        path = os.path.join(folder, "ata_wafer_map_merged.csv")
-        if os.path.exists(path) and not messagebox.askyesno(
-            "Overwrite Merged Map",
-            f"{path}\nalready exists — overwrite it with the current "
-            f"{len(merged)} merged die(s)?"
-        ):
-            return
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            wr = csv.writer(f)
-            wr.writerow(["row", "col", "x_die", "y_die", "die_ids"])
-            for d in merged:
-                wr.writerow([d["row"], d["col"], d["col"], d["row"],
-                            "/".join(d["die_ids"])])
-        self._exec2_log(f"[RUN] Saved {len(merged)} merged die(s) → {path}")
-
-    def _exec2_open_pma_compare_dialog(self):
-        data = self.pma_wafer.workbook_data
-        if not data:
-            self._exec2_log("[RUN] Test PMA / Compare: no PMA workbook loaded — "
-                            "open one on the PMA tab first.")
-            return
-        accretech_rc = self._exec2_pma_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Test PMA / Compare: no Accretech wafer map loaded — "
-                            "extract one on the Accr Wafer tab (or load an ATA folder "
-                            "that already has ata_wafer_map_accretech.csv).")
-            return
-        pma_grid = pma_shots_to_grid(data)
-        start_row, start_col = self._exec2_pma_starting_offset(pma_grid, accretech_rc)
-
-        dlg = tk.Toplevel(self)
-        dlg.title("Compare / Merge PMA Wafer Map")
-        dlg.transient(self.winfo_toplevel())
-        dlg.resizable(False, False)
-
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill="both", expand=True)
-
-        summary_var = tk.StringVar()
-        ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
-                 justify="left").grid(row=0, column=0, columnspan=4, sticky="w",
-                                      pady=(0, 8))
-        ttk.Label(frm, text="Overlaid by matching the two maps' centers (see "
-                 "🎯 Center Overlay) — a PMA die counts as \"merged\" when its "
-                 "(row, col), shifted by the offset below, lands on a die the "
-                 "Accretech prober actually walked. Nudge the offset by hand if "
-                 "dies land on the wrong physical die.",
-                 font=("Segoe UI", 8), foreground="#6b7280", wraplength=340,
-                 justify="left").grid(row=1, column=0, columnspan=4, sticky="w",
-                                      pady=(0, 10))
-
-        ttk.Label(frm, text="Row offset:").grid(row=2, column=0, sticky="e")
-        row_var = tk.IntVar(value=start_row)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
-            row=2, column=1, sticky="w", padx=(4, 16))
-        ttk.Label(frm, text="Col offset:").grid(row=2, column=2, sticky="e")
-        col_var = tk.IntVar(value=start_col)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
-            row=2, column=3, sticky="w", padx=(4, 0))
-
-        state = {"merged": []}
-
-        def recompute(*_a):
-            try:
-                ro, co = row_var.get(), col_var.get()
-            except tk.TclError:
-                return
-            state["merged"] = merge_with_accretech(pma_grid, accretech_rc, ro, co)
-            summary_var.set(
-                f"Accretech dies walked:      {len(accretech_rc)}\n"
-                f"PMA dies (with a real ID):  {len(pma_grid)}\n"
-                f"Merged (on both maps):      {len(state['merged'])}"
-            )
-
-        row_var.trace_add("write", recompute)
-        col_var.trace_add("write", recompute)
-        recompute()
-
-        def center_overlay():
-            ro, co = centroid_offset(pma_grid, accretech_rc)
-            row_var.set(ro)
-            col_var.set(co)
-
-        def use_offsets():
-            self._exec2_pma_row_offset = row_var.get()
-            self._exec2_pma_col_offset = col_var.get()
-            self._exec2_pma_offset_confirmed = True
-
-        def highlight():
-            use_offsets()
-            picks = [(d["row"], d["col"]) for d in state["merged"]]
-            self._exec2_wafer_map.set_picked(picks)
-            self._exec2_on_sites_changed(picks)
-            self._exec2_log(f"[RUN] Highlighted {len(picks)} merged PMA/Accretech "
-                            "die(s) on the map.")
-
-        def save_ata():
-            use_offsets()
-            self._exec2_save_pma_merge_to_ata(state["merged"])
-
-        def use_for_test():
-            use_offsets()
-            picks = [(d["row"], d["col"]) for d in state["merged"]]
-            self._exec2_wafer_map.set_picked(picks)
-            self._exec2_on_sites_changed(picks)
-            dlg.destroy()
-            self._exec2_start_test_die()
-
-        ttk.Button(frm, text="🎯 Center Overlay", command=center_overlay).grid(
-            row=2, column=4, sticky="w", padx=(10, 0))
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(12, 0))
-        ttk.Button(btns, text="🖌 Highlight on Map", command=highlight).pack(side="left")
-        ttk.Button(btns, text="💾 Save Merged to ATA", command=save_ata).pack(
-            side="left", padx=6)
-        ttk.Button(btns, text="▶ Use for Test PMA", command=use_for_test).pack(side="left")
-        ttk.Button(btns, text="Close", command=lambda: (use_offsets(), dlg.destroy())).pack(
-            side="right")
-
-        dlg.update_idletasks()
-        dlg.grab_set()
 
     _OVERLAY_SOURCE_LABELS = {"pma": "PMA touchdown", "xls": "Recipe Generator",
                              "csv": "CSV wafer map"}
@@ -3174,43 +2997,7 @@ class MainLayout(ttk.Frame):
         dlg.update_idletasks()
         dlg.grab_set()
 
-    def _exec2_start_test_pma(self):
-        if self._exec2_running:
-            self._exec2_log("[RUN] A run is already active — stop it first.")
-            return
-        data = self.pma_wafer.workbook_data
-        if not data:
-            self._exec2_log("[RUN] Test PMA: no PMA workbook loaded — "
-                            "open one on the PMA tab first.")
-            return
-        accretech_rc = self._exec2_pma_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Test PMA: no Accretech wafer map loaded — "
-                            "extract one on the Accr Wafer tab (or load an ATA folder "
-                            "that already has ata_wafer_map_accretech.csv).")
-            return
-        pma_grid = pma_shots_to_grid(data)
-        row_off, col_off = self._exec2_pma_starting_offset(pma_grid, accretech_rc)
-        merged = merge_with_accretech(pma_grid, accretech_rc, row_off, col_off)
-        if not merged:
-            self._exec2_log(
-                "[RUN] Test PMA: no PMA dies land on the Accretech-walked map at "
-                f"offset row{row_off:+d}/col{col_off:+d} — open 🔀 Compare/Merge PMA "
-                "to check/nudge the alignment.")
-            return
-        self._exec2_pma_row_offset = row_off
-        self._exec2_pma_col_offset = col_off
-        self._exec2_pma_offset_confirmed = True
-        picks = [(d["row"], d["col"]) for d in merged]
-        die_shots_by_rc = {(d["row"], d["col"]): d for d in merged}
-        self._exec2_wafer_map.set_picked(picks)
-        self._exec2_on_sites_changed(picks)
-        self._exec2_log(
-            f"[RUN] ▶ Test PMA — {len(picks)} merged die(s) "
-            f"(offset row{row_off:+d}/col{col_off:+d})")
-        self._exec2_start_test_die(die_shots_by_rc=die_shots_by_rc)
-
-    def _exec2_start_test_die(self, die_shots_by_rc=None):
+    def _exec2_start_test_die(self):
         if self._exec2_running:
             self._exec2_log("[RUN] A run is already active — stop it first.")
             return
@@ -3238,13 +3025,12 @@ class MainLayout(ttk.Frame):
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_test_die_thread,
-            args=(sites, die_shots_by_rc, my_token), daemon=True)
+            args=(sites, my_token), daemon=True)
         self._exec2_lot_thread.start()
 
-    def _exec2_test_die_thread(self, sites, die_shots_by_rc, my_token: int):
+    def _exec2_test_die_thread(self, sites, my_token: int):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
-        die_shots_by_rc = die_shots_by_rc or {}
         error_msg = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
@@ -3279,8 +3065,6 @@ class MainLayout(ttk.Frame):
                            self._exec2_xy_var.set(f"X: {x} die\nY: {y} die"))
                 self._exec2_highlight_current(row, col)
                 self._exec2_die_num += 1
-
-                self._exec2_current_pma_shot = die_shots_by_rc.get((row, col))
 
                 ok = self._exec2_zup_measure_zdown(sim, prober, die_label)
                 self._exec2_update_die_color(row, col, ok)
@@ -3468,25 +3252,21 @@ class MainLayout(ttk.Frame):
                     if self._exec2_die_num else
                     self._exec2_xy_var.get().replace("\n", " "))
 
-        pma_shot = getattr(self, "_exec2_current_pma_shot", None)
-        pma_die_id = (pma_shot or {}).get("raw_text") or ""
         cur_row, cur_col = self._exec2_current_rc or (None, None)
-        # Three possible die-ID sources, in priority order:
+        # Two possible die-ID sources, in priority order:
         #   1. The Overlay dialog's manual die IDs (self._exec2_overlay_die_ids)
         #      — an explicit user action, so it wins if set.
         #   2. The currently-loaded wafer map's own ID column (e.g.
         #      Electroglas's "device_id"), captured by WaferMapPanel into
         #      .die_ids at load time — this is the map's real, authoritative
         #      ID and should be used automatically without any extra step.
-        #   3. The Test PMA compare/merge flow's shot ID, only present when
-        #      that flow was used to pick sites.
         # Whichever wins, it's the same "die_id" every export format reads,
         # so the export always matches what the map/overlay actually shows.
         map_die_id = (self._exec2_wafer_map.die_ids.get((cur_row, cur_col), "")
                       if cur_row is not None else "")
         overlay_die_id = (self._exec2_overlay_die_ids.get((cur_row, cur_col), "")
                           if cur_row is not None else "")
-        die_id = overlay_die_id or map_die_id or pma_die_id
+        die_id = overlay_die_id or map_die_id
         last_set_voltage_by_ch = {}
 
         overall_ok = True
@@ -3759,7 +3539,7 @@ class MainLayout(ttk.Frame):
 
     def get_last_run_results(self) -> list:
         """Results from the most recently started run only (Full Die/Test
-        Die/Test Selected/Test PMA) — what export formats other than plain
+        Die/Test Selected) — what export formats other than plain
         "Save as CSV" should write, so re-running doesn't accumulate old
         runs' rows into a new export."""
         return self.controller.results_data[self._exec2_last_run_start_idx:]
@@ -4237,7 +4017,7 @@ class MainLayout(ttk.Frame):
 
         only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
         only_pma_chk = ttk.Checkbutton(
-            frm, text="Only include Test PMA readings (has a die ID)",
+            frm, text="Only include readings that have a die ID",
             variable=only_pma_var)
         only_pma_chk.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 8))
 

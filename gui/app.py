@@ -516,7 +516,7 @@ class AtomicaDashboard(tk.Tk):
     }
 
     def init_hardware_eg(self):
-        profile = eg_profiles.active_name()
+        profile = eg_profiles.active_name() 
         self.log(f"[SYSTEM] Pinging Electroglas hardware — {eg_profiles.label(profile)}")
         # instruments.yaml is derived from the profile, so make sure it matches
         # the active bench before any driver reads an address out of it.
@@ -933,8 +933,8 @@ class AtomicaDashboard(tk.Tk):
             if fmt_type == "csv":
                 reason = "at least one current or resistance reading from a die touchdown"
             else:
-                reason = ("readings recorded during a ▶ Test PMA run (they carry the "
-                         "shot's device-ID string; Full Die/Test Die readings don't)"
+                reason = ("readings that carry a device-ID string — the wafer map "
+                         "needs an ID column, or set the IDs with Overlay…"
                          if fmt.get("requires_die_id", True) else "measurement results")
             self.ui.exec_panel.log(
                 f"[ERROR] No matching results yet from the last run for '{fmt['name']}' — "
