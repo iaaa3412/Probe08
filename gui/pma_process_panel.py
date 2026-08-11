@@ -621,9 +621,59 @@ class PmaProcessPanel(ttk.Frame):
             self._log(f"[PMA] LOAD ALL: the Run tab could not adopt the recipe: {exc}")
             return
 
+        self._write_wafer_map(run)
         n = self._push_touchdowns_to_recipe(run, recipe_panel, recipe)
         self._log(f"[PMA] LOAD ALL: done — recipe '{recipe}', {n} touchdown(s), "
                   "Run tab ready.")
+
+    def _write_wafer_map(self, run) -> int:
+        """Write the Run tab's wafer map from the recipe generator workbook.
+
+        LOAD ALL has to do this. It did not, so the map file was only ever
+        rewritten by the Run tab's Sync Run map button, and a folder whose
+        file had been written from some earlier recipe kept drawing that
+        recipe's dies - a 15-touchdown gauge showed a 15-shot wafer while the
+        run walked the real one.
+
+        The map is the WORKBOOK'S shots, not the .PMA's: the .xls is the
+        wafer, the .PMA only says which of it to visit. That is why the gauge
+        and the whole-wafer recipes must produce an identical map.
+        """
+        layout = self._main_layout
+        folder = getattr(layout, "_exec2_map_folder", None) or \
+            getattr(layout, "_ata_folder", None)
+        if not folder or not os.path.isdir(folder):
+            self._log("[PMA] LOAD ALL: no ATA folder, so the wafer map was not "
+                      "written.")
+            return 0
+        try:
+            shots = run._map_source_touchdowns()
+            from_workbook = shots is not run._touchdowns
+            path = egpma.save_wafer_map_csv(folder, shots, run._fields)
+            n = len(egpma.expand_touchdowns_to_dies(shots, *run._die_um))
+        except Exception as exc:
+            self._log(f"[PMA] LOAD ALL: could not write the wafer map — "
+                      f"{type(exc).__name__}: {exc}")
+            return 0
+        source = ("the recipe generator workbook" if from_workbook
+                  else "the PMA's touchdowns (NO WORKBOOK LOADED — this draws "
+                       "only the dies this recipe probes, not the wafer)")
+        self._log(f"[PMA] LOAD ALL: wafer map written from {source} — "
+                  f"{len(shots)} shot(s), {n} die(s) → {os.path.basename(path)}")
+        try:
+            layout._exec2_map_folder = folder
+            layout._exec2_map_source_var.set("Electroglas")
+            layout._exec2_draw_wafer_map()
+            # The row/col index is keyed to the die set the map was written
+            # from, so rebuild it now the map has changed under it.
+            run._build_rc_index()
+            run._last_seq = None
+            if run._index is not None:
+                run._highlight(run._index)
+        except Exception as exc:
+            self._log(f"[PMA] LOAD ALL: map written but the Run tab did not "
+                      f"redraw — {type(exc).__name__}: {exc}")
+        return n
 
     def _push_touchdowns_to_recipe(self, run, recipe_panel, recipe: str) -> int:
         """Attach the PMA's touchdowns, in recipe order, to the loaded recipe.
