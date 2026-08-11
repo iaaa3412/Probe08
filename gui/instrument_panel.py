@@ -2149,6 +2149,13 @@ class MainLayout(ttk.Frame):
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
         self._exec2_wafer_map.on_redraw = self._exec2_redraw_overlay_on_run_map
+        # Overlay labels only make sense zoomed in enough to read (same
+        # spirit as the NanoZ Run tab's _update_overlay_visibility). Bound
+        # with add="+" so the map's own pan/zoom/reset bindings (set up
+        # inside WaferMapPanel.__init__) still run first.
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<Double-Button-1>"):
+            self._exec2_wafer_map.canvas.bind(
+                seq, lambda _e: self._exec2_update_overlay_visibility(), add="+")
 
         stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
         body.add(stat_lf, weight=1)
@@ -2788,12 +2795,32 @@ class MainLayout(ttk.Frame):
     def _exec2_overlay_accretech_rc(self):
         return set(self._exec2_wafer_map.dies.keys())
 
+    _EXEC2_OVERLAY_MIN_DIE_PX = 22  # below this on-screen die width, overlay text is unreadable clutter
+
+    def _exec2_update_overlay_visibility(self):
+        if not self._exec2_overlay_items:
+            return
+        wm = self._exec2_wafer_map
+        sample_rc = next(iter(self._exec2_overlay_die_ids), None)
+        item = wm.dies.get(sample_rc) if sample_rc else None
+        bbox = wm.canvas.bbox(item) if item is not None else None
+        if not bbox:
+            return
+        width_px = bbox[2] - bbox[0]
+        state = "normal" if width_px >= self._EXEC2_OVERLAY_MIN_DIE_PX else "hidden"
+        for it in self._exec2_overlay_items:
+            try:
+                wm.canvas.itemconfigure(it, state=state)
+            except tk.TclError:
+                pass
+
     def _exec2_redraw_overlay_on_run_map(self):
         if not self._exec2_overlay_die_ids:
             self._exec2_overlay_items = []
             return
         self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
             self._exec2_wafer_map, self._exec2_overlay_die_ids)
+        self._exec2_update_overlay_visibility()
 
     def _exec2_redraw_overlay_on_results_map(self):
         if not self._exec2_overlay_die_ids:
@@ -2844,6 +2871,7 @@ class MainLayout(ttk.Frame):
         picks = [(d["row"], d["col"]) for d in matched]
         self._exec2_wafer_map.set_picked(picks)
         self._exec2_on_sites_changed(picks)
+        self._exec2_update_overlay_visibility()
 
     def _exec2_open_overlay_dialog(self):
         pma_wafer = getattr(self, "pma_wafer", None)
