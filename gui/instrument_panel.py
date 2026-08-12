@@ -1812,7 +1812,8 @@ class MainLayout(ttk.Frame):
         self._pad_tree.pack(fill="both", expand=True)
 
         self.pad_panel = PadLayoutPanel(right_col, on_custom_change=self._refresh_pad_tree_from_custom,
-                                        get_pins=self.pin_wiring.get_wiring)
+                                        get_pins=self.pin_wiring.get_wiring,
+                                        rename_pad=self.pin_wiring.rename_pad)
         right_col.add(self.pad_panel, weight=1)
 
         self._on_pad_source_change()

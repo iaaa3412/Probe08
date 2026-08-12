@@ -1045,6 +1045,27 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
     def get_wiring(self) -> list:
         return [dict(r) for r in self._rows]
 
+    def rename_pad(self, old: str, new: str) -> int:
+        """Repoint every pin from pad `old` to pad `new`. Returns the count.
+
+        Pins reference their pad by name, so a pad renamed anywhere else has
+        to be renamed here too or those pins point at nothing - and a pin with
+        an unresolvable pad contributes no HI/LO to a recipe while still
+        looking like a wired pin in the table.
+        """
+        old, new = (old or "").strip(), (new or "").strip()
+        if not old or not new or old == new:
+            return 0
+        hits = [r for r in self._rows if (r.get("pad") or "").strip() == old]
+        for r in hits:
+            r["pad"] = new
+        if hits:
+            # _refresh redraws the table AND fires on_pins_change, which is
+            # what makes the Recipe tab's pin dropdowns pick the new name up.
+            self._refresh()
+            self._save()
+        return len(hits)
+
     def get_pin_choices(self) -> list:
         choices = []
         for r in self._rows:
@@ -1064,7 +1085,8 @@ class PadLayoutPanel(ttk.LabelFrame):
     _PAD_W, _PAD_H = 32, 20
     _PIN_LENGTH = _PAD_W * 2
 
-    def __init__(self, parent, on_custom_change=None, get_pins=None):
+    def __init__(self, parent, on_custom_change=None, get_pins=None,
+                 rename_pad=None):
         super().__init__(parent, text="Pad Layout")
         self.canvas = tk.Canvas(self, bg="white")
         self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
@@ -1090,6 +1112,9 @@ class PadLayoutPanel(ttk.LabelFrame):
         self._pin_tips = {}
         self._pins_by_pad = {}
         self._pin_drag_key = None
+        # Renaming a pad here has to repoint the probe card's pins, which
+        # live in a different panel; this is the one hook between them.
+        self._rename_pad = rename_pad or (lambda _o, _n: 0)
 
     def _reset_view(self):
         if self._last_pads is not None:
@@ -1466,9 +1491,11 @@ class PadLayoutPanel(ttk.LabelFrame):
                 "Rename Pad", "Pad label:", initialvalue=self._custom_pads[idx]["name"],
                 parent=self)
             if name:
+                old = self._custom_pads[idx]["name"]
                 self._custom_pads[idx]["name"] = name
                 _, text_id = self._pad_items[idx]
                 self.canvas.itemconfig(text_id, text=name)
+                self._rename_pad_everywhere(old, name)
                 self._notify_change()
             return
         didx = self._hit_test_die(cx, cy)
@@ -1481,6 +1508,37 @@ class PadLayoutPanel(ttk.LabelFrame):
                 _, text_id, _handle_id = self._die_items[didx]
                 self.canvas.itemconfig(text_id, text=name)
                 self._notify_change()
+
+    def _rename_pad_everywhere(self, old: str, new: str):
+        """Carry a pad rename into the probe card's PIN rows.
+
+        A pin references its pad BY NAME, so renaming the pad on the sketch
+        alone silently orphans every pin pointing at it - the pins keep the
+        old label, stop resolving, and the recipe's HI/LO go blank without
+        anything reporting an error. The two are one fact stored twice, so
+        they get renamed together.
+
+        The sketch's own pin keys are "PIN:PAD", so they are rebuilt too;
+        leaving them would reattach the pins to a pad that no longer exists
+        the next time the layout is read back.
+        """
+        old, new = (old or "").strip(), (new or "").strip()
+        if not old or not new or old == new:
+            return
+        try:
+            renamed = int(self._rename_pad(old, new) or 0)
+        except Exception:
+            renamed = 0
+        # The sketch's pin offsets are keyed "A13:TRU" - rekey them so the
+        # layout still finds its pins after a round trip through the file.
+        offsets = getattr(self, "_pin_offsets", None)
+        if isinstance(offsets, dict):
+            for key in [k for k in offsets if k.endswith(f":{old}")]:
+                offsets[f"{key.rsplit(':', 1)[0]}:{new}"] = offsets.pop(key)
+        by_pad = getattr(self, "_pins_by_pad", None)
+        if isinstance(by_pad, dict) and old in by_pad:
+            by_pad[new] = [f"{k.rsplit(':', 1)[0]}:{new}" for k in by_pad.pop(old)]
+        self._last_rename = (old, new, renamed)
 
     def _on_edit_right_click(self, e):
         cx, cy = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
