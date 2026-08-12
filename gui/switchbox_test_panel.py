@@ -36,8 +36,9 @@ switch. That looks exactly like a healthy open circuit.
 
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import app_settings
 from instruments import eg_profiles
 from instruments.hp_switchbox import (
     BANK0, BANK1, CHANNELS, COAX_OF_CHANNEL, DIE_SETS, FAMILY_FORM_C,
@@ -87,7 +88,113 @@ class SwitchboxTestPanel(ttk.Frame):
         self._build_topbar()
         self._build_canvas()
         self._build_actions()
+        self._build_assignments()
         self._reload_cards()
+        self._refresh_assignments()
+
+    # -- channel assignments ------------------------------------------------
+    #
+    # Every channel of every fitted card, not just the ones this project
+    # wired. BENCH_WIRING knows probe02's CH00-03 and probe03's eight; the
+    # rest are physically present, unused, and invisible - so claiming one for
+    # a new project meant working out from scratch which were free. The table
+    # lists all of them, pre-filled with what is already known, and anything
+    # typed in is kept per bench.
+
+    def _build_assignments(self):
+        lf = ttk.LabelFrame(self, text="Channel assignments (all cards)",
+                            padding=6)
+        lf.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        lf.rowconfigure(1, weight=1)
+        lf.columnconfigure(0, weight=1)
+        self.rowconfigure(4, weight=1)
+
+        bar = ttk.Frame(lf)
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        ttk.Label(bar, text="Double-click a row to assign it. Wired-by-this-"
+                            "project channels are filled in and can be "
+                            "overridden.",
+                  foreground="#4b5563", font=("Segoe UI", 8)).pack(side="left")
+        ttk.Button(bar, text="↻ Refresh",
+                   command=self._refresh_assignments).pack(side="right")
+
+        cols = ("card", "chan", "known", "assignment")
+        self._asg = ttk.Treeview(lf, columns=cols, show="headings", height=10)
+        for cid, text, width, stretch in (("card", "Card", 210, False),
+                                          ("chan", "Ch", 46, False),
+                                          ("known", "Known wiring", 250, False),
+                                          ("assignment", "Assigned to", 260, True)):
+            self._asg.heading(cid, text=text)
+            self._asg.column(cid, width=width, anchor="w", stretch=stretch)
+        self._asg.grid(row=1, column=0, sticky="nsew")
+        sb = ttk.Scrollbar(lf, orient="vertical", command=self._asg.yview)
+        sb.grid(row=1, column=1, sticky="ns")
+        self._asg.configure(yscrollcommand=sb.set)
+        self._asg.bind("<Double-1>", self._edit_assignment)
+
+    def _bench(self) -> str:
+        try:
+            return eg_profiles.active_name()
+        except Exception:
+            return ""
+
+    def _refresh_assignments(self):
+        tree = getattr(self, "_asg", None)
+        if tree is None:
+            return
+        tree.delete(*tree.get_children())
+        bench = self._bench()
+        saved = app_settings.get_channel_assignments(bench)
+        try:
+            fitted = set(eg_profiles.fitted_keys(bench))
+            inst = eg_profiles.instruments(bench)
+        except Exception:
+            fitted, inst = set(), {}
+        wiring = bench_wiring(bench)
+        wired_key = wiring.get("driver_key") or ""
+        for key in _RELAY_KEYS:
+            if key not in fitted:
+                continue
+            name = (inst.get(key, {}) or {}).get("name") or key
+            for ch in CHANNELS:
+                known = ""
+                if key == wired_key:
+                    die = die_of_channel_on(bench, ch)
+                    if die is not None:
+                        known = describe_channel_on(bench, ch)
+                iid = f"{key}/{ch:02d}"
+                tree.insert("", "end", iid=iid,
+                            values=(name, f"{ch:02d}", known, saved.get(iid, "")))
+        # Tree switches are addressable channels too, and forgetting that is
+        # how a "spare" channel turns out to be the thing routing a bank.
+        if wiring.get("family") == FAMILY_MUX and wired_key in fitted:
+            name = (inst.get(wired_key, {}) or {}).get("name") or wired_key
+            for tree_ch in TREE_SWITCHES:
+                iid = f"{wired_key}/{tree_ch}"
+                tree.insert("", "end", iid=iid,
+                            values=(name, str(tree_ch),
+                                    TREE_LABELS.get(tree_ch, "tree switch"),
+                                    saved.get(iid, "")))
+
+    def _edit_assignment(self, _event=None):
+        tree = self._asg
+        sel = tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        card, chan, known, current = tree.item(iid, "values")
+        new = simpledialog.askstring(
+            "Assign channel",
+            f"{card}\nchannel {chan}"
+            + (f"\n\nKnown wiring: {known}" if known else "")
+            + "\n\nWhat is this channel used for? (blank to clear)",
+            initialvalue=current, parent=self)
+        if new is None:
+            return
+        app_settings.set_channel_assignment(self._bench(), iid, new)
+        tree.item(iid, values=(card, chan, known, new.strip()))
+        self._log(f"[SWITCH] {card} ch{chan} assigned to "
+                  f"{new.strip() or '(cleared)'}")
 
     # -- plumbing -----------------------------------------------------------
 

@@ -578,3 +578,76 @@ Each channel has three terminals:
     instruments/hp_switchbox.py                  driver + encoded wiring model
     PROBER_NOTES.md                              full working notes
 ===============================================================================
+
+
+======================================================================
+8C. PROBE CARD -> RELAY, probe02 / LaMP_HP  (2026-08-12)
+======================================================================
+Established with the operator at the back of the machine, plus the
+measurements in 8B. Cards, read from the instruments themselves via
+SYST:CTYP? 1 rather than from the labels:
+
+    GPIB0::9::15   LADDR 120   E1345A   <- the card in use
+    GPIB0::9::10   LADDR  80   (E1364A per instruments.yaml; did not
+                                answer on 2026-08-12, retry)
+    GPIB0::9::14   LADDR 112   E1364A
+
+The operator read the top card's label as E1343A; the card reports
+E1345A. Same family - 16 channels, same numbering, same tree topology,
+same 100 ohm series protection - so nothing about the wiring changes,
+but SYST:CTYP? is the authority and the label is not.
+
+EIGHT wires run from the probe card to the top card, landing on the
+CH0..CH3 HI/LO terminals. Four channels x a HI/LO pair is exactly eight,
+and each LaMP die has exactly two pads, so the count corroborates the
+model rather than merely fitting it.
+
+  channel   HI          LO          die (quad corner)   status
+  CH00      A32 TLU     A33 TLD     TL  = switch 1      die: MEASURED
+  CH01      A34 BLU     A36 BLD     BL  = switch 2      HI/LO: INFERRED
+  CH02      A13 TRU     A12 TRD     TR  = switch 3
+  CH03      A11 BRU     A9  BRD     BR  = switch 4
+
+CHANNEL -> DIE IS MEASURED, twice, on TARGET/41-71/TARGET/41-72: the
+TARGET positions are solid metal and clamp at compliance, the two real
+dies do not, and that pattern matched the original exe's own export 4
+times out of 4 both times.
+
+HI vs LO WITHIN A PAIR IS INFERRED, not measured, and cannot be measured
+from the instrument side. The pad pair is symmetric - at +10 V and -10 V
+a real die read +1.99 nA and -2.22 nA, agreeing within 10% - so swapping
+HI and LO produces the same magnitudes with flipped signs and there is no
+handedness to detect. The inference is from the pin ordering: taking the
+channels in order the pins run A32,A33 | A34,A36 up one side of the card
+and A13,A12 | A11,A9 back down the other, and in every pair the U pad
+comes first. If the harness was built pair-by-pair with the first wire on
+HI then U is HI throughout, which is the only self-consistent reading.
+Settle it with a continuity check from the 2400's rear HI to A32 vs A33.
+
+Nothing depends on it: the verdict is short-vs-not and the pair is
+symmetric. It matters only as a record of which needle carried the signal.
+
+THE KEITHLEY 2400 lands on the card's DIRECT voltage-sense HI/LO
+terminals - the bank common - not the analog bus. That is why the tree
+switch sweep in 8B found 90/91/92 made no difference: the trees gate the
+bank onto the VXI analog bus, which nothing on this bench uses. An
+oddity in 8B, explained.
+
+TWO PINS PER PAD on this card (A-side and B-side, e.g. A32 and B32 both
+on TLU). Only the A-side is landed. Per the operator these are spare
+needles the manufacturer fitted, NOT a Kelvin force/sense pair - an
+earlier reading of the pinout as 4-wire-capable was wrong. This is
+specific to LaMP_HP and must not be assumed of other cards.
+
+THE 3458A is not connected to the probe card on probe02. Four direct
+wires exist for a probe03-style 4-wire hookup but are not landed.
+
+Ways to fool yourself, continued:
+  (j) Reading the card type off the label. Two of the three cards here
+      are visually similar and the one in use reports a different model
+      than its label was read as.
+  (k) Concluding a polarity from a sign difference. This bench reads
+      +2 nA where the original logged -0.5 nA, which looks like reversed
+      HI/LO until the arithmetic is done: neither orientation reproduces
+      the original's sign, because both numbers are the respective
+      bench's own leakage floor rather than the die.

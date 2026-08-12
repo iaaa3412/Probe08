@@ -312,11 +312,21 @@ BENCH_WIRING = {
         "conflict_groups": (),
         "ground_channel": None,
         "uses_analog_bus": False,
-        "instrument": "Keithley 2400 SMU, rear triax, 2-wire (SYST:RSEN OFF)",
+        "instrument": ("Keithley 2400 SMU, rear IN/OUT HI/LO into the card's "
+                       "DIRECT voltage-sense terminals (the bank common, not "
+                       "the analog bus - which is why the tree switches make "
+                       "no difference), 2-wire (SYST:RSEN OFF)"),
         "summary": ("16-channel relay multiplexer, 4 wired channels: CH00-CH03, "
                     "one per die of a 2x2 shot, each switching a HI/LO pair. "
                     "CH04-CH15 unwired. Tree switches unused."),
-        "evidence": "measured on the bench 2026-08-10 (see module header)",
+        "evidence": ("measured on the bench 2026-08-10 (see module header); "
+                     "probe-card pin mapping and the 8-wire harness confirmed "
+                     "with the operator 2026-08-12, see references/"
+                     "SWITCHBOX_REPORT.txt section 8C"),
+        # HI/LO within a pair is inferred from pin ordering, not measured -
+        # the pad pair is symmetric so it cannot be measured from here.
+        "die_pins": {1: ("A32", "A33"), 2: ("A34", "A36"),
+                     3: ("A13", "A12"), 4: ("A11", "A9")},
     },
 }
 
