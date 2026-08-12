@@ -1,0 +1,161 @@
+"""Per-bench instrument profiles for the Electroglas probers.
+
+The EG benches are not built alike - different instruments, different GPIB
+addresses, and the same secondary address holding a different relay card from
+one bench to the next. instruments/eg_probers.yaml records each bench; this
+module selects between them.
+
+HOW IT PLUGS IN. The drivers all resolve their address through
+instruments.yaml, so switching profile writes the active bench's addresses into
+that file's *_eg entries. Nothing downstream has to know profiles exist, and
+instruments.yaml stays an honest picture of what the GUI is currently pointed
+at. The profile file remains the source of truth; instruments.yaml is derived.
+"""
+
+import os
+
+import yaml
+
+from instruments.gpib_base import get_resource_path
+
+_PROFILES_FILE = "instruments/eg_probers.yaml"
+
+# Every EG instrument key a profile may define. A key absent from a profile is
+# treated as not fitted on that bench rather than an error - benches differ, and
+# that is the whole point.
+EG_KEYS = ("prober_eg", "smu_eg", "dmm_eg", "dmm_vxi_eg",
+           "relay1_eg", "relay2_eg", "relay3_eg", "power_supply_eg")
+
+
+def _path() -> str:
+    return get_resource_path(_PROFILES_FILE)
+
+
+def load() -> dict:
+    with open(_path(), "r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def _save(data: dict) -> None:
+    with open(_path(), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False,
+                       allow_unicode=True, width=100)
+
+
+def profile_names() -> list:
+    return sorted((load().get("probers") or {}).keys())
+
+
+def active_name() -> str:
+    data = load()
+    name = data.get("active")
+    names = sorted((data.get("probers") or {}).keys())
+    if name in names:
+        return name
+    return names[0] if names else ""
+
+
+def get(name: str = None) -> dict:
+    data = load()
+    name = name or active_name()
+    profile = (data.get("probers") or {}).get(name)
+    if profile is None:
+        raise KeyError(f"no Electroglas profile named {name!r} "
+                       f"(known: {sorted((data.get('probers') or {}))})")
+    return profile
+
+
+def label(name: str = None) -> str:
+    name = name or active_name()
+    try:
+        return get(name).get("label") or name
+    except KeyError:
+        return name
+
+
+def instruments(name: str = None) -> dict:
+    return get(name).get("instruments") or {}
+
+
+def is_fitted(key: str, name: str = None) -> bool:
+    entry = instruments(name).get(key)
+    return bool(entry and entry.get("fitted", True))
+
+
+def fitted_keys(name: str = None) -> list:
+    """Keys actually on this bench, in EG_KEYS order."""
+    inst = instruments(name)
+    return [k for k in EG_KEYS if k in inst and inst[k].get("fitted", True)]
+
+
+def roster(name: str = None) -> list:
+    """(display name, key, id_queries, fitted, write_probe) per instrument.
+
+    The shape gui/instruments_eg_panel.py wants for its address table. Every
+    key the profile defines is listed, fitted or not - a known absence should be
+    visible and individually pingable, not hidden.
+    """
+    inst = instruments(name)
+    out = []
+    for key in EG_KEYS:
+        entry = inst.get(key)
+        if not entry:
+            continue
+        out.append((entry.get("name", key),
+                    key,
+                    tuple(entry.get("id_queries") or ()),
+                    bool(entry.get("fitted", True)),
+                    entry.get("write_probe")))
+    return out
+
+
+def apply_to_instruments_yaml(name: str = None) -> list:
+    """Point instruments.yaml at this profile's addresses.
+
+    Returns the keys that changed. Only *_eg keys are touched, so the Accretech
+    half of the file is left exactly as it was.
+    """
+    name = name or active_name()
+    inst = instruments(name)
+    yaml_path = get_resource_path("instruments/instruments.yaml")
+    with open(yaml_path, "r", encoding="utf-8") as fh:
+        live = yaml.safe_load(fh) or {}
+    live.setdefault("instruments", {})
+
+    changed = []
+    for key in EG_KEYS:
+        entry = inst.get(key)
+        if not entry:
+            continue
+        want = {"name": entry.get("name", key),
+                "protocol": "GPIB",
+                "address": entry["address"],
+                "timeout_ms": int(entry.get("timeout_ms", 3000))}
+        if live["instruments"].get(key) != want:
+            live["instruments"][key] = want
+            changed.append(key)
+
+    if changed:
+        with open(yaml_path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(live, fh, default_flow_style=False, sort_keys=False)
+    return changed
+
+
+def set_active(name: str) -> list:
+    """Make `name` the active bench and push its addresses into instruments.yaml."""
+    data = load()
+    if name not in (data.get("probers") or {}):
+        raise KeyError(f"no Electroglas profile named {name!r}")
+    data["active"] = name
+    _save(data)
+    return apply_to_instruments_yaml(name)
+
+
+def summary(name: str = None) -> str:
+    """One-line-per-instrument description, for logging a switch."""
+    name = name or active_name()
+    lines = [f"{name}: {label(name)}"]
+    for display, key, _queries, fitted, _probe in roster(name):
+        addr = instruments(name)[key]["address"]
+        lines.append(f"   {'ok ' if fitted else '-- '} {display:<34} {addr}")
+    return "\n".join(lines)

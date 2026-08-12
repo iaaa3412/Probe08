@@ -4,59 +4,37 @@ import tkinter as tk
 from tkinter import ttk
 
 from instrument_connection_panel import build_address_panel
+from instruments import eg_profiles
 
-# (display name, instruments.yaml key, ID queries, fitted) for every instrument
-# the Electroglas system talks to - see gui/app.py's init_hardware_eg() for the
-# matching driver-construction list this mirrors.
+# The roster of Electroglas instruments is per-bench and lives in
+# instruments/eg_probers.yaml, not here. The benches are genuinely different -
+# probe02 carries a Keithley 2400 and a working E1326B, probe03 has neither and
+# puts its wired relay card at a different secondary address - so a hardcoded
+# list here would describe one bench while the drivers talked to another.
 #
-# ID queries: the right query differs per instrument, and getting it wrong makes
-# a healthy instrument look dead. Ping establishes presence by GPIB serial poll,
-# so these only decide what identification string gets displayed:
-#   - the 2001X is pre-SCPI and parses no ID query at all (an ADLINK bus scan
-#     reports it as "Unknown instrument (PA:29)"), so it gets none
-#   - the 3458A and 6634B are HP-era and answer "ID?", not "*IDN?"
-#     (confirmed in references/electroglasgpib.csv)
-#   - the switchboxes and the 2400 do answer "*IDN?"
+# Each profile entry carries the ID query to use, because the right query
+# differs per instrument and getting it wrong makes a healthy instrument look
+# dead: the 2001X is pre-SCPI and parses no ID query at all, the 3458A and
+# 6634B are HP-era and answer "ID?" rather than "*IDN?", and the switchboxes
+# and the 2400 do answer "*IDN?". Presence itself is established by GPIB serial
+# poll, so these only decide what identification string gets displayed.
 #
-# fitted: the EG probers are not all built the same way. This one has no
-# Keithley 2400 and no Agilent 6634B, so they are marked not-fitted - still
-# listed and still individually pingable, but skipped by Ping All and by
-# init_hardware_eg. Use Scan Bus to see what is actually on a given prober.
-#
-# The E1326B inside the E1300A mainframe has FAILED its power-on self test. The
-# mainframe's own error queue reports 'Config error 1, Failed device' for it and
-# publishes no GPIB instrument, so it is marked not-fitted - it is expected to
-# fail a ping today, and saying so beats reporting a mystery. It stays listed so
-# a repaired or replacement module is picked up without a code change.
-# references/find_vxi_instruments.py compares the VXI backplane against what
-# GPIB can actually reach, which is how that was diagnosed.
-#
-# That makes the 3458A the measurement instrument for probe03: its ohms
-# functions source a known current and read the resulting voltage - the
-# isolation test - and it ranges to 1.2 GOhm against the E1326B's 1.048 MOhm.
-#
-# Scan Bus on this prober reports:
-#   GPIB0::29::INSTR      Electroglas 2001X (answers no ID query)
-#   GPIB0::23::INSTR      HP 3458A
-#   GPIB0::9::0::INSTR    HEWLETT-PACKARD,E1300A - the VXI mainframe that holds
-#                         the switchbox cards; not driven directly
-#   GPIB0::9::15::INSTR   SWITCHBOX, card 1: E1343A (16-ch HV multiplexer)
-#   GPIB0::9::10::INSTR   SWITCHBOX, card 1: E1364A (16-ch form C switch)
-#   GPIB0::9::14::INSTR   SWITCHBOX, card 1: E1364A (16-ch form C switch)
-# The 5th field is a write probe. The 2001X answers a serial poll from its GPIB
-# interface chip while refusing every command byte, so a poll alone reports it
-# healthy when nothing would actually work. '?S' is a query and cannot move the
-# chuck, stage or handler - it just proves commands get through.
-_EG_INSTRUMENTS = [
-    ("Electroglas 2001X (Prober)", "prober_eg", (), True, "?S"),
-    ("Keithley 2400 (SMU)", "smu_eg", ("*IDN?",), False, None),
-    ("HP 3458A (DMM)", "dmm_eg", ("ID?",), True, None),
-    ("HP E1326B (VXI DMM — failed self-test)", "dmm_vxi_eg", ("*IDN?",), False, None),
-    ("Agilent 6634B (Power Supply)", "power_supply_eg", ("ID?",), False, None),
-    ("HP Switchbox 1", "relay1_eg", ("*IDN?",), True, None),
-    ("HP Switchbox 2", "relay2_eg", ("*IDN?",), True, None),
-    ("HP Switchbox 3", "relay3_eg", ("*IDN?",), True, None),
-]
+# A profile entry may also carry a write probe - a harmless query proving the
+# instrument accepts command bytes. The 2001X answers a serial poll from its
+# GPIB interface chip while refusing every command, so a poll alone reports it
+# healthy when nothing would actually work; "?S" is a query and cannot move the
+# chuck, stage or handler.
+
+
+def _eg_instruments():
+    """Roster for the active bench, from instruments/eg_probers.yaml.
+
+    Was a hardcoded list. The EG benches carry different instruments at
+    different addresses, so the roster has to follow the selected profile or
+    the panel shows one bench while the drivers talk to another.
+    """
+    return eg_profiles.roster()
+
 
 
 class InstrumentsEgPanel(ttk.Frame):
@@ -64,10 +42,12 @@ class InstrumentsEgPanel(ttk.Frame):
         super().__init__(parent)
         self.controller = controller
         self._dmm_cont = False
+        self._addr_panel = None
 
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
 
+        self._build_bench_selector()
         self._build_addresses()
         self._build_smu()
         self._build_dmm()
@@ -80,14 +60,83 @@ class InstrumentsEgPanel(ttk.Frame):
         drv = self.controller.drivers.get(key)
         return drv if (drv and drv.inst) else None
 
+    def _build_bench_selector(self):
+        lf = ttk.LabelFrame(self, text="Prober bench", padding=6)
+        lf.grid(row=0, column=0, columnspan=2, sticky="new", padx=8, pady=(8, 0))
+
+        # The bench is CHOSEN from the toolbar picker next to the ATA folder,
+        # so there is deliberately no second dropdown here - two controls for
+        # one setting is a way to get them out of step. This shows what is
+        # active and offers the diagnostic that belongs with the instrument
+        # list rather than with the toolbar.
+        row = ttk.Frame(lf)
+        row.pack(fill="x")
+        self._bench_var = tk.StringVar(value=eg_profiles.active_name())
+        ttk.Label(row, textvariable=self._bench_var,
+                  font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(row, text="— selected from the Prober box in the toolbar",
+                  foreground="#888", font=("Arial", 8)).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="↻ Scan bus & match",
+                   command=self._match_bench).pack(side="right")
+
+        self._bench_lbl = tk.StringVar()
+        ttk.Label(lf, textvariable=self._bench_lbl, font=("Consolas", 8),
+                  justify="left", foreground="#0077cc").pack(anchor="w", pady=(5, 0))
+        self._refresh_bench_label()
+
+    def _refresh_bench_label(self):
+        name = eg_profiles.active_name()
+        fitted = eg_profiles.fitted_keys(name)
+        self._bench_var.set(name)
+        self._bench_lbl.set(f"{eg_profiles.label(name)}\n"
+                            f"{len(fitted)} instrument(s) fitted: "
+                            + ", ".join(k.replace('_eg', '') for k in fitted))
+
+    def _match_bench(self):
+        """Scan the bus and say which profile the hardware actually looks like.
+
+        The benches share most addresses, so what separates them is which relay
+        card sits where and whether the 2400 and VXI multimeter answer at all.
+        """
+        def _run():
+            from instruments.gpib_base import discover_bus
+            try:
+                found = {d["address"]: (d["identity"], d["detail"])
+                         for d in discover_bus(timeout_ms=700)}
+            except Exception as e:
+                self.after(0, lambda: self._log(f"[BENCH] Scan failed: {e}"))
+                return
+            lines = []
+            for name in eg_profiles.profile_names():
+                inst = eg_profiles.instruments(name)
+                want = {k: v for k, v in inst.items() if v.get("fitted", True)}
+                hit = sum(1 for v in want.values() if v["address"] in found)
+                lines.append((hit / max(1, len(want)), hit, len(want), name))
+            lines.sort(reverse=True)
+            best = lines[0]
+            msg = ["[BENCH] Bus scan matched:"]
+            for score, hit, total, name in lines:
+                mark = "  <-- best" if name == best[3] else ""
+                msg.append(f"   {name}: {hit}/{total} fitted addresses present{mark}")
+            for addr, (ident, _d) in sorted(found.items()):
+                msg.append(f"      {addr:<22} {ident or '(no ID)'}")
+            self.after(0, lambda: [self._log(m) for m in msg])
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _rebuild_addresses(self):
+        if getattr(self, "_addr_panel", None) is not None:
+            self._addr_panel.destroy()
+        self._build_addresses()
+
     def _build_addresses(self):
-        panel = build_address_panel(
-            self, _EG_INSTRUMENTS, self._log, self.controller.init_hardware_eg)
-        panel.grid(row=0, column=0, columnspan=2, sticky="new", padx=8, pady=(8, 0))
+        self._addr_panel = build_address_panel(
+            self, _eg_instruments(), self._log, self.controller.init_hardware_eg)
+        self._addr_panel.grid(row=1, column=0, columnspan=2, sticky="new",
+                              padx=8, pady=(8, 0))
 
     def _build_smu(self):
         lf = ttk.LabelFrame(self, text="SMU — Keithley 2400", padding=8)
-        lf.grid(row=1, column=0, sticky="new", padx=8, pady=8)
+        lf.grid(row=2, column=0, sticky="new", padx=8, pady=8)
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)
@@ -164,7 +213,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_dmm(self):
         lf = ttk.LabelFrame(self, text="DMM — HP 3458A", padding=8)
-        lf.grid(row=1, column=1, sticky="new", padx=8, pady=8)
+        lf.grid(row=2, column=1, sticky="new", padx=8, pady=8)
 
         btn_row = ttk.Frame(lf)
         btn_row.pack(fill="x")
@@ -214,7 +263,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_ps(self):
         lf = ttk.LabelFrame(self, text="Power Supply — Agilent 6634B", padding=8)
-        lf.grid(row=2, column=0, columnspan=2, sticky="new", padx=8, pady=(0, 8))
+        lf.grid(row=3, column=0, columnspan=2, sticky="new", padx=8, pady=(0, 8))
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)

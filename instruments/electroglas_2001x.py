@@ -1276,13 +1276,74 @@ class Electroglas2001X(GPIBInstrument):
     def clear_die_envelope(self):
         self._die_envelope = None
 
-    def move_absolute_m(self, x, y):
-        status = self._motion(f"MAX{int(x)}Y{int(y)}")
+    # MM IS A FINE POSITIONAL MOVE, BUT ITS COUNT IS NOT ONE MICRON.
+    #
+    # Measured 2026-08-11 on a real recipe. From touchdown #228 of
+    # HPLaMP_WHOLE_WAFER (TL die 65-23, x = 98588 um) a MMX7042Y0 was sent,
+    # intending one 7042 um quad step to #229. The chuck landed with TL die
+    # 66-23, which that recipe places at x = 116193 um:
+    #
+    #     travelled 116193 - 98588 = 17605 um  for a commanded 7042
+    #     scale = 17605 / 7042 = 2.50
+    #
+    # 17605 um is also exactly this product's SHOT pitch (5 physical dies of
+    # 3521 um), which is why it looked like a tidy one-shot step.
+    #
+    # CONFIRMED 2.5 um, NOT 0.1 mil. 0.1 mil (2.54) was the tidier guess -
+    # this prober's Z axis is in 0.1-mil units - but it is wrong. The two
+    # differ by 1.6%, invisible in one step, so it was settled by multiplying
+    # the error up: 17 consecutive quad steps along row y=49260 of
+    # HPLaMP_WHOLE_WAFER, sent as 2772 counts each (7042/2.54). Predicted
+    # end-of-row drift was 19 um if the unit were 2.54 and 1904 um if it were
+    # 2.50; the operator measured about half a die (1760 um). Solving for the
+    # unit from that drift gives 2.503.
+    #
+    # WHY it is 2.5 is NOT established, and that matters: if the factor comes
+    # from a prober configuration setting rather than being intrinsic (this
+    # machine has scale-factor parameters - cf. SP12S "3 steps per mil" for Z,
+    # and SX4C/SX5C wafer expansion), then changing prober setup silently
+    # changes it, and micron moves would go wrong with nothing to flag it.
+    # Die moves (MD) have no such dependency and are the safer default.
+    MM_UNIT_UM = 2.50
+
+    # Same guard as move_relative_die, in microns. These commands had NO bounds
+    # check at all, which is how a value meant as microns went out as counts
+    # and travelled 2.5x too far with nothing to stop it.
+    DEFAULT_MAX_UM_STEP = 200000
+
+    def _check_um(self, dx_um, dy_um):
+        limit = getattr(self, "max_um_step", self.DEFAULT_MAX_UM_STEP)
+        if max(abs(dx_um), abs(dy_um)) > limit:
+            raise ValueError(
+                f"Electroglas 2001X: micron move of ({dx_um:.0f},{dy_um:.0f}) um "
+                f"exceeds max_um_step={limit}. Raise it deliberately if this is "
+                f"really intended.")
+
+    def _um_to_counts(self, um):
+        return int(round(float(um) / self.MM_UNIT_UM))
+
+    def move_relative_um(self, dx_um, dy_um):
+        """Relative move in MICRONS, converted to MM's own counts."""
+        self._check_um(dx_um, dy_um)
+        status = self._motion(
+            f"MMX{self._um_to_counts(dx_um)}Y{self._um_to_counts(dy_um)}")
+        self.z_is_up = False
+        return status
+
+    def move_relative_counts(self, dx, dy):
+        """Raw MM counts, for calibrating MM_UNIT_UM. No unit conversion."""
+        status = self._motion(f"MMX{int(dx)}Y{int(dy)}")
         self.z_is_up = False
         return status
 
     def move_relative_m(self, dx, dy):
-        status = self._motion(f"MMX{int(dx)}Y{int(dy)}")
+        """Deprecated alias - 'm' meant microns but sent raw counts, which is
+        the bug above. Kept pointing at the raw form so nothing silently
+        changes meaning; new callers should pick move_relative_um explicitly."""
+        return self.move_relative_counts(dx, dy)
+
+    def move_absolute_m(self, x, y):
+        status = self._motion(f"MAX{int(x)}Y{int(y)}")
         self.z_is_up = False
         return status
 

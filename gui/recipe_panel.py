@@ -14,16 +14,25 @@ except ImportError:
     _pma_xlrd = None
 
 
-_STEP_TYPES    = ("resistance", "voltage", "current", "wave", "passfail", "delay", "open",
-                  "picture")
+_STEP_TYPES    = ("resistance", "ohmf", "voltage", "current", "wave", "passfail",
+                  "delay", "open", "picture")
 _STEP_MODES    = ("measure", "apply")
 _INSTRUMENTS   = ("DMM", "SMU", "WGEN")
 _SMU_CHANNELS  = ("A", "B")
 _WGEN_CHANNELS = ("CH1", "CH2")
 _WAVE_SHAPES   = ("SIN", "SQU", "RAMP", "PULS", "DC")
+# his/los are the 4-wire SENSE pins and are only ever populated on an "ohmf"
+# step. Appended to the end so recipes written before 4-wire existed still
+# parse - _parse_step matches on key name, not position.
 _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", "lo",
                   "level", "limit", "shape", "freq", "conn", "min", "max",
-                  "avg_count", "avg_delay", "nplc")
+                  "avg_count", "avg_delay", "nplc", "his", "los")
+
+# The one step type that takes four pins: source HI/LO carry the test current,
+# sense HI/LO read the voltage right at the pad, so the probe/lead resistance
+# in the source path drops out of the answer. Named for the 3458A's OHMF.
+FOUR_WIRE_TYPE = "ohmf"
+SENSE_FIELDS = ("his", "los")
 
 STEP_FIELDS = _STEP_FIELDS
 
@@ -66,7 +75,7 @@ def _normalize_numeric_field(text: str) -> str:
 
 def _is_measurement_step(step: dict) -> bool:
     t = step.get("type")
-    if t == "resistance":
+    if t in ("resistance", FOUR_WIRE_TYPE):
         return True
     if t in ("voltage", "current"):
         return step.get("mode") == "measure"
@@ -76,6 +85,10 @@ def _is_measurement_step(step: dict) -> bool:
 def _instrument_options(step_type: str, mode: str) -> tuple:
     if step_type == "resistance":
         return ("DMM", "SMU")
+    if step_type == FOUR_WIRE_TYPE:
+        # 4-wire ohms is a DMM function (3458A OHMF); the SMU has no
+        # equivalent in this rig, so offering it would only mislead.
+        return ("DMM",)
     if step_type in ("voltage", "current"):
         return ("SMU",) if mode == "apply" else ("SMU", "DMM")
     if step_type == "wave":
@@ -86,7 +99,7 @@ def _instrument_options(step_type: str, mode: str) -> tuple:
 def _default_instrument(step_type: str, mode: str) -> str:
     if step_type == "wave":
         return "WGEN"
-    if step_type == "resistance":
+    if step_type in ("resistance", FOUR_WIRE_TYPE):
         return "DMM"
     if step_type == "voltage":
         return "SMU" if mode == "apply" else "DMM"
@@ -134,6 +147,10 @@ def _serialize_step(step: dict) -> str:
 
 def _normalize_step(step: dict) -> dict:
     t = step["type"]
+    # Enforced here rather than only in the editor, so a recipe hand-edited or
+    # imported with sense pins on a 2-wire step cannot smuggle them through.
+    if t != FOUR_WIRE_TYPE:
+        step["his"] = step["los"] = ""
     if t == "delay":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
@@ -164,7 +181,7 @@ def _normalize_step(step: dict) -> dict:
 
     step["target"] = ""
     step["min"] = step["max"] = ""
-    if t == "resistance":
+    if t in ("resistance", FOUR_WIRE_TYPE):
         step["mode"] = "measure"
     elif t == "wave":
         step["mode"] = "apply"
@@ -329,9 +346,28 @@ def pma_params_to_steps(params: dict) -> list:
     }))
 
     if limit:
+        # The threshold must sit WELL BELOW the compliance limit, not at it.
+        # A source held in compliance reads a hair under its limit - 999.99 nA
+        # against a 1 uA setting - so "max = limit" can never be exceeded and
+        # a dead short passes by a fraction of a nanoamp. Measured on the
+        # wafer: a TARGET, which is solid metal, passed a Leakage Check
+        # written that way.
+        #
+        # A tenth of the compliance separates the two populations by a wide
+        # margin in both directions. In the LaMP reference data a short sits
+        # at the clamp and an isolated die three orders below it, so anything
+        # between is safe; a tenth is far from both.
+        #
+        # Bounded on BOTH sides, because a large negative current is just as
+        # much a failure and an upper bound alone lets it through.
+        try:
+            edge = abs(float(limit)) / 10.0
+            lo, hi = f"{-edge:.12g}", f"{edge:.12g}"
+        except (TypeError, ValueError):
+            lo, hi = "", limit
         steps.append(_normalize_step({
             **_pma_blank_step(), "type": "passfail", "name": "Leakage Check",
-            "target": meas_name, "max": limit}))
+            "target": meas_name, "min": lo, "max": hi}))
 
     steps.append(_normalize_step({
         **_pma_blank_step(), "type": "open", "name": "Release", "target": apply_name}))
@@ -344,21 +380,141 @@ def pma_params_to_steps(params: dict) -> list:
     return steps
 
 
-def repeat_steps_per_die(steps: list, dies_per_shot: int) -> list:
+def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None,
+                        pins=None) -> list:
+    """One block of steps per die under the shot.
+
+    The prober lands ONCE on a shot; the relay card then connects each of the
+    co-touched dies in turn and the block is measured against each. So the
+    repetition belongs here, in the steps, and not in the touchdown list -
+    listing the shot four times would move the chuck to the same place four
+    times.
+
+    `channels` is the relay channel per die, in die order. Without it the
+    blocks are identical and every die is measured through whatever routing
+    the previous one left closed, which silently measures die 1 four times.
+
+    `pins` is the (HI, LO) probe-card pin pair per die. It changes nothing
+    electrically - the relay decides what is connected - but it records which
+    needles the reading came from, and it is what the recipe validator checks
+    against the loaded card.
+    """
     if dies_per_shot <= 1:
         return steps
     names_in_block = {s["name"] for s in steps if s.get("name")}
     out = []
     for i in range(1, dies_per_shot + 1):
         suffix = f" (Die {i})"
+        chan = ""
+        if channels and i <= len(channels):
+            chan = channels[i - 1]
+        hi = lo = ""
+        if pins and i <= len(pins):
+            hi, lo = pins[i - 1]
+        # Open everything before connecting this die: the mux would otherwise
+        # hold the previous die closed as well, putting two in parallel.
+        if chan:
+            out.append({"kind": "STEP", "name": f"Isolate{suffix}",
+                        "type": "open", "target": "all", "conn": "all"})
         for s in steps:
             s2 = dict(s)
             if s2.get("name"):
                 s2["name"] = s2["name"] + suffix
             if s2.get("target") in names_in_block:
                 s2["target"] = s2["target"] + suffix
+            # Route only the steps that actually touch the wafer. A delay has
+            # no connection, and giving one a channel would close a relay at
+            # a point the original sequence had it open.
+            if s2.get("type") in ("voltage", "current", "resistance"):
+                if chan:
+                    s2["conn"] = chan
+                if hi and lo:
+                    s2["hi"], s2["lo"] = hi, lo
             out.append(s2)
     return out
+
+
+def _pma_dies_per_shot(path: str) -> int:
+    """How many devices a touchdown of this .PMA co-touches.
+
+    Taken from the widest device-ID string in the recipe, not from the first:
+    a wafer-edge shot is written "NA/86-14/NA/NA" and still costs four
+    switch positions, while a shot that happens to be full would read the
+    same as a genuine single-die recipe.
+    """
+    try:
+        import electroglas_pma as egpma
+        fields = egpma.parse_pma_file(path)
+        touchdowns = egpma.load_touchdowns(path, fields)
+    except Exception:
+        return 1
+    widths = [len((t.get("device_id") or "").split("/")) for t in touchdowns]
+    return max(widths) if widths else 1
+
+
+def die_pins_from_card(wiring: list, dies_per_shot: int) -> list:
+    """[(hi_pin, lo_pin)] per die, read off the probe card's own pin table.
+
+    Derived, never assumed. A pad is matched to a die only when its label
+    starts with that die's quad corner (TL/BL/TR/BR) and ends U or D, which
+    is how the LaMP_HP card is labelled; the U pad becomes HI and the D pad
+    LO. A card labelled any other way simply yields nothing and the steps
+    keep their blank pins, which is what they had before - a wrong guess here
+    would put a needle on the wrong die and still look plausible.
+
+    Where a pad carries more than one pin the first is taken. On LaMP_HP the
+    second is a manufacturer's spare that is not connected to anything, and
+    that is specific to that card - it is not a pattern to rely on elsewhere,
+    which is exactly why this picks one rather than trying to use both.
+    """
+    try:
+        from electroglas_pma import QUAD_ORDER
+    except Exception:
+        QUAD_ORDER = ("TL", "BL", "TR", "BR")
+    pin_of_pad = {}
+    for row in wiring or []:
+        pad = (row.get("pad") or "").strip().upper()
+        pin = (row.get("pin") or "").strip()
+        if pad and pin:
+            pin_of_pad.setdefault(pad, pin)
+    out = []
+    for corner in QUAD_ORDER[:dies_per_shot]:
+        hi = pin_of_pad.get(f"{corner}U")
+        lo = pin_of_pad.get(f"{corner}D")
+        if not (hi and lo):
+            return []
+        out.append((hi, lo))
+    return out
+
+
+def die_channels_for_bench(dies_per_shot: int) -> list:
+    """Relay channel per die for the active Electroglas bench, if known.
+
+    Read from hp_switchbox.BENCH_WIRING rather than assumed, because the two
+    benches differ: probe02's mux switches a HI/LO pair per die (one channel),
+    probe03's form-C card needs two channels for the same job.
+    """
+    try:
+        import eg_profiles
+        from instruments.hp_switchbox import bench_wiring
+        die_sets = bench_wiring(eg_profiles.active_name()).get("die_sets") or {}
+    except Exception:
+        return []
+    out = []
+    for die in range(1, dies_per_shot + 1):
+        chans = die_sets.get(die)
+        if not chans:
+            return []
+        out.append(",".join(f"{int(c):02d}" for c in chans))
+    return out
+
+
+def site_key(site: dict) -> tuple:
+    """(row, col) of a touchdown, or None when it carries only a die ID."""
+    try:
+        return int(site["row"]), int(site["col"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def recipes_to_rows(recipes: dict) -> list:
@@ -370,26 +526,50 @@ def recipes_to_rows(recipes: dict) -> list:
             for k in _STEP_FIELDS:
                 row[k] = step.get(k, "")
             rows.append(row)
+        # SITE rows ride in the same CSV as the steps, reusing existing
+        # columns (name = die ID, hi/lo = row/col) so a probe card written by
+        # this version still loads in one that predates touchdown lists - an
+        # unknown "kind" is skipped, and the recipe just comes back without
+        # its sites rather than failing to parse.
+        for i, site in enumerate(rec.get("sites", []), 1):
+            rows.append({"kind": "SITE", "recipe": name, "seq": str(i),
+                         "name": site.get("die_id", ""),
+                         "hi": str(site.get("row", "")),
+                         "lo": str(site.get("col", ""))})
     return rows
 
 
 def rows_to_recipes(rows: list) -> dict:
     recipes: dict = {}
     step_rows: dict = {}
+    site_rows: dict = {}
     for row in rows:
         kind = (row.get("kind") or "").strip().upper()
-        if kind not in ("RECIPE", "STEP"):
+        if kind not in ("RECIPE", "STEP", "SITE"):
             continue
         name = (row.get("recipe") or "").strip()
         if not name:
             continue
-        recipes.setdefault(name, {"steps": []})
+        recipes.setdefault(name, {"steps": [], "sites": []})
         if kind == "RECIPE":
             continue
         try:
             seq = int(row.get("seq") or 0)
         except ValueError:
             seq = 0
+        if kind == "SITE":
+            def _int(v):
+                try:
+                    return int(str(v).strip())
+                except (TypeError, ValueError):
+                    return None
+            site = {"die_id": (row.get("name") or "").strip(),
+                    "row": _int(row.get("hi")), "col": _int(row.get("lo"))}
+            # A site with no row/col cannot be walked to, so drop it rather
+            # than let the run silently skip it later.
+            if site["row"] is not None and site["col"] is not None:
+                site_rows.setdefault(name, []).append((seq, site))
+            continue
         step = {k: row.get(k, "") for k in _STEP_FIELDS}
         if step.get("type") not in _STEP_TYPES:
             step["type"] = "resistance"
@@ -397,6 +577,11 @@ def rows_to_recipes(rows: list) -> dict:
     for name, items in step_rows.items():
         items.sort(key=lambda t: t[0])
         recipes[name]["steps"] = [_normalize_step(s) for _seq, s in items]
+    for name, items in site_rows.items():
+        items.sort(key=lambda t: t[0])
+        recipes[name]["sites"] = [s for _seq, s in items]
+    for rec in recipes.values():
+        rec.setdefault("sites", [])
     return recipes
 
 
@@ -416,20 +601,20 @@ class RecipePanel(ttk.Frame):
         self._conn_viewer = None
         self._system = system
         if system == "electroglas":
-            self._instrument_choices = ("DMM", "SMU")
             self._smu_channel_choices = ("A",)
             self._step_type_choices = tuple(t for t in _STEP_TYPES if t != "wave")
         else:
-            self._instrument_choices = _INSTRUMENTS
             self._smu_channel_choices = _SMU_CHANNELS
             self._step_type_choices = _STEP_TYPES
+        self._instrument_choices = self._bench_instruments()
         self._conn_report = "— no steps —"
 
-        self._recipes: dict = {"(unsaved)": {"steps": []}}
+        self._recipes: dict = {"(unsaved)": {"steps": [], "sites": []}}
         self._current: str = "(unsaved)"
         self._active_card: str = ""
 
         self._steps: list[dict] = self._recipes[self._current]["steps"]
+        self._sites: list[dict] = self._recipes[self._current]["sites"]
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -440,6 +625,62 @@ class RecipePanel(ttk.Frame):
         self._update_connections()
         self._update_validity_label()
 
+
+    # Which recipe "instrument" each profile key can stand in for. The recipe
+    # stays generic - a step says DMM, not "3458A" - so the same recipe runs on
+    # any bench that has some DMM fitted.
+    _EG_INSTRUMENT_KEYS = {
+        "DMM": ("dmm_eg", "dmm_vxi_eg"),
+        "SMU": ("smu_eg",),
+    }
+
+    def _bench_instruments(self) -> tuple:
+        """Instruments the ACTIVE prober actually has fitted.
+
+        probe03 has only the 3458A, so offering SMU there would let someone
+        build a recipe that cannot run. Accretech is a single fixed bench and
+        keeps the full list.
+        """
+        if self._system != "electroglas":
+            return _INSTRUMENTS
+        try:
+            import eg_profiles
+            fitted = set(eg_profiles.fitted_keys())
+        except Exception:
+            return ("DMM", "SMU")
+        avail = tuple(name for name, keys in self._EG_INSTRUMENT_KEYS.items()
+                      if fitted.intersection(keys))
+        return avail or ("DMM",)
+
+    def _bench_instrument_note(self) -> str:
+        if self._system != "electroglas":
+            return ""
+        try:
+            import eg_profiles
+            inst = eg_profiles.instruments()
+            bench = eg_profiles.active_name()
+        except Exception:
+            return ""
+        parts = []
+        for name, keys in self._EG_INSTRUMENT_KEYS.items():
+            if name not in self._instrument_choices:
+                continue
+            key = next((k for k in keys
+                        if k in inst and inst[k].get("fitted", True)), None)
+            if key:
+                parts.append(f"{name} = {inst[key].get('name', key)}")
+        if not parts:
+            return f"{bench}: no measurement instrument fitted"
+        return f"{bench}:   " + "    ".join(parts)
+
+    def refresh_bench_instruments(self):
+        """Re-read the active prober - call after switching benches."""
+        self._instrument_choices = self._bench_instruments()
+        if hasattr(self, "_bench_note_lbl"):
+            self._bench_note_lbl.config(text=self._bench_instrument_note())
+        if hasattr(self, "_instr_cb"):
+            self._on_type_change()
+        self._update_validity_label()
 
     def _build_toolbar(self):
         bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
@@ -473,14 +714,11 @@ class RecipePanel(ttk.Frame):
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
 
-        if self._system != "accretech":
-            self._btn_import_legacy = ttk.Button(bar, text="📥  Import Legacy (.pma)…",
-                                                 command=self._import_legacy)
-            self._btn_import_legacy.pack(side="left", padx=2, pady=4)
-            self._btn_import_workbook = ttk.Button(
-                bar, text="📥  Import Legacy Workbook (.xls)…",
-                command=self._import_legacy_workbook)
-            self._btn_import_workbook.pack(side="left", padx=2, pady=4)
+        # The Import Legacy buttons are gone: the PMA Process tab's LOAD ALL
+        # is the one way in, and it drives the same import_legacy_from_path /
+        # import_legacy_workbook_from_path underneath. Two entry points meant a
+        # recipe could be imported here from one PMA while the run adopted
+        # another, with nothing to flag the mismatch.
         self._btn_save = ttk.Button(bar, text="💾  Save", command=self._save)
         self._btn_save.pack(side="left", padx=2, pady=4)
 
@@ -508,14 +746,196 @@ class RecipePanel(ttk.Frame):
                                      font=("Segoe UI", 8, "italic"))
         self._default_lbl.pack(side="left", padx=(0, 8))
 
+        # What DMM/SMU actually resolve to on the prober that is selected.
+        self._bench_note_lbl = tk.Label(bar, text=self._bench_instrument_note(),
+                                        bg="#e2e8f0", fg="#1d4ed8",
+                                        font=("Segoe UI", 8))
+        self._bench_note_lbl.pack(side="right", padx=(0, 10))
+
 
     def _build_body(self):
         body = ttk.Frame(self)
         body.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
-        body.rowconfigure(0, weight=1)
+        body.rowconfigure(0, weight=3)
+        body.rowconfigure(1, weight=2)
         body.columnconfigure(0, weight=1)
         self._build_steps(body)
+        self._build_sites(body)
 
+
+    # -- touchdown list -----------------------------------------------------
+    #
+    # Which dies a recipe probes used to live outside the recipe: Accretech
+    # kept one ata_wafer_map_selected.csv per ATA FOLDER, so every recipe in
+    # that folder shared a single selection and switching recipe silently kept
+    # the previous one's sites. Here the list belongs to the recipe, travels
+    # with the probe card, and carries the die ID beside the row/col so a
+    # saved list can be checked against the map it was taken from.
+
+    def _build_sites(self, parent):
+        sf = ttk.LabelFrame(parent, text="Touchdowns (which dies this recipe probes)",
+                            padding=6)
+        sf.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        sf.rowconfigure(2, weight=1)
+        sf.columnconfigure(0, weight=1)
+
+        self._sites_var = tk.StringVar(value="No touchdowns — the run walks every die")
+        ttk.Label(sf, textvariable=self._sites_var, font=("Arial", 8),
+                  foreground="#555", justify="left", wraplength=760).grid(
+                  row=0, column=0, columnspan=2, sticky="w")
+
+        bar = ttk.Frame(sf)
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+        ttk.Button(bar, text="⬅ Take from map selection",
+                   command=self._sites_from_map).pack(side="left")
+        ttk.Button(bar, text="➡ Push to map",
+                   command=self._sites_to_map).pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="✕ Remove selected",
+                   command=self._site_remove).pack(side="left", padx=(16, 0))
+        ttk.Button(bar, text="🗑 Clear all",
+                   command=self._sites_clear).pack(side="left", padx=(6, 0))
+
+        cols = ("n", "die_id", "row", "col")
+        self._site_tree = ttk.Treeview(sf, columns=cols, show="headings", height=6)
+        for cid, text, width, anchor in (("n", "#", 40, "center"),
+                                         ("die_id", "Die ID", 260, "w"),
+                                         ("row", "Row", 60, "center"),
+                                         ("col", "Col", 60, "center")):
+            self._site_tree.heading(cid, text=text)
+            self._site_tree.column(cid, width=width, anchor=anchor,
+                                   stretch=(cid == "die_id"))
+        self._site_tree.grid(row=2, column=0, sticky="nsew")
+        sb = ttk.Scrollbar(sf, orient="vertical", command=self._site_tree.yview)
+        sb.grid(row=2, column=1, sticky="ns")
+        self._site_tree.configure(yscrollcommand=sb.set)
+
+    def _run_panel(self):
+        """The Run tab that owns the wafer map, or None if not built yet."""
+        return getattr(self.controller, "ui", None)
+
+    def _refresh_sites(self):
+        self._site_tree.delete(*self._site_tree.get_children())
+        for i, s in enumerate(self._sites, 1):
+            self._site_tree.insert("", "end", values=(
+                i, s.get("die_id", "") or "—", s.get("row", ""), s.get("col", "")))
+        n = len(self._sites)
+        if not n:
+            self._sites_var.set(
+                "No touchdowns — the run walks every die on the wafer map. "
+                "Select dies on the Run tab's map, then ⬅ Take from map selection.")
+        else:
+            named = sum(1 for s in self._sites if s.get("die_id"))
+            self._sites_var.set(
+                f"{n} touchdown{'' if n == 1 else 's'} — the run probes only these, "
+                f"in this order. {named} carry a die ID.")
+
+    def _sites_from_map(self):
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        picks = list(wm.get_picked())
+        if not picks:
+            messagebox.showinfo(
+                "Touchdowns",
+                "No dies are selected on the Run tab's map.\n\n"
+                "Click dies there (or use the Run tab's selection tools), then "
+                "come back and press this again.")
+            return
+        overlay = getattr(ui, "_exec2_overlay_die_ids", None) or {}
+        sites = []
+        for rc in picks:
+            rc = (int(rc[0]), int(rc[1]))
+            die_id = overlay.get(rc) or wm.die_ids.get(rc, "")
+            sites.append({"die_id": die_id, "row": rc[0], "col": rc[1]})
+        self._sites[:] = sites
+        self._store_form()
+        self._refresh_sites()
+        # Save immediately, the same as the Run tab's 💾 Save Selected Map -
+        # the two are one operation reached from two places, so they must not
+        # differ in whether the result survives a restart.
+        card = self._get_active_card()
+        saved = bool(card) and bool(self._save_recipes(card, self._recipes))
+        self.controller.log(
+            f"[RECIPE] '{self._current}': touchdown list set to {len(sites)} "
+            f"die(s) from the map selection"
+            + (f" and saved to probe card '{card}'." if saved
+               else " — NOT saved (no probe card); press 💾 Save."))
+
+    def _sites_to_map(self):
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        if not self._sites:
+            messagebox.showinfo("Touchdowns", "This recipe has no touchdowns yet.")
+            return
+        picks = [(s["row"], s["col"]) for s in self._sites]
+        missing = [rc for rc in picks if rc not in wm.dies]
+        wm.set_picked(picks)
+        if hasattr(ui, "_exec2_on_sites_changed"):
+            ui._exec2_on_sites_changed(picks)
+        note = (f" ({len(missing)} not on the loaded map — wrong wafer map for "
+                "this recipe?)" if missing else "")
+        self.controller.log(f"[RECIPE] '{self._current}': highlighted "
+                            f"{len(picks)} touchdown(s) on the Run map.{note}")
+
+    def _site_remove(self):
+        sel = self._site_tree.selection()
+        if not sel:
+            return
+        for idx in sorted((self._site_tree.index(i) for i in sel), reverse=True):
+            if 0 <= idx < len(self._sites):
+                del self._sites[idx]
+        self._store_form()
+        self._refresh_sites()
+
+    def _sites_clear(self):
+        if not self._sites:
+            return
+        if not messagebox.askokcancel(
+                "Clear touchdowns",
+                f"Remove all {len(self._sites)} touchdown(s) from "
+                f"'{self._current}'?\n\nThe run will then walk every die."):
+            return
+        self._sites.clear()
+        self._store_form()
+        self._refresh_sites()
+
+    def set_sites(self, recipe: str, sites: list) -> bool:
+        """Replace a recipe's touchdown list. Used by the PMA tab's LOAD ALL.
+
+        Saves to the probe card straight away: the list arrives as part of a
+        chain the operator did not step through, so leaving it unsaved would
+        mean a restart silently drops it.
+        """
+        rec = self._recipes.get(recipe)
+        if rec is None:
+            return False
+        clean = []
+        for s in sites:
+            try:
+                clean.append({"die_id": str(s.get("die_id", "") or ""),
+                              "row": int(s["row"]), "col": int(s["col"])})
+            except (KeyError, TypeError, ValueError):
+                continue
+        rec["sites"] = clean
+        if recipe == self._current:
+            self._sites = rec["sites"]
+            self._refresh_sites()
+        card = self._get_active_card()
+        if card:
+            self._save_recipes(card, self._recipes)
+        return True
+
+    def get_sites(self) -> list:
+        """The active recipe's touchdown list, as [(row, col), ...]."""
+        return [(s["row"], s["col"]) for s in self._sites]
+
+    def get_site_records(self) -> list:
+        return list(self._sites)
 
     def _build_steps(self, parent):
         sf = ttk.LabelFrame(parent, text="Measurement Steps (per shot)",
@@ -530,13 +950,15 @@ class RecipePanel(ttk.Frame):
                   row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
         cols = ("n", "name", "type", "instrument", "mode", "chan", "target",
-                "hi", "lo", "level", "limit", "avg", "min", "max", "shape", "freq", "conn")
+                "hi", "lo", "his", "los",
+                "level", "limit", "avg", "min", "max", "shape", "freq", "conn")
         self._step_tree = ttk.Treeview(sf, columns=cols, show="headings",
                                        height=5, selectmode="browse")
         heads = [("n", "#", 28), ("name", "Name", 90), ("type", "Type", 75),
                  ("instrument", "Instr", 50), ("mode", "Mode", 55), ("chan", "Chan", 40),
                  ("target", "Target", 62),
                  ("hi", "HI pin", 55), ("lo", "LO pin", 55),
+                 ("his", "SnsHI", 52), ("los", "SnsLO", 52),
                  ("level", "Level", 52), ("limit", "Limit", 50),
                  ("avg", "Avg", 68),
                  ("min", "Min", 46), ("max", "Max", 46),
@@ -607,6 +1029,22 @@ class RecipePanel(ttk.Frame):
                                    postcommand=lambda: self._refresh_pin_values(self._lo_cb))
         self._lo_cb.grid(row=1, column=7, sticky="w")
         self._pin_widgets = [self._hi_cb, self._lo_cb]
+
+        # The 4-wire sense pair. Present on every step for a stable layout but
+        # only ever enabled for "ohmf" - see _on_type_change.
+        _lbl(5, 0, "Sense HI:")
+        self._his_cb = ttk.Combobox(editor, textvariable=self._ed_vars["his"], width=8,
+                                    postcommand=lambda: self._refresh_pin_values(self._his_cb))
+        self._his_cb.grid(row=5, column=1, sticky="w")
+        _lbl(5, 2, "Sense LO:")
+        self._los_cb = ttk.Combobox(editor, textvariable=self._ed_vars["los"], width=8,
+                                    postcommand=lambda: self._refresh_pin_values(self._los_cb))
+        self._los_cb.grid(row=5, column=3, sticky="w")
+        self._sense_widgets = [self._his_cb, self._los_cb]
+        self._sense_note = ttk.Label(
+            editor, text="4-wire only — HI/LO source the current, Sense HI/LO read the pad",
+            foreground="#6b7280")
+        self._sense_note.grid(row=5, column=4, columnspan=4, sticky="w", padx=(6, 0))
 
         _lbl(2, 0, "Level:")
         self._level_ent = ttk.Entry(editor, textvariable=self._ed_vars["level"], width=9)
@@ -697,6 +1135,17 @@ class RecipePanel(ttk.Frame):
                 w.config(state=state)
 
         _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "normal")
+        # Four pins are exclusive to the 4-wire step; every other branch below
+        # leaves these disabled, and the values are cleared so a type change
+        # cannot leave orphaned sense pins behind.
+        if t == FOUR_WIRE_TYPE:
+            _set(self._sense_widgets, "normal")
+            self._sense_note.config(foreground="#6b7280")
+        else:
+            _set(self._sense_widgets, "disabled")
+            self._ed_vars["his"].set("")
+            self._ed_vars["los"].set("")
+            self._sense_note.config(foreground="#cbd5e1")
         self._target_cb.config(state="disabled")
         self._limit_ent.config(state="disabled")
         self._shape_cb.config(state="disabled")
@@ -744,7 +1193,7 @@ class RecipePanel(ttk.Frame):
             self._pf_max_ent.config(state="normal")
             return
 
-        if t == "resistance":
+        if t in ("resistance", FOUR_WIRE_TYPE):
             self._ed_vars["mode"].set("measure")
             self._mode_cb.config(state="disabled")
         elif t == "wave":
@@ -872,12 +1321,18 @@ class RecipePanel(ttk.Frame):
                 detail.append(f"reset SMU {ref.get('chan') or 'A'} output")
             return channels, detail, []
 
-        rows_hi, rows_lo = switch_topology.rows_for(t, step.get("chan") or "",
-                                                    step.get("instrument") or "")
+        by_field = switch_topology.rows_for_fields(t, step.get("chan") or "",
+                                                   step.get("instrument") or "")
         roles = switch_topology.row_roles()
         max_pin = switch_topology.total_pins()
         channels, detail, unresolved = [], [], []
-        for field, rows in (("hi", rows_hi), ("lo", rows_lo)):
+        for field in ("hi", "lo", "his", "los"):
+            rows = by_field.get(field, ())
+            if not rows and (step.get(field) or "").strip():
+                detail.append(
+                    f"{field.upper()} pin(s) named but no switch row is assigned "
+                    f"DMM {'SHI' if field == 'his' else 'SLO'} — set one in "
+                    f"Switch Settings")
             for token in (p for p in step.get(field, "").split(",") if p.strip()):
                 pin = self._resolve_pin(token)
                 if pin is None or not (1 <= pin <= max_pin):
@@ -1017,11 +1472,37 @@ class RecipePanel(ttk.Frame):
             hi, lo = s.get("hi", "").strip(), s.get("lo", "").strip()
             if hi and lo and hi == lo:
                 issues.append(f"ERROR {tag}: HI and LO are the same pin ({hi})")
+            pin_tokens = [hi, lo]
+            if t == FOUR_WIRE_TYPE:
+                his, los = s.get("his", "").strip(), s.get("los", "").strip()
+                pin_tokens += [his, los]
+                missing = [n for n, v in (("Sense HI", his), ("Sense LO", los)) if not v]
+                if missing:
+                    issues.append(f"ERROR {tag}: 4-wire needs all four pins — "
+                                  f"missing {', '.join(missing)}")
+                # Four legs on one pin is a 2-wire measurement wearing a
+                # 4-wire label, and would read lead resistance as device.
+                named = [(n, v) for n, v in (("HI", hi), ("LO", lo),
+                                             ("Sense HI", his), ("Sense LO", los)) if v]
+                seen = {}
+                for name, val in named:
+                    seen.setdefault(val, []).append(name)
+                for val, names in seen.items():
+                    if len(names) > 1:
+                        issues.append(f"ERROR {tag}: {' and '.join(names)} are the "
+                                      f"same pin ({val}) — 4-wire needs four "
+                                      f"separate pins")
+                rows = switch_topology.rows_for_fields(t, s.get("chan") or "", instrument)
+                for field, role in (("his", "SHI"), ("los", "SLO")):
+                    if s.get(field, "").strip() and not rows.get(field):
+                        issues.append(f"ERROR {tag}: no switch row is assigned "
+                                      f"DMM {role} — add one in Switch Settings "
+                                      f"or the sense leg will not be connected")
             _ch, _det, unresolved = self.step_connections(s)
             if unresolved:
                 issues.append(f"ERROR {tag}: pins not resolvable / out of range: "
                               + ", ".join(unresolved))
-            for token in (hi, lo):
+            for token in pin_tokens:
                 pin = self._resolve_pin(token) if token else None
                 if pin is not None and wiring_pins and str(pin) not in wiring_pins:
                     issues.append(f"WARN {tag}: pin {pin} ('{token}') is not defined "
@@ -1159,8 +1640,6 @@ class RecipePanel(ttk.Frame):
 
     def _lockable_buttons(self) -> tuple:
         names = ["_btn_new", "_btn_rename", "_btn_delete"]
-        if self._system != "accretech":
-            names += ["_btn_import_legacy", "_btn_import_workbook"]
         names += ["_btn_save", "_btn_add_step", "_btn_update_step",
                  "_btn_remove_step", "_btn_move_up", "_btn_move_down",
                  "_btn_recompute"]
@@ -1352,6 +1831,7 @@ class RecipePanel(ttk.Frame):
                 step.get("instrument", ""), step.get("mode", ""),
                 step.get("chan", ""), step.get("target", ""),
                 step.get("hi", ""), step.get("lo", ""),
+                step.get("his", ""), step.get("los", ""),
                 step.get("level", ""), step.get("limit", ""),
                 _avg_display(step),
                 step.get("min", ""), step.get("max", ""),
@@ -1368,13 +1848,16 @@ class RecipePanel(ttk.Frame):
         if rec is None:
             return
         rec["steps"] = self._steps
+        rec["sites"] = self._sites
 
     def _load_form(self, name: str):
         rec = self._recipes[name]
         self._current = name
         self._picker_var.set(name)
         self._steps = rec.setdefault("steps", [])
+        self._sites = rec.setdefault("sites", [])
         self._refresh_steps()
+        self._refresh_sites()
         self._update_validity_label()
 
     def _switch_recipe(self):
@@ -1452,11 +1935,13 @@ class RecipePanel(ttk.Frame):
             return
         self._store_form()
         cur = self._recipes[self._current]
-        rec = {"steps": [dict(s) for s in cur["steps"]]}
+        rec = {"steps": [dict(s) for s in cur["steps"]],
+               "sites": [dict(s) for s in cur.get("sites", [])]}
         self._recipes[name] = rec
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
+                and not self._recipes["(unsaved)"]["steps"]
+                and not self._recipes["(unsaved)"].get("sites")):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
@@ -1557,6 +2042,19 @@ class RecipePanel(ttk.Frame):
                 "averaging, current limit) were found in that file.")
             return False
         steps = pma_params_to_steps(useful)
+        # A .PMA whose touchdowns name several devices is a multi-die shot,
+        # and the block has to run once per die. This path never did that -
+        # only the workbook import did - so a LOAD ALL of a quad recipe built
+        # a recipe that measured one die and called the shot done.
+        dies_per_shot = _pma_dies_per_shot(path)
+        if dies_per_shot > 1:
+            try:
+                wiring = self._get_wiring()
+            except Exception:
+                wiring = []
+            steps = repeat_steps_per_die(
+                steps, dies_per_shot, die_channels_for_bench(dies_per_shot),
+                die_pins_from_card(wiring, dies_per_shot))
 
         name = os.path.splitext(os.path.basename(path))[0]
         orig_name, n = name, 2
@@ -1564,10 +2062,11 @@ class RecipePanel(ttk.Frame):
             name = f"{orig_name} ({n})"
             n += 1
         self._store_form()
-        self._recipes[name] = {"steps": steps}
+        self._recipes[name] = {"steps": steps, "sites": []}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
+                and not self._recipes["(unsaved)"]["steps"]
+                and not self._recipes["(unsaved)"].get("sites")):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
@@ -1657,10 +2156,11 @@ class RecipePanel(ttk.Frame):
             name = f"{orig_name} ({n})"
             n += 1
         self._store_form()
-        self._recipes[name] = {"steps": steps}
+        self._recipes[name] = {"steps": steps, "sites": []}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
-                and not self._recipes["(unsaved)"]["steps"]):
+                and not self._recipes["(unsaved)"]["steps"]
+                and not self._recipes["(unsaved)"].get("sites")):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
@@ -1720,11 +2220,12 @@ class RecipePanel(ttk.Frame):
     def load_recipes(self, card: str, recipes: dict):
         self._active_card = card
         if recipes:
-            self._recipes = {name: {"steps": [dict(s) for s in rec.get("steps", [])]}
+            self._recipes = {name: {"steps": [dict(s) for s in rec.get("steps", [])],
+                                    "sites": [dict(s) for s in rec.get("sites", [])]}
                               for name, rec in recipes.items()}
             self._current = next(iter(self._recipes))
         else:
-            self._recipes = {"(unsaved)": {"steps": []}}
+            self._recipes = {"(unsaved)": {"steps": [], "sites": []}}
             self._current = "(unsaved)"
         self.validate_all_recipes()
         self._load_form(self._current)

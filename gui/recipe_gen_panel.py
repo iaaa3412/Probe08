@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import csv
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
@@ -38,11 +39,6 @@ _COLOR_HAS_ID = "#22c55e"
 _COLOR_EXCLUDED = "#ef4444"
 _COLOR_SELECTED = "#f59e0b"
 
-_FREE_FORM_SEED = (
-    "Voltage", "Delay1", "Delay2", "Delay3", "Iterations",
-    "MeterDelay", "Averages", "NPLC", "MeterCurrentLimit", "MeterRange",
-    "PreAlignMessage", "PostAlignMessage", "PictureFile",
-)
 
 
 def _to_float(text: str, default: float = 0.0) -> float:
@@ -87,8 +83,6 @@ class RecipeGenPanel(ttk.Frame):
         self.recipe_name_var = tk.StringVar(value="NewRecipe")
         self._die_size_x_var = tk.StringVar()
         self._die_size_y_var = tk.StringVar()
-        self._x_move_var = tk.StringVar()
-        self._y_move_var = tk.StringVar()
         self._status_var = tk.StringVar(value="Build a grid to begin.")
         self._selected_var = tk.StringVar(value="Click a die on the map to edit it.")
 
@@ -123,95 +117,39 @@ class RecipeGenPanel(ttk.Frame):
             side="left", padx=(4, 12))
         ttk.Button(bar, text="🧱 Build Major Grid…", command=self._build_grid_dialog).pack(
             side="left", padx=(0, 6))
-        ttk.Button(bar, text="📥 Import Recipe Generator (.xls) as Template…",
+        ttk.Button(bar, text="📥 Import .xls…",
                   command=self._import_xls_template).pack(side="left", padx=(0, 6))
-        ttk.Button(bar, text="💾 Create All Files", command=self._create_all_files).pack(
+        ttk.Button(bar, text="📥 Import die-ID CSV…",
+                  command=self._import_csv_template).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="🗺 Save Wafer Map", command=self._save_wafer_map).pack(
             side="left", padx=(0, 6))
         ttk.Label(bar, textvariable=self._status_var, foreground="#374151").pack(
             side="left", padx=10)
 
     def _build_main_fields(self):
-        lf = ttk.LabelFrame(self, text="Main Menu Fields", padding=8)
+        """Wafer geometry only.
+
+        This used to carry the .PMA's whole Main Menu header - Voltage,
+        Delay1/2/3, Iterations, MeterDelay, Averages, NPLC, MeterCurrentLimit,
+        MeterRange, and the align-site move vector. Those describe a
+        MEASUREMENT and a move sequence, not a wafer, and they belong to the
+        recipe; having them here meant the same numbers existed in two places
+        with nothing keeping them equal. The die pitch stays because it is
+        geometry: without it a grid of IDs says where dies sit relative to
+        each other but not how far apart.
+        """
+        lf = ttk.LabelFrame(self, text="Wafer Geometry", padding=8)
         lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
-        for i in range(8):
-            lf.columnconfigure(i, weight=1)
+        ttk.Label(lf, text="Die pitch X (um):").pack(side="left")
+        ttk.Entry(lf, textvariable=self._die_size_x_var, width=12).pack(
+            side="left", padx=(4, 12))
+        ttk.Label(lf, text="Die pitch Y (um):").pack(side="left")
+        ttk.Entry(lf, textvariable=self._die_size_y_var, width=12).pack(
+            side="left", padx=(4, 12))
+        ttk.Label(lf, text="For a quad product this is the SHOT pitch, "
+                           "twice the physical die.",
+                  foreground="#6b7280", font=("Arial", 8)).pack(side="left")
 
-        fields = (
-            ("Die Size X:", self._die_size_x_var),
-            ("Die Size Y:", self._die_size_y_var),
-            ("X Move First From Align Site:", self._x_move_var),
-            ("Y Move First From Align Site:", self._y_move_var),
-        )
-        for col, (label, var) in enumerate(fields):
-            ttk.Label(lf, text=label).grid(row=0, column=col, sticky="w", padx=(0, 4))
-            ttk.Entry(lf, textvariable=var, width=12).grid(
-                row=1, column=col, sticky="ew", padx=(0, 8))
-
-        ff = ttk.Frame(lf)
-        ff.grid(row=2, column=0, columnspan=8, sticky="ew", pady=(10, 0))
-        ff.columnconfigure(0, weight=1)
-
-        cols = ("name", "value")
-        self._fields_tree = ttk.Treeview(
-            ff, columns=cols, show="headings", height=6, selectmode="browse")
-        self._fields_tree.heading("name", text="Field")
-        self._fields_tree.heading("value", text="Value")
-        self._fields_tree.column("name", width=180)
-        self._fields_tree.column("value", width=200)
-        self._fields_tree.grid(row=0, column=0, columnspan=4, sticky="ew")
-        self._fields_tree.bind("<<TreeviewSelect>>", self._on_field_row_selected)
-        for name in _FREE_FORM_SEED:
-            self._fields_tree.insert("", "end", iid=name, values=(name, ""))
-
-        ttk.Label(ff, text="Name:").grid(row=1, column=0, sticky="e", pady=(6, 0))
-        self._field_name_var = tk.StringVar()
-        ttk.Entry(ff, textvariable=self._field_name_var, width=22).grid(
-            row=1, column=1, sticky="w", pady=(6, 0), padx=(4, 12))
-        ttk.Label(ff, text="Value:").grid(row=1, column=2, sticky="e", pady=(6, 0))
-        self._field_value_var = tk.StringVar()
-        ttk.Entry(ff, textvariable=self._field_value_var, width=22).grid(
-            row=1, column=3, sticky="w", pady=(6, 0), padx=(4, 0))
-        btn_row = ttk.Frame(ff)
-        btn_row.grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
-        ttk.Button(btn_row, text="Set", command=self._set_field_row).pack(side="left")
-        ttk.Button(btn_row, text="Remove", command=self._remove_field_row).pack(
-            side="left", padx=(4, 0))
-
-    def _on_field_row_selected(self, _evt=None):
-        sel = self._fields_tree.selection()
-        if not sel:
-            return
-        name, value = self._fields_tree.item(sel[0], "values")
-        self._field_name_var.set(name)
-        self._field_value_var.set(value)
-
-    def _set_field_row(self):
-        name = self._field_name_var.get().strip()
-        if not name:
-            return
-        value = self._field_value_var.get()
-        if self._fields_tree.exists(name):
-            self._fields_tree.item(name, values=(name, value))
-        else:
-            self._fields_tree.insert("", "end", iid=name, values=(name, value))
-
-    def _remove_field_row(self):
-        sel = self._fields_tree.selection()
-        if not sel:
-            return
-        self._fields_tree.delete(*sel)
-        self._field_name_var.set("")
-        self._field_value_var.set("")
-
-    def _free_form_fields(self) -> Dict[str, str]:
-        out = {}
-        for iid in self._fields_tree.get_children():
-            name, value = self._fields_tree.item(iid, "values")
-            if str(value).strip():
-                out[name] = value
-        return out
-
-    # ------------------------------------------------------------------
     def _build_body(self):
         split = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         split.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 6))
@@ -408,6 +346,165 @@ class RecipeGenPanel(ttk.Frame):
             "Replace Grid",
             "This will discard the current grid's device IDs and exclusions. Continue?")
 
+    # -- plain die-ID CSV ---------------------------------------------------
+    #
+    # The simple way in, and the one that does not need a legacy workbook: a
+    # CSV laid out like the wafer. One cell per SHOT, holding that shot's
+    # device ID - or the slash-joined IDs of the dies it co-touches, exactly
+    # as the workbook writes them. Blank cells are off-wafer. Nothing else:
+    # no headers, no coordinates. The pitch comes from the Die Size fields,
+    # which is the one thing a bare grid cannot tell us.
+
+    def _import_csv_template(self):
+        self._close_cell_editor(commit=False)
+        path = filedialog.askopenfilename(
+            title="Import a die-ID CSV (laid out like the wafer)",
+            filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as fh:
+                rows = [r for r in csv.reader(fh)]
+        except OSError as exc:
+            messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
+            return
+        # Trim fully blank leading/trailing rows so a file with padding still
+        # lands with the wafer at the origin.
+        while rows and not any((c or "").strip() for c in rows[0]):
+            rows.pop(0)
+        while rows and not any((c or "").strip() for c in rows[-1]):
+            rows.pop()
+        if not rows:
+            messagebox.showerror("Empty File",
+                                 f"{os.path.basename(path)} has no die IDs in it.")
+            return
+
+        pitch_x = _to_float(self._die_size_x_var.get())
+        pitch_y = _to_float(self._die_size_y_var.get())
+        if not pitch_x or not pitch_y:
+            messagebox.showerror(
+                "Die Size Needed",
+                "Set Die Size X and Y (in microns) before importing a die-ID "
+                "CSV.\n\nA bare grid of IDs says where dies are relative to "
+                "each other but not how far apart they are, and the pitch is "
+                "what every move on the Run tab is computed from.")
+            return
+        if not self._confirm_discard_edits():
+            return
+
+        cols = max(len(r) for r in rows)
+        grid = egpma.new_grid(len(rows), cols, 0.0, 0.0, pitch_x, pitch_y)
+        n = 0
+        for r, row in enumerate(rows):
+            for c in range(cols):
+                text = (row[c].strip() if c < len(row) else "")
+                cell = grid["cells"][(r, c)]
+                cell["device_id"] = text
+                # A blank cell is off the wafer, not an unnamed die - that is
+                # what makes the grid wafer-shaped.
+                cell["excluded"] = not text
+                if text:
+                    n += 1
+
+        self._major = grid
+        self._selected_rc = None
+        self._redraw_grid()
+        self._status_var.set(f"Imported {n} shot(s) from "
+                             f"{os.path.basename(path)} ({cols}x{len(rows)} grid).")
+        self._log(f"[WAFER MAP] Imported '{os.path.basename(path)}' — {cols}x"
+                  f"{len(rows)} grid, {n} shot(s) with a device ID, pitch "
+                  f"{pitch_x:g} x {pitch_y:g} um. Blank cells are treated as "
+                  "off-wafer.")
+
+    def _save_wafer_map(self):
+        """Write the Run tab's wafer map straight from this grid.
+
+        The point of this tab: a map without going through .PMA/.PMS/.PMV at
+        all. Writes the same ata_wafer_map_electroglas.csv the PMA Process
+        path produces, so the Run tab, the die-ID overlay and the exports all
+        read it the same way and cannot tell where it came from.
+        """
+        self._close_cell_editor(commit=True)
+        pitch_x = _to_float(self._die_size_x_var.get())
+        pitch_y = _to_float(self._die_size_y_var.get())
+        if not pitch_x or not pitch_y:
+            messagebox.showerror("Die Size Needed",
+                                 "Set Die Size X and Y (in microns) first.")
+            return
+        folder = getattr(self._main_layout, "_exec2_map_folder", None) or \
+            getattr(self._main_layout, "_ata_folder", None)
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+
+        shots = []
+        for (r, c), cell in sorted(self._major["cells"].items()):
+            text = (cell.get("device_id") or "").strip()
+            if not text or cell.get("excluded"):
+                continue
+            shots.append({"seq": len(shots) + 1, "device_id": text,
+                          "devices": [t.strip() for t in text.split("/")],
+                          "x": self._major["x_headers"][c],
+                          "y": self._major["y_headers"][r]})
+        if not shots:
+            messagebox.showerror("Empty Map",
+                                 "No included cell has a device ID, so there is "
+                                 "no wafer map to write.")
+            return
+        n_dies = len(egpma.expand_touchdowns_to_dies(shots, pitch_x, pitch_y))
+        if not messagebox.askokcancel(
+                "Save Wafer Map",
+                f"Write {len(shots)} shot(s) / {n_dies} die(s) to\n"
+                f"ata_wafer_map_electroglas.csv in\n{folder}?\n\n"
+                "This replaces the Run tab's Electroglas wafer map."):
+            return
+        try:
+            path = egpma.save_wafer_map_csv(
+                folder, shots, {"DieSizeX": pitch_x, "DieSizeY": pitch_y})
+        except OSError as exc:
+            messagebox.showerror("Write Failed", str(exc))
+            return
+        self._status_var.set(f"Wrote {len(shots)} shot(s) / {n_dies} die(s) "
+                             "to the Run tab's wafer map.")
+        self._log(f"[WAFER MAP] Wrote {path} — {len(shots)} shot(s), {n_dies} die(s).")
+        self._sync_views(folder)
+
+    def _sync_views(self, folder: str):
+        """Push a freshly written map to everything that draws one.
+
+        Three views show this wafer - the Run tab's map, the Wafer View page
+        beside this one, and the PMA Process tab's align-site readout - and
+        they read it from the file rather than from each other. Writing the
+        file without refreshing them leaves the others showing the previous
+        wafer, which is exactly how a stale 60-die map survived a LOAD ALL.
+        """
+        layout = self._main_layout
+        try:
+            layout._exec2_map_folder = folder
+            layout._exec2_map_source_var.set("Electroglas")
+            layout._exec2_draw_wafer_map()
+        except Exception as exc:
+            self._log(f"[WAFER MAP] Map written, but the Run tab did not redraw: "
+                      f"{type(exc).__name__}: {exc}")
+        wafer = getattr(layout, "pma_wafer", None)
+        if wafer is not None:
+            # _refresh_view, NOT load_from_ata: the latter calls reset_view,
+            # which nulls workbook_data - and workbook_data is what the Run
+            # tab derives the whole wafer map from. Reloading here would drop
+            # the map back to the recipe's touchdowns, which is the exact bug
+            # this tab exists to stop.
+            try:
+                wafer._refresh_view()
+            except Exception as exc:
+                self._log(f"[WAFER MAP] Wafer View did not refresh: "
+                          f"{type(exc).__name__}: {exc}")
+        proc = getattr(layout, "pma_process", None)
+        if proc is not None:
+            try:
+                proc.refresh_align_site()
+            except Exception:
+                pass
+
     def _import_xls_template(self):
         self._close_cell_editor(commit=False)
         if not _XLRD:
@@ -440,15 +537,6 @@ class RecipeGenPanel(ttk.Frame):
             self._die_size_x_var.set(info["die_size_x"])
         if info.get("die_size_y"):
             self._die_size_y_var.set(info["die_size_y"])
-        if info.get("x_move_first"):
-            self._x_move_var.set(info["x_move_first"])
-        if info.get("y_move_first"):
-            self._y_move_var.set(info["y_move_first"])
-        for name, value in info.get("params", {}).items():
-            if self._fields_tree.exists(name):
-                self._fields_tree.item(name, values=(name, value))
-            else:
-                self._fields_tree.insert("", "end", iid=name, values=(name, value))
 
         self._major = _grid_from_moves(major_grid)
         self._minor_rows = _minor_rows_from_moves(minor_grid) if minor_grid else \
@@ -773,65 +861,3 @@ class RecipeGenPanel(ttk.Frame):
         folder = getattr(self._main_layout, "_ata_folder", "")
         return os.path.join(folder, PMA_SOURCE_SUBDIR) if folder else ""
 
-    def _create_all_files(self):
-        self._close_cell_editor(commit=True)
-        self._close_dielist_editor(commit=True)
-        name = self.recipe_name_var.get().strip()
-        if not name:
-            messagebox.showerror("Missing Recipe Name", "Enter a recipe name first.")
-            return
-        safe_name = "".join(c for c in name if c.isalnum() or c in " _-").strip()
-        if not safe_name:
-            messagebox.showerror("Invalid Recipe Name",
-                                 "Use letters, digits, space, - or _.")
-            return
-        dest_dir = self._pma_source_dir()
-        if not dest_dir:
-            messagebox.showerror("No ATA Folder",
-                                 "Load an ATA folder first — recipe files are saved "
-                                 f"into its {PMA_SOURCE_SUBDIR}\\ subfolder.")
-            return
-        if not any(not c.get("excluded") for c in self._major["cells"].values()):
-            if not messagebox.askyesno(
-                "No Included Dies",
-                "Every die on the grid is currently excluded — the generated "
-                "recipe would have zero touchdowns. Continue anyway?"
-            ):
-                return
-        if not messagebox.askyesno(
-            "Create All Files",
-            f"Create all the recipe files for '{safe_name}'? Existing files "
-            "with the same name will be overwritten. Are you sure?"
-        ):
-            return
-
-        main_fields = {
-            "DieSizeX": self._die_size_x_var.get().strip(),
-            "DieSizeY": self._die_size_y_var.get().strip(),
-            "XMoveFirstFromAlignSite": self._x_move_var.get().strip(),
-            "YMoveFirstFromAlignSite": self._y_move_var.get().strip(),
-        }
-        main_fields.update(self._free_form_fields())
-
-        minor_sites = [{"dx": _to_float(r["dx"]), "dy": _to_float(r["dy"]),
-                       "suffix": r["suffix"].strip()} for r in self._minor_rows]
-
-        try:
-            pma_path = egpma.write_recipe_files(dest_dir, safe_name, main_fields,
-                                               self._major, minor_sites)
-        except OSError as exc:
-            messagebox.showerror("Write Failed", str(exc))
-            return
-
-        n_major = sum(1 for c in self._major["cells"].values() if not c.get("excluded"))
-        self._status_var.set(f"Created {os.path.basename(pma_path)} "
-                             f"({n_major} dies x {len(minor_sites)} site(s))")
-        self._log(f"[RECIPE GEN] Created all recipe files for '{safe_name}' in "
-                  f"{PMA_SOURCE_SUBDIR}\\ — {n_major} die(s), {len(minor_sites)} "
-                  "minor site(s) each.")
-
-        pma_process = getattr(self._main_layout, "pma_process", None)
-        if pma_process is not None:
-            pma_process._refresh_pickers()
-            pma_process._pma_picker_var.set(os.path.basename(pma_path))
-            pma_process.load_path(pma_path)

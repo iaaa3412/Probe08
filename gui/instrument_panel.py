@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 import os
 import threading
 import time
@@ -288,10 +289,10 @@ class MainLayout(ttk.Frame):
             lbl = ttk.Label(inst_frame, text=f"⏳ {inst}", foreground="orange")
             lbl.pack(anchor="w", padx=4, pady=2)
             self.status_labels[inst] = lbl
-        ttk.Button(
+        self._refresh_conn_btn = ttk.Button(
             inst_frame, text="↻ Refresh Connections",
-            command=self._init_hardware_fn
-        ).pack(pady=(8, 4), padx=4, fill="x")
+            command=self._init_hardware_fn)
+        self._refresh_conn_btn.pack(pady=(8, 4), padx=4, fill="x")
 
         self.lbl_progress = ttk.Label(sidebar, text="No wafer loaded")
         self.sidebar_canvas = tk.Canvas(
@@ -312,6 +313,27 @@ class MainLayout(ttk.Frame):
         self.log_text.configure(yscrollcommand=log_sb.set)
         log_sb.pack(side="right", fill="y", pady=2)
         self.log_text.pack(fill="both", expand=True, padx=(2, 0), pady=2)
+
+    def set_visible_instruments(self, names):
+        """Show only these in the sidebar roster, in the declared order.
+
+        An instrument that is neither fitted nor pinged has no status to
+        report, so listing it just adds a permanently grey row. The bench
+        profile decides which those are, and it changes when the prober
+        selector changes - hence re-applied on every connect sweep rather
+        than fixed at build time.
+        """
+        wanted = set(names or [])
+        for inst in self._instrument_names:
+            lbl = self.status_labels.get(inst)
+            if lbl is None:
+                continue
+            lbl.pack_forget()
+            if inst in wanted:
+                # before= keeps the Refresh button at the bottom; a bare
+                # pack() would re-append the label underneath it.
+                lbl.pack(anchor="w", padx=4, pady=2,
+                         before=self._refresh_conn_btn)
 
     @staticmethod
     def _enable_tab_drag(nb: ttk.Notebook):
@@ -347,12 +369,17 @@ class MainLayout(ttk.Frame):
         main_nb.pack(fill="both", expand=True)
         self._enable_tab_drag(main_nb)
 
+        # Run leads on both systems - it is what an operator opens the GUI to
+        # do; the setup tabs behind it are visited far less often.
+        self._tab_execution2(main_nb)
         self._tab_wafer_map(main_nb)
         self._tab_recipe(main_nb)
-        self._tab_execution2(main_nb)
         self._tab_results(main_nb)
         self._tab_probe_card(main_nb)
-        self._tab_pma_wafer(main_nb)
+        # Electroglas gets its wafer view inside the Wafer Map tab instead, so
+        # the name is not on two tabs at once.
+        if self._system != "electroglas":
+            self._tab_pma_wafer(main_nb)
         self._tab_cassette(main_nb)
         if self._system == "accretech":
             self._tab_accr_wafer(main_nb)
@@ -1243,10 +1270,86 @@ class MainLayout(ttk.Frame):
         ttk.Label(resp_row, textvariable=resp_var, foreground="#0055aa",
                   font=("Consolas", 9)).pack(side="left", padx=4)
 
+    def _build_default_prober_row(self, tab):
+        """Which prober the GUI comes up on, across BOTH systems.
+
+        Deliberately not per-system: the point is to decide whether the app
+        starts on Accretech or Electroglas at all, so one list spans both and
+        picking an entry sets the system as well as the bench.
+        """
+        lf = ttk.LabelFrame(tab, text="Default prober (used at startup)", padding=6)
+        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+
+        ttk.Label(lf, text="Start the GUI on:").pack(side="left", padx=(0, 4))
+        self._default_prober_var = tk.StringVar()
+        self._default_prober_cb = ttk.Combobox(
+            lf, textvariable=self._default_prober_var, state="readonly", width=32,
+            postcommand=self._refresh_default_prober_choices)
+        self._default_prober_cb.pack(side="left", padx=(0, 6))
+        ttk.Button(lf, text="⭐ Set as Default",
+                   command=self._set_default_prober).pack(side="left", padx=(0, 4))
+        ttk.Button(lf, text="✖ Clear",
+                   command=self._clear_default_prober).pack(side="left", padx=(0, 10))
+
+        self._default_prober_lbl = ttk.Label(lf, text="", foreground="#374151",
+                                             font=("Segoe UI", 8, "italic"))
+        self._default_prober_lbl.pack(side="left")
+        self._refresh_default_prober_choices()
+        self._update_default_prober_label()
+
+    def _prober_choices(self) -> list:
+        """[(label, system, bench)] for every prober on both systems."""
+        out = [(f"Accretech — {b}", "accretech", b)
+               for b in self.controller.accretech_benches()]
+        for b in self.controller.electroglas_benches():
+            out.append((f"Electroglas — {b}", "electroglas", b))
+        return out
+
+    def _refresh_default_prober_choices(self):
+        self._prober_choice_map = {lab: (s, b) for lab, s, b in self._prober_choices()}
+        self._default_prober_cb.config(values=list(self._prober_choice_map))
+        if not self._default_prober_var.get():
+            system, bench = app_settings.get_default_prober()
+            match = next((lab for lab, (s, b) in self._prober_choice_map.items()
+                          if s == system and b == bench), "")
+            self._default_prober_var.set(match)
+
+    def _update_default_prober_label(self):
+        system, bench = app_settings.get_default_prober()
+        if not system:
+            self._default_prober_lbl.config(
+                text="no default — the GUI starts on Accretech", foreground="#6b7280")
+        else:
+            self._default_prober_lbl.config(
+                text=f"default: {system} / {bench}", foreground="#166534")
+
+    def _set_default_prober(self):
+        from tkinter import messagebox
+        label = self._default_prober_var.get()
+        pick = getattr(self, "_prober_choice_map", {}).get(label)
+        if not pick:
+            messagebox.showinfo("Default prober", "Pick a prober from the list first.")
+            return
+        system, bench = pick
+        app_settings.set_default_prober(system, bench)
+        self._update_default_prober_label()
+        self.controller.log(
+            f"[SYSTEM] Default prober set to {system} / {bench} — the GUI will "
+            f"start on {'Electroglas' if system == 'electroglas' else 'Accretech'}.")
+        # Switch to it now too, so the setting is visibly what you just chose
+        # rather than something that only takes effect next launch.
+        self.controller.apply_prober(system, bench)
+
+    def _clear_default_prober(self):
+        app_settings.clear_default_prober()
+        self._default_prober_var.set("")
+        self._update_default_prober_label()
+        self.controller.log("[SYSTEM] Default prober cleared.")
+
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
-        nb.add(tab, text="ATA Folder")
-        tab.rowconfigure(1, weight=1)
+        nb.add(tab, text="Internal")
+        tab.rowconfigure(2, weight=1)          # the file list / map split
         tab.columnconfigure(0, weight=1)
 
         ctrl = ttk.Frame(tab)
@@ -1274,11 +1377,13 @@ class MainLayout(ttk.Frame):
         self._default_ata_lbl.pack(side="left", padx=(0, 10))
         self._update_default_ata_label()
 
+        self._build_default_prober_row(tab)
+
         self._map_source_var = tk.StringVar(
             value="Accretech" if self._system == "accretech" else "Electroglas")
 
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
-        split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        split.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
         list_frame = ttk.LabelFrame(split, text="ATA Files", width=240)
         split.add(list_frame, weight=0)
@@ -1707,7 +1812,8 @@ class MainLayout(ttk.Frame):
         self._pad_tree.pack(fill="both", expand=True)
 
         self.pad_panel = PadLayoutPanel(right_col, on_custom_change=self._refresh_pad_tree_from_custom,
-                                        get_pins=self.pin_wiring.get_wiring)
+                                        get_pins=self.pin_wiring.get_wiring,
+                                        rename_pad=self.pin_wiring.rename_pad)
         right_col.add(self.pad_panel, weight=1)
 
         self._on_pad_source_change()
@@ -1902,6 +2008,8 @@ class MainLayout(ttk.Frame):
         self.accr_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _tab_pma_wafer(self, nb):
+        """Accretech only. On Electroglas this panel lives inside the Wafer Map
+        tab instead - see _tab_recipe_gen, which owns both views."""
         tab = ttk.Frame(nb)
         nb.add(tab, text="Wafer Map")
         tab.rowconfigure(0, weight=1)
@@ -1920,12 +2028,38 @@ class MainLayout(ttk.Frame):
         self.pma_process.grid(row=0, column=0, sticky="nsew")
 
     def _tab_recipe_gen(self, nb):
+        """The one Wafer Map tab on Electroglas: build it, and view it.
+
+        There used to be two tabs with this name - the editable grid, and the
+        read-only PMA wafer view. They show the same wafer, so they are two
+        pages of one tab now. PmaWaferPanel is still built and still assigned
+        to self.pma_wafer, because it holds workbook_data, which the Run tab
+        derives the map from and the overlay dialog reads.
+        """
         tab = ttk.Frame(nb)
-        nb.add(tab, text="Recipe Gen")
+        nb.add(tab, text="Wafer Map")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        self.recipe_gen = RecipeGenPanel(tab, controller=self.controller, main_layout=self)
+
+        sub = ttk.Notebook(tab)
+        sub.grid(row=0, column=0, sticky="nsew")
+
+        build = ttk.Frame(sub)
+        sub.add(build, text="Build / Edit")
+        build.rowconfigure(0, weight=1)
+        build.columnconfigure(0, weight=1)
+        self.recipe_gen = RecipeGenPanel(build, controller=self.controller,
+                                         main_layout=self)
         self.recipe_gen.grid(row=0, column=0, sticky="nsew")
+
+        view = ttk.Frame(sub)
+        sub.add(view, text="Wafer View")
+        view.rowconfigure(0, weight=1)
+        view.columnconfigure(0, weight=1)
+        self.pma_wafer = PmaWaferPanel(
+            view, controller=self.controller, get_folder=lambda: self._ata_folder,
+            main_layout=None)
+        self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _build_exec_panel(self):
         tab = ttk.Frame(self)
@@ -1967,10 +2101,6 @@ class MainLayout(ttk.Frame):
         self._exec2_last_run_start_idx = 0
         self._exec2_steps    = []
         self._exec2_current_rc = None
-        self._exec2_pma_row_offset = 0
-        self._exec2_pma_col_offset = 0
-        self._exec2_pma_offset_confirmed = False
-        self._exec2_current_pma_shot = None
         self._exec2_overlay_row_offset = 0
         self._exec2_overlay_col_offset = 0
         self._exec2_overlay_offset_confirmed = False
@@ -2016,10 +2146,10 @@ class MainLayout(ttk.Frame):
                 ctrl, text="▶  Test Selected", command=self._exec2_start_test_selected)
             self._exec2_test_selected_btn.pack(side="left", padx=2, pady=5)
         else:
+            # Test Die stays on Electroglas: master dropped it from Accretech
+            # in favour of Test Selected, and eg dropped Test PMA, which could
+            # never run there. Neither change removes this one.
             self._exec2_test_btn.pack(side="left", padx=2, pady=5)
-            self._exec2_test_pma_btn = ttk.Button(
-                ctrl, text="▶  Test PMA", command=self._exec2_start_test_pma)
-            self._exec2_test_pma_btn.pack(side="left", padx=2, pady=5)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
@@ -2090,8 +2220,12 @@ class MainLayout(ttk.Frame):
         ttk.Button(pos_lf, text="Reset Counts", command=self._exec2_reset_counts).grid(
                    row=7, column=1, sticky="ew", padx=(1, 0), pady=(4, 0))
 
+        # Electroglas stacks Pass/Fail between Position and Recipe Steps (row 1
+        # below); Recipe Steps is the one that grows, so it takes the weighted
+        # row on both systems.
+        steps_row = 2 if self._system == "electroglas" else 1
         steps_lf = ttk.LabelFrame(left_col, text="Recipe Steps", padding=(6, 4))
-        steps_lf.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+        steps_lf.grid(row=steps_row, column=0, sticky="nsew", pady=(4, 0))
         steps_lf.rowconfigure(1, weight=1)
         steps_lf.columnconfigure(0, weight=1)
 
@@ -2138,32 +2272,47 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech":
             ttk.Button(map_bar, text="Overlay…",
                        command=self._exec2_open_overlay_dialog).pack(side="left")
-            ttk.Button(map_bar, text="💾 Save Selected Map",
-                       command=self._exec2_save_selected_map).pack(side="left", padx=(6, 0))
-            ttk.Button(map_bar, text="📥 Load Selected Map",
-                       command=lambda: self._exec2_load_selected_map(
-                           quiet_if_missing=False)).pack(side="left", padx=(6, 0))
-            self._exec2_select_all_btn = ttk.Button(
-                map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
-            self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
-        else:
-            ttk.Button(map_bar, text="🔀 Compare/Merge PMA…",
-                       command=self._exec2_open_pma_compare_dialog).pack(side="left")
+        # Both systems: the selection is the loaded recipe's touchdown list, so
+        # saving and reloading it belongs wherever dies are picked.
+        ttk.Button(map_bar, text="💾 Save Selected Map",
+                   command=self._exec2_save_selected_map).pack(side="left", padx=(6, 0))
+        ttk.Button(map_bar, text="📥 Load Selected Map",
+                   command=lambda: self._exec2_load_selected_map(
+                       quiet_if_missing=False)).pack(side="left", padx=(6, 0))
+        self._exec2_select_all_btn = ttk.Button(
+            map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
+        self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
 
         self._exec2_wafer_map = WaferMapPanel(map_lf)
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
         self._exec2_wafer_map.on_redraw = self._exec2_redraw_overlay_on_run_map
-        # Overlay labels only make sense zoomed in enough to read (same
-        # spirit as the NanoZ Run tab's _update_overlay_visibility). Bound
-        # with add="+" so the map's own pan/zoom/reset bindings (set up
+        # Both halves are needed and they do different jobs: on_zoom REBUILDS
+        # the labels (a zoom scales canvas items in place rather than
+        # redrawing, so stale ones survive at the wrong size), while the
+        # bindings decide whether they should be VISIBLE at this zoom level.
+        # Keeping only the visibility half would leave wrongly-sized labels;
+        # keeping only the rebuild would show them when too small to read.
+        self._exec2_wafer_map.on_zoom = self._exec2_redraw_overlay_on_run_map
+        # Bound with add="+" so the map's own pan/zoom/reset bindings (set up
         # inside WaferMapPanel.__init__) still run first.
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<Double-Button-1>"):
             self._exec2_wafer_map.canvas.bind(
                 seq, lambda _e: self._exec2_update_overlay_visibility(), add="+")
 
-        stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
-        body.add(stat_lf, weight=1)
+        # Electroglas keeps Pass/Fail in the left column under Recipe Steps so
+        # the wafer map gets the whole rest of the width - the die-ID overlay
+        # needs the room. Accretech keeps its own third pane.
+        if self._system == "electroglas":
+            stat_lf = ttk.LabelFrame(left_col, text="Pass / Fail", padding=(8, 4))
+            stat_lf.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+            left_col.rowconfigure(1, weight=0)
+            left_col.rowconfigure(2, weight=1)
+            count_font = ("Consolas", 18, "bold")
+        else:
+            stat_lf = ttk.LabelFrame(body, text="Pass / Fail", padding=10)
+            body.add(stat_lf, weight=1)
+            count_font = ("Consolas", 24, "bold")
         stat_lf.columnconfigure(0, weight=1)
 
         self._exec2_pass_var = tk.IntVar(value=0)
@@ -2178,8 +2327,7 @@ class MainLayout(ttk.Frame):
             ttk.Label(row_f, text=label, width=6,
                       font=("Segoe UI", 10, "bold"),
                       foreground=color).pack(side="left")
-            ttk.Label(row_f, textvariable=var,
-                      font=("Consolas", 24, "bold"),
+            ttk.Label(row_f, textvariable=var, font=count_font,
                       foreground=color).pack(side="left", padx=8)
 
         ttk.Separator(stat_lf, orient="horizontal").pack(fill="x", pady=8)
@@ -2203,9 +2351,35 @@ class MainLayout(ttk.Frame):
             f"{name}  ({n} dies)" if n else f"{name} — {filename} not found")
         if n or not quiet_if_missing:
             self._exec2_log(f"[RUN] Wafer map loaded from '{name}/{filename}' — {n} dies")
+        self._exec2_adopt_map_die_ids()
+        # Both systems mirror the Run map onto the Results tab, so the
+        # pass/fail map there is never a stale copy of a different wafer.
+        self._sync_results_wafer_map()
         if self._system == "accretech":
-            self._sync_results_wafer_map()
             self._exec2_load_selected_map(quiet_if_missing=True)
+
+    def _exec2_adopt_map_die_ids(self):
+        """Use the die IDs the loaded map file carries as the overlay.
+
+        The Electroglas map (ata_wafer_map_electroglas.csv) names every
+        touchdown in a device_id column, so there is nothing to match up -
+        unlike Accretech, where the Overlay dialog has to reconcile two
+        different maps. Feeding them into the SAME _exec2_overlay_die_ids
+        dict means the labels inherit everything that already works there:
+        redrawn from WaferMapPanel.on_redraw after any rebuild, moved with
+        the dies by canvas.scale on zoom, and written out by Save Selected
+        Map, so an export can never disagree with what is on screen.
+        """
+        wm = self._exec2_wafer_map
+        ids = {rc: text for rc, text in (wm.die_ids or {}).items() if text}
+        if not ids:
+            return
+        # Never clobber an overlay the operator built by hand in the dialog.
+        if self._exec2_overlay_die_ids and self._system == "accretech":
+            return
+        self._exec2_clear_overlay_labels(wm, self._exec2_overlay_items)
+        self._exec2_overlay_die_ids = ids
+        self._exec2_redraw_overlay_on_run_map()
 
     def _sync_results_wafer_map(self):
         rwm = getattr(self, "_results_wafer_map", None)
@@ -2392,7 +2566,9 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[RUN] Cannot start — no wafer map loaded "
                             "(load an ATA folder with source set to 'Electroglas').")
             ok = False
-        required_instruments = ("prober", "smu", "dmm", "switch", "wave_gen")
+        required_instruments = (("prober", "smu", "dmm", "switch", "wave_gen")
+                                if self._system == "accretech"
+                                else ("prober", "smu", "relay1"))
         missing_instruments = [k for k in required_instruments if k not in self.controller.drivers]
         if missing_instruments:
             self._exec2_log("[RUN] Cannot start — instrument(s) not connected: "
@@ -2427,7 +2603,6 @@ class MainLayout(ttk.Frame):
     def _exec2_full_die_thread(self, my_token: int):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
-        self._exec2_current_pma_shot = None
         error_msg = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
@@ -2499,14 +2674,36 @@ class MainLayout(ttk.Frame):
 
 
     def _exec2_on_sites_changed(self, picks):
-        self._exec2_sites_var.set(
-            f"Test sites: {len(picks)} picked (click dies to add/remove)")
+        self._exec2_sites_var.set(self._exec2_sites_label(picks))
         btn = getattr(self, "_exec2_select_all_btn", None)
         dies = self._exec2_wafer_map._last_dies
         if btn and dies:
             all_rc = {(d["row"], d["col"]) for d in dies}
             is_all = bool(all_rc) and set(picks) == all_rc
             btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
+
+    def _exec2_sites_label(self, picks) -> str:
+        """Header over the map. One pick names what sits on that square.
+
+        On Accretech a square is one prober die, which for a quad product is a
+        whole touchdown carrying up to four devices, so naming them answers
+        "what comes down with this". Same ID sources and priority the exports
+        use, so the header can never disagree with the recorded die_id.
+        Multi-pick falls back to the count: this is only legible for one.
+        """
+        n = len(picks)
+        if n != 1:
+            return f"Test sites: {n} picked (click dies to add/remove)"
+        rc = tuple(picks[0])
+        ids = ((self._exec2_overlay_die_ids or {}).get(rc, "")
+               or self._exec2_wafer_map.die_ids.get(rc, ""))
+        where = f"Test site: 1 picked — R{rc[0]}C{rc[1]}"
+        if not ids:
+            return f"{where} (no die ID on this square)"
+        devices = [d for d in ids.split("/") if d.strip()]
+        if len(devices) < 2:
+            return f"{where}:  {ids}"
+        return f"{where}, touchdown of {len(devices)} devices:  {ids}"
 
     def _exec2_randomize_sites(self):
         dies = self._exec2_wafer_map._last_dies
@@ -2544,20 +2741,118 @@ class MainLayout(ttk.Frame):
         return (os.path.join(self._ata_folder, self._SELECTED_MAP_FILENAME)
                 if self._ata_folder else None)
 
+    def _exec2_picks_as_touchdowns(self, picks) -> list:
+        """Collapse picked map cells to one cell per PROBER TOUCHDOWN.
+
+        On Accretech a square already is a touchdown, so this is a no-op. On
+        Electroglas a square is a die and a 2x2 shot owns four of them - the
+        chuck lands once and the recipe switches the mux through the dies
+        under it, so clicking all four dies of a shot must still produce ONE
+        touchdown, not four visits to the same place.
+        """
+        picks = [(int(r), int(c)) for r, c in picks]
+        run = getattr(self, "eg_pma_run", None)
+        seq_at_rc = getattr(run, "_seq_at_rc", None) or {}
+        anchor_rc = getattr(run, "_anchor_rc", None) or {}
+        if self._system != "electroglas" or not seq_at_rc:
+            return picks
+        out, seen = [], set()
+        for rc in picks:
+            seq = seq_at_rc.get(rc)
+            if seq is None:
+                # Not part of any touchdown this recipe knows - keep it as
+                # itself rather than dropping the operator's selection.
+                if rc not in seen:
+                    seen.add(rc)
+                    out.append(rc)
+                continue
+            if seq in seen:
+                continue
+            seen.add(seq)
+            out.append(anchor_rc.get(seq, rc))
+        return out
+
+    def _exec2_touchdown_cells(self, picks) -> list:
+        """The inverse: every cell belonging to the touchdowns in `picks`.
+
+        Used for DISPLAY, so selecting a recipe lights up whole shots rather
+        than one corner die of each.
+        """
+        picks = [(int(r), int(c)) for r, c in picks]
+        run = getattr(self, "eg_pma_run", None)
+        seq_at_rc = getattr(run, "_seq_at_rc", None) or {}
+        cells = getattr(run, "_cells", None) or {}
+        if self._system != "electroglas" or not seq_at_rc:
+            return picks
+        out, seen = [], set()
+        for rc in picks:
+            seq = seq_at_rc.get(rc)
+            for cell in (cells.get(seq) or [rc]):
+                if cell not in seen:
+                    seen.add(cell)
+                    out.append(cell)
+        return out
+
+    def _exec2_loaded_recipe_name(self) -> str:
+        """The recipe the Run tab currently has loaded, if any."""
+        if not getattr(self, "_exec2_steps", None):
+            return ""
+        try:
+            return self.recipe_panel.get_active_recipe() or ""
+        except Exception:
+            return ""
+
     def _exec2_save_selected_map(self):
+        """Save the picked dies as the loaded recipe's touchdown list.
+
+        The selection is a property of the recipe, not of the ATA folder: one
+        folder holds many recipes and they probe different dies. This and the
+        Recipe tab's "Take from map selection" are the same operation from two
+        places - whichever the operator reaches for, the list ends up in the
+        same place and the other view shows it.
+
+        With no recipe loaded there is nothing to attach it to, so it still
+        falls back to the folder-level CSV rather than silently discarding the
+        selection.
+        """
         from tkinter import messagebox
         import csv
-        if not self._ata_folder:
-            messagebox.showerror(
-                "No ATA Folder",
-                "No ATA folder is loaded — use 📁 Load ATA Folder on the top "
-                "toolbar first.")
-            return
         picks = self._exec2_wafer_map.get_picked()
         if not picks:
             messagebox.showinfo("No Dies Selected",
                                 "Click dies on the map to select them first.")
             return
+
+        recipe = self._exec2_loaded_recipe_name()
+        set_sites = getattr(self.recipe_panel, "set_sites", None)
+        if recipe and set_sites:
+            sites = []
+            for rc in self._exec2_picks_as_touchdowns(picks):
+                sites.append({
+                    "die_id": (self._exec2_overlay_die_ids.get(rc)
+                               or self._exec2_wafer_map.die_ids.get(rc, "")),
+                    "row": rc[0], "col": rc[1]})
+            if set_sites(recipe, sites):
+                named = sum(1 for s in sites if s["die_id"])
+                self._exec2_log(
+                    f"[RUN] Saved {len(sites)} selected die(s) as the touchdown "
+                    f"list of recipe '{recipe}' ({named} with a die ID) — "
+                    "saved to the probe card, and shown on the Recipe tab.")
+                return
+            self._exec2_log(f"[RUN] Could not attach the selection to recipe "
+                            f"'{recipe}' — falling back to the folder file.")
+
+        if not self._ata_folder:
+            messagebox.showerror(
+                "Nowhere to save",
+                "No recipe is loaded and no ATA folder is open.\n\n"
+                "Load a recipe (⟳ Load Recipe) to save the selection as its "
+                "touchdown list, or open an ATA folder to save a folder-level "
+                "selected map.")
+            return
+        self._exec2_log("[RUN] No recipe loaded — saving a folder-level selected "
+                        "map instead. Load a recipe first to attach the "
+                        "selection to it.")
         path = self._exec2_selected_map_path()
         with open(path, "w", newline="", encoding="utf-8") as f:
             wr = csv.writer(f)
@@ -2570,6 +2865,35 @@ class MainLayout(ttk.Frame):
 
     def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
         import csv
+        # The recipe's own list wins whenever it has one - that is where Save
+        # Selected now puts it. The folder file is only what older folders
+        # have, and reading it in preference would quietly resurrect another
+        # recipe's dies.
+        recipe = self._exec2_loaded_recipe_name()
+        if recipe:
+            get_records = getattr(self.recipe_panel, "get_site_records", None)
+            sites = list(get_records()) if get_records else []
+            if sites:
+                picks = [(s["row"], s["col"]) for s in sites]
+                ids = {(s["row"], s["col"]): s["die_id"]
+                       for s in sites if s.get("die_id")}
+                picks = [rc for rc in self._exec2_touchdown_cells(picks)
+                         if rc in self._exec2_wafer_map.dies] or picks
+                self._exec2_wafer_map.set_picked(picks)
+                self._exec2_on_sites_changed(picks)
+                if ids:
+                    self._exec2_clear_overlay()
+                    self._exec2_overlay_die_ids = ids
+                    self._exec2_redraw_overlay_on_run_map()
+                    self._exec2_redraw_overlay_on_results_map()
+                self._exec2_log(f"[RUN] Loaded {len(picks)} touchdown(s) from "
+                                f"recipe '{recipe}'.")
+                return picks
+            if not quiet_if_missing:
+                self._exec2_log(
+                    f"[RUN] Recipe '{recipe}' has no touchdown list yet — click "
+                    "dies on the map, then 💾 Save Selected Map.")
+                return []
         path = self._exec2_selected_map_path()
         if not path or not os.path.exists(path):
             if not quiet_if_missing:
@@ -2624,170 +2948,6 @@ class MainLayout(ttk.Frame):
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
         self._exec2_start_test_die()
 
-    def _exec2_pma_accretech_rc(self):
-        accr_wafer = getattr(self, "accr_wafer", None)
-        if accr_wafer is None:
-            return set()
-        return {(y, x) for (x, y, _raw) in accr_wafer._dies}
-
-    def _exec2_compute_pma_merge(self, row_offset: int = 0, col_offset: int = 0):
-        data = self.pma_wafer.workbook_data
-        if not data:
-            self._exec2_log("[RUN] Test PMA / Compare: no PMA workbook loaded — "
-                            "open one on the PMA tab first.")
-            return None, None, None
-        accretech_rc = self._exec2_pma_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Test PMA / Compare: no Accretech wafer map loaded — "
-                            "extract one on the Accr Wafer tab (or load an ATA folder "
-                            "that already has ata_wafer_map_accretech.csv).")
-            return None, None, None
-        pma_grid = pma_shots_to_grid(data)
-        merged = merge_with_accretech(pma_grid, accretech_rc, row_offset, col_offset)
-        return merged, pma_grid, accretech_rc
-
-    def _exec2_pma_starting_offset(self, pma_grid, accretech_rc):
-        if self._exec2_pma_offset_confirmed:
-            return self._exec2_pma_row_offset, self._exec2_pma_col_offset
-        return centroid_offset(pma_grid, accretech_rc)
-
-    def _exec2_save_pma_merge_to_ata(self, merged):
-        from tkinter import messagebox
-        import csv
-        if not merged:
-            messagebox.showinfo("No Data", "No merged dies to save — check the "
-                                "Compare/Merge counts (row/col offset may be off).")
-            return
-        folder = self._ata_folder
-        if not folder:
-            messagebox.showerror(
-                "No ATA Folder",
-                "No ATA folder is loaded — use 📁 Load ATA Folder on the top "
-                "toolbar first.")
-            return
-        path = os.path.join(folder, "ata_wafer_map_merged.csv")
-        if os.path.exists(path) and not messagebox.askyesno(
-            "Overwrite Merged Map",
-            f"{path}\nalready exists — overwrite it with the current "
-            f"{len(merged)} merged die(s)?"
-        ):
-            return
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            wr = csv.writer(f)
-            wr.writerow(["row", "col", "x_die", "y_die", "die_ids"])
-            for d in merged:
-                wr.writerow([d["row"], d["col"], d["col"], d["row"],
-                            "/".join(d["die_ids"])])
-        self._exec2_log(f"[RUN] Saved {len(merged)} merged die(s) → {path}")
-
-    def _exec2_open_pma_compare_dialog(self):
-        data = self.pma_wafer.workbook_data
-        if not data:
-            self._exec2_log("[RUN] Test PMA / Compare: no PMA workbook loaded — "
-                            "open one on the PMA tab first.")
-            return
-        accretech_rc = self._exec2_pma_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Test PMA / Compare: no Accretech wafer map loaded — "
-                            "extract one on the Accr Wafer tab (or load an ATA folder "
-                            "that already has ata_wafer_map_accretech.csv).")
-            return
-        pma_grid = pma_shots_to_grid(data)
-        start_row, start_col = self._exec2_pma_starting_offset(pma_grid, accretech_rc)
-
-        dlg = tk.Toplevel(self)
-        dlg.title("Compare / Merge PMA Wafer Map")
-        dlg.transient(self.winfo_toplevel())
-        dlg.resizable(False, False)
-
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill="both", expand=True)
-
-        summary_var = tk.StringVar()
-        ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
-                 justify="left").grid(row=0, column=0, columnspan=4, sticky="w",
-                                      pady=(0, 8))
-        ttk.Label(frm, text="Overlaid by matching the two maps' centers (see "
-                 "🎯 Center Overlay) — a PMA die counts as \"merged\" when its "
-                 "(row, col), shifted by the offset below, lands on a die the "
-                 "Accretech prober actually walked. Nudge the offset by hand if "
-                 "dies land on the wrong physical die.",
-                 font=("Segoe UI", 8), foreground="#6b7280", wraplength=340,
-                 justify="left").grid(row=1, column=0, columnspan=4, sticky="w",
-                                      pady=(0, 10))
-
-        ttk.Label(frm, text="Row offset:").grid(row=2, column=0, sticky="e")
-        row_var = tk.IntVar(value=start_row)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
-            row=2, column=1, sticky="w", padx=(4, 16))
-        ttk.Label(frm, text="Col offset:").grid(row=2, column=2, sticky="e")
-        col_var = tk.IntVar(value=start_col)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
-            row=2, column=3, sticky="w", padx=(4, 0))
-
-        state = {"merged": []}
-
-        def recompute(*_a):
-            try:
-                ro, co = row_var.get(), col_var.get()
-            except tk.TclError:
-                return
-            state["merged"] = merge_with_accretech(pma_grid, accretech_rc, ro, co)
-            summary_var.set(
-                f"Accretech dies walked:      {len(accretech_rc)}\n"
-                f"PMA dies (with a real ID):  {len(pma_grid)}\n"
-                f"Merged (on both maps):      {len(state['merged'])}"
-            )
-
-        row_var.trace_add("write", recompute)
-        col_var.trace_add("write", recompute)
-        recompute()
-
-        def center_overlay():
-            ro, co = centroid_offset(pma_grid, accretech_rc)
-            row_var.set(ro)
-            col_var.set(co)
-
-        def use_offsets():
-            self._exec2_pma_row_offset = row_var.get()
-            self._exec2_pma_col_offset = col_var.get()
-            self._exec2_pma_offset_confirmed = True
-
-        def highlight():
-            use_offsets()
-            picks = [(d["row"], d["col"]) for d in state["merged"]]
-            self._exec2_wafer_map.set_picked(picks)
-            self._exec2_on_sites_changed(picks)
-            self._exec2_log(f"[RUN] Highlighted {len(picks)} merged PMA/Accretech "
-                            "die(s) on the map.")
-
-        def save_ata():
-            use_offsets()
-            self._exec2_save_pma_merge_to_ata(state["merged"])
-
-        def use_for_test():
-            use_offsets()
-            picks = [(d["row"], d["col"]) for d in state["merged"]]
-            self._exec2_wafer_map.set_picked(picks)
-            self._exec2_on_sites_changed(picks)
-            dlg.destroy()
-            self._exec2_start_test_die()
-
-        ttk.Button(frm, text="🎯 Center Overlay", command=center_overlay).grid(
-            row=2, column=4, sticky="w", padx=(10, 0))
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(12, 0))
-        ttk.Button(btns, text="🖌 Highlight on Map", command=highlight).pack(side="left")
-        ttk.Button(btns, text="💾 Save Merged to ATA", command=save_ata).pack(
-            side="left", padx=6)
-        ttk.Button(btns, text="▶ Use for Test PMA", command=use_for_test).pack(side="left")
-        ttk.Button(btns, text="Close", command=lambda: (use_offsets(), dlg.destroy())).pack(
-            side="right")
-
-        dlg.update_idletasks()
-        dlg.grab_set()
-
     _OVERLAY_SOURCE_LABELS = {"pma": "PMA touchdown", "xls": "Recipe Generator",
                              "csv": "CSV wafer map"}
 
@@ -2821,19 +2981,38 @@ class MainLayout(ttk.Frame):
                 pass
 
     def _exec2_redraw_overlay_on_run_map(self):
-        if not self._exec2_overlay_die_ids:
+        # Explicitly clear first: a full redraw has already wiped the canvas,
+        # but a ZOOM has not - it scales items in place - so without this the
+        # old labels would survive alongside the new ones.
+        self._exec2_clear_overlay_labels(self._exec2_wafer_map,
+                                         self._exec2_overlay_items)
+        if self._exec2_overlay_die_ids:
+            self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
+                self._exec2_wafer_map, self._exec2_overlay_die_ids)
+        else:
             self._exec2_overlay_items = []
-            return
-        self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
-            self._exec2_wafer_map, self._exec2_overlay_die_ids)
         self._exec2_update_overlay_visibility()
+        # The PMA runner's "you are here" box is drawn on this same canvas and
+        # is wiped by the same rebuild, so it re-draws off the one hook rather
+        # than competing for on_redraw.
+        redraw_window = getattr(getattr(self, "eg_pma_run", None),
+                                "update_shot_window", None)
+        if redraw_window:
+            try:
+                redraw_window()
+            except Exception:
+                pass
 
     def _exec2_redraw_overlay_on_results_map(self):
+        rwm = getattr(self, "_results_wafer_map", None)
+        if rwm is None:
+            return
+        self._exec2_clear_overlay_labels(rwm, self._exec2_overlay_result_items)
         if not self._exec2_overlay_die_ids:
             self._exec2_overlay_result_items = []
             return
         self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
-            self._results_wafer_map, self._exec2_overlay_die_ids)
+            rwm, self._exec2_overlay_die_ids)
 
     def _exec2_clear_overlay_labels(self, wm, items: list):
         for item in items:
@@ -2850,7 +3029,35 @@ class MainLayout(ttk.Frame):
             self._exec2_clear_overlay_labels(rwm, self._exec2_overlay_result_items)
         self._exec2_overlay_die_ids = {}
 
+    _OVERLAY_FONT = ("Consolas", 7)
+
+    def _exec2_overlay_font(self):
+        # Cached: tkfont.Font is not free to build, and this runs per zoom step.
+        if getattr(self, "_overlay_font_obj", None) is None:
+            self._overlay_font_obj = tkfont.Font(family=self._OVERLAY_FONT[0],
+                                                 size=self._OVERLAY_FONT[1])
+        return self._overlay_font_obj
+
+    def _exec2_labels_fit(self, wm, die_ids_by_rc: dict) -> bool:
+        """Is a die currently drawn big enough to hold its ID?
+
+        Zoomed out, a whole-wafer map draws dies a few pixels across and the
+        IDs collapse into an unreadable smear, so they are not drawn at all
+        until there is room. Measured with the real font rather than guessed,
+        against the LONGEST label, so a quad ID like 'TARGET' does not
+        overflow its neighbour.
+        """
+        box_w, box_h = wm.die_box_px()
+        if box_w <= 0:
+            return False
+        longest = max(die_ids_by_rc.values(), key=len, default="")
+        font = self._exec2_overlay_font()
+        return (box_w >= font.measure(longest) + 3
+                and box_h >= font.metrics("linespace"))
+
     def _exec2_draw_overlay_labels_on(self, wm, die_ids_by_rc: dict) -> list:
+        if not self._exec2_labels_fit(wm, die_ids_by_rc):
+            return []
         items = []
         for rc, label_text in die_ids_by_rc.items():
             item = wm.dies.get(rc)
@@ -2861,7 +3068,7 @@ class MainLayout(ttk.Frame):
                 continue
             cx, cy = (coords[0] + coords[2]) / 2, (coords[1] + coords[3]) / 2
             items.append(wm.canvas.create_text(
-                cx, cy, text=label_text, font=("Consolas", 7), fill="#1e293b"))
+                cx, cy, text=label_text, font=self._OVERLAY_FONT, fill="#1e293b"))
         return items
 
     def _exec2_draw_overlay(self, matched: list):
@@ -2995,43 +3202,7 @@ class MainLayout(ttk.Frame):
         dlg.update_idletasks()
         dlg.grab_set()
 
-    def _exec2_start_test_pma(self):
-        if self._exec2_running:
-            self._exec2_log("[RUN] A run is already active — stop it first.")
-            return
-        data = self.pma_wafer.workbook_data
-        if not data:
-            self._exec2_log("[RUN] Test PMA: no PMA workbook loaded — "
-                            "open one on the PMA tab first.")
-            return
-        accretech_rc = self._exec2_pma_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Test PMA: no Accretech wafer map loaded — "
-                            "extract one on the Accr Wafer tab (or load an ATA folder "
-                            "that already has ata_wafer_map_accretech.csv).")
-            return
-        pma_grid = pma_shots_to_grid(data)
-        row_off, col_off = self._exec2_pma_starting_offset(pma_grid, accretech_rc)
-        merged = merge_with_accretech(pma_grid, accretech_rc, row_off, col_off)
-        if not merged:
-            self._exec2_log(
-                "[RUN] Test PMA: no PMA dies land on the Accretech-walked map at "
-                f"offset row{row_off:+d}/col{col_off:+d} — open 🔀 Compare/Merge PMA "
-                "to check/nudge the alignment.")
-            return
-        self._exec2_pma_row_offset = row_off
-        self._exec2_pma_col_offset = col_off
-        self._exec2_pma_offset_confirmed = True
-        picks = [(d["row"], d["col"]) for d in merged]
-        die_shots_by_rc = {(d["row"], d["col"]): d for d in merged}
-        self._exec2_wafer_map.set_picked(picks)
-        self._exec2_on_sites_changed(picks)
-        self._exec2_log(
-            f"[RUN] ▶ Test PMA — {len(picks)} merged die(s) "
-            f"(offset row{row_off:+d}/col{col_off:+d})")
-        self._exec2_start_test_die(die_shots_by_rc=die_shots_by_rc)
-
-    def _exec2_start_test_die(self, die_shots_by_rc=None):
+    def _exec2_start_test_die(self):
         if self._exec2_running:
             self._exec2_log("[RUN] A run is already active — stop it first.")
             return
@@ -3059,13 +3230,12 @@ class MainLayout(ttk.Frame):
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_test_die_thread,
-            args=(sites, die_shots_by_rc, my_token), daemon=True)
+            args=(sites, my_token), daemon=True)
         self._exec2_lot_thread.start()
 
-    def _exec2_test_die_thread(self, sites, die_shots_by_rc, my_token: int):
+    def _exec2_test_die_thread(self, sites, my_token: int):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
-        die_shots_by_rc = die_shots_by_rc or {}
         error_msg = None
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
@@ -3100,8 +3270,6 @@ class MainLayout(ttk.Frame):
                            self._exec2_xy_var.set(f"X: {x} die\nY: {y} die"))
                 self._exec2_highlight_current(row, col)
                 self._exec2_die_num += 1
-
-                self._exec2_current_pma_shot = die_shots_by_rc.get((row, col))
 
                 ok = self._exec2_zup_measure_zdown(sim, prober, die_label)
                 self._exec2_update_die_color(row, col, ok)
@@ -3161,6 +3329,30 @@ class MainLayout(ttk.Frame):
         self._exec2_load_recipe()
         self._exec2_log(f"[RUN] Auto-loaded default recipe '{name}' (probe card '{card}').")
 
+    def _exec2_apply_recipe_sites(self, name: str):
+        """Select the recipe's touchdowns on the map, if it defines any.
+
+        This is what makes the touchdown list the recipe's property rather
+        than the ATA folder's: loading a recipe re-picks its own dies, so
+        switching recipes can no longer inherit the previous one's selection.
+        A recipe with no list leaves the map alone - the run then walks
+        everything, which is the old behaviour.
+        """
+        get_sites = getattr(self.recipe_panel, "get_sites", None)
+        sites = list(get_sites()) if get_sites else []
+        if not sites:
+            return
+        known = self._exec2_wafer_map.dies
+        on_map = [rc for rc in self._exec2_touchdown_cells(sites) if rc in known]
+        self._exec2_wafer_map.set_picked(on_map)
+        self._exec2_on_sites_changed(on_map)
+        missing = len(sites) - len(on_map)
+        self._exec2_log(
+            f"[RUN] Recipe '{name}' defines {len(sites)} touchdown(s) — "
+            f"selected {len(on_map)} on the map."
+            + (f"  ⚠ {missing} are not on this wafer map; check that the loaded "
+               "map matches the recipe." if missing else ""))
+
     def _exec2_load_recipe(self):
         name = self._exec2_recipe_var.get()
         if not name:
@@ -3177,6 +3369,7 @@ class MainLayout(ttk.Frame):
             self._exec2_steps_tree.insert("", "end", values=(
                 i, s.get("name", ""), s.get("type", ""), s.get("conn", "")))
         self._exec2_steps_var.set(f"{name} — {len(self._exec2_steps)} step(s)")
+        self._exec2_apply_recipe_sites(name)
 
         self._exec2_log(f"[RUN] Loaded recipe '{name}' with "
                         f"{len(self._exec2_steps)} step(s):")
@@ -3274,10 +3467,25 @@ class MainLayout(ttk.Frame):
                     time.sleep(avg_delay_ms / 1000.0)
         return sum(readings) / len(readings)
 
+    def _exec2_switch_driver(self):
+        """The relay card a recipe's conn channels refer to on this system.
+
+        Accretech has one matrix registered as "switch". Electroglas registers
+        its three cards as relay1/relay2/relay3 and has no "switch" at all, so
+        looking that key up returned None and every measurement step silently
+        took the sim path - random.gauss() numbers recorded as if they were
+        readings. relay1 is the wired card on both Electroglas benches
+        (probe02's E1345A, probe03's E1364A), per hp_switchbox.BENCH_WIRING.
+        """
+        drivers = self.controller.drivers
+        if self._system == "accretech":
+            return drivers.get("switch")
+        return drivers.get("relay1") or drivers.get("switch")
+
     def _exec2_run_steps_once(self) -> bool:
         import random
         import re
-        switch = self.controller.drivers.get("switch")
+        switch = self._exec2_switch_driver()
         smu    = self.controller.drivers.get("smu")
         dmm    = self.controller.drivers.get("dmm")
         wgen   = self.controller.drivers.get("wave_gen")
@@ -3289,25 +3497,21 @@ class MainLayout(ttk.Frame):
                     if self._exec2_die_num else
                     self._exec2_xy_var.get().replace("\n", " "))
 
-        pma_shot = getattr(self, "_exec2_current_pma_shot", None)
-        pma_die_id = (pma_shot or {}).get("raw_text") or ""
         cur_row, cur_col = self._exec2_current_rc or (None, None)
-        # Three possible die-ID sources, in priority order:
+        # Two possible die-ID sources, in priority order:
         #   1. The Overlay dialog's manual die IDs (self._exec2_overlay_die_ids)
         #      — an explicit user action, so it wins if set.
         #   2. The currently-loaded wafer map's own ID column (e.g.
         #      Electroglas's "device_id"), captured by WaferMapPanel into
         #      .die_ids at load time — this is the map's real, authoritative
         #      ID and should be used automatically without any extra step.
-        #   3. The Test PMA compare/merge flow's shot ID, only present when
-        #      that flow was used to pick sites.
         # Whichever wins, it's the same "die_id" every export format reads,
         # so the export always matches what the map/overlay actually shows.
         map_die_id = (self._exec2_wafer_map.die_ids.get((cur_row, cur_col), "")
                       if cur_row is not None else "")
         overlay_die_id = (self._exec2_overlay_die_ids.get((cur_row, cur_col), "")
                           if cur_row is not None else "")
-        die_id = overlay_die_id or map_die_id or pma_die_id
+        die_id = overlay_die_id or map_die_id
         last_set_voltage_by_ch = {}
 
         overall_ok = True
@@ -3355,7 +3559,12 @@ class MainLayout(ttk.Frame):
                                     + (f"  ({note})" if note else ""))
                     if not sim:
                         for ch in chans:
-                            switch.open_crosspoint(ch[:2], ch[2:])
+                            # A 707B addresses a crosspoint (row, column); a
+                            # switchbox card addresses a plain channel number.
+                            if hasattr(switch, "open_crosspoint"):
+                                switch.open_crosspoint(ch[:2], ch[2:])
+                            else:
+                                switch.open_channel(ch)
                     self._exec2_mark_open(chans)
                     continue
 
@@ -3580,7 +3789,7 @@ class MainLayout(ttk.Frame):
 
     def get_last_run_results(self) -> list:
         """Results from the most recently started run only (Full Die/Test
-        Die/Test Selected/Test PMA) — what export formats other than plain
+        Die/Test Selected) — what export formats other than plain
         "Save as CSV" should write, so re-running doesn't accumulate old
         runs' rows into a new export."""
         return self.controller.results_data[self._exec2_last_run_start_idx:]
@@ -3708,6 +3917,15 @@ class MainLayout(ttk.Frame):
         self._exec2_last_run_start_idx = len(self.controller.results_data)
         self._exec2_pass_var.set(0)
         self._exec2_fail_var.set(0)
+        # The PMA runner keeps its own verdict-per-touchdown record and paints
+        # the map from it; zeroing the counters without clearing that would
+        # leave green/red squares that nothing counts any more.
+        reset = getattr(getattr(self, "eg_pma_run", None), "reset_results", None)
+        if reset:
+            try:
+                reset()
+            except Exception:
+                pass
         self._exec2_die_num = 0
         if total_dies is not None:
             self._exec2_total_dies = total_dies
@@ -3743,10 +3961,13 @@ class MainLayout(ttk.Frame):
         split = ttk.PanedWindow(page, orient="vertical")
         split.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
-        if self._system == "accretech":
-            wafer_pane = ttk.Frame(split)
-            split.add(wafer_pane, weight=3)
-            self._build_results_wafer_map(wafer_pane)
+        # Both systems get the pass/fail wafer map at the top, above Data
+        # Export. Electroglas used to get a donut of run statistics down at
+        # the bottom instead, which said less than the map does and did not
+        # let you click a die to read its measurements.
+        wafer_pane = ttk.Frame(split)
+        split.add(wafer_pane, weight=3)
+        self._build_results_wafer_map(wafer_pane)
 
         export_frame = ttk.LabelFrame(split, text="Data Export")
         split.add(export_frame, weight=0)
@@ -3841,21 +4062,6 @@ class MainLayout(ttk.Frame):
         ttk.Button(results_lf, text="Clear Results", command=self.clear_results).grid(
             row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 6))
 
-        if self._system != "accretech":
-            stats_frame = ttk.LabelFrame(split, text="Run Statistics")
-            split.add(stats_frame, weight=1)
-
-            self.results_canvas = tk.Canvas(
-                stats_frame, width=300, height=300, bg="#f0f0f0", highlightthickness=0
-            )
-            self.results_canvas.pack(pady=15)
-            self.lbl_results_large = ttk.Label(
-                stats_frame,
-                text="Pass: 0   |   Fail: 0   |   Untested: 0",
-                font=("Arial", 14, "bold")
-            )
-            self.lbl_results_large.pack(pady=8)
-
     def _build_results_wafer_map(self, tab):
         map_frame = ttk.LabelFrame(tab, text="Wafer Map — Pass / Fail")
         map_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
@@ -3883,6 +4089,7 @@ class MainLayout(ttk.Frame):
         self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
         self._results_wafer_map.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
         self._results_wafer_map.on_redraw = self._exec2_redraw_overlay_on_results_map
+        self._results_wafer_map.on_zoom = self._exec2_redraw_overlay_on_results_map
 
         detail_lf = ttk.LabelFrame(map_frame, text="Selected Die")
         detail_lf.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
@@ -4060,7 +4267,7 @@ class MainLayout(ttk.Frame):
 
         only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
         only_pma_chk = ttk.Checkbutton(
-            frm, text="Only include Test PMA readings (has a die ID)",
+            frm, text="Only include readings that have a die ID",
             variable=only_pma_var)
         only_pma_chk.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 8))
 

@@ -19,6 +19,7 @@ from instruments.hp3458a import HP3458A
 from instruments.hp6634b import Agilent6634B
 from instruments.hp_switchbox import HPSwitchbox
 from instruments.hp_e1326b import HPE1326B
+from instruments import eg_profiles
 import export_formats as xfmt
 import app_settings
 
@@ -28,11 +29,9 @@ ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A"
                                 "Agilent 6634B", "HP Switchbox 1", "HP Switchbox 2",
                                 "HP Switchbox 3"]
 
-# Still listed in the sidebar so the roster stays visible, but this prober does
-# not have them - they are skipped by the connect sweep instead of being
-# reported as failures. Other EG probers are fitted differently; the Instruments
-# panel's Scan Bus button reports what a given one actually carries.
-ELECTROGLAS_NOT_FITTED = ("Keithley 2400", "Agilent 6634B")
+# Accretech is one machine for now. Electroglas benches come from
+# instruments/eg_probers.yaml instead, because they genuinely differ.
+ACCRETECH_BENCHES = ("probe08",)
 
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
 # No "smu"/"power_supply" for the same reason - requiring them would hold the
@@ -56,6 +55,9 @@ class AtomicaDashboard(tk.Tk):
             "electroglas": {"drivers": {}, "results": [], "ui": None,
                             "total": 0, "tested": 0, "passed": 0, "failed": 0},
         }
+        # False until both startup sweeps have run, so a bench selected during
+        # construction does not connect twice.
+        self._startup_done = False
         self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
@@ -80,7 +82,16 @@ class AtomicaDashboard(tk.Tk):
 
         self._build_bottom_routing()
         self._autoload_default_ata_folders()
-        self.after(500, self.init_hardware)
+        # After the folders, so switching system finds its folder already
+        # loaded; before init_hardware, so the first connect sweep runs
+        # against the bench that was actually chosen.
+        self._apply_default_prober()
+        # Both systems sweep at startup. SEQUENCED, not concurrent: they share
+        # one GPIB board, and two sweeps opening resources at the same time is
+        # exactly how the VI_ERROR_SYSTEM_ERROR races happen - so the
+        # Electroglas sweep is kicked off by the Accretech one finishing
+        # rather than by a guessed delay.
+        self.after(500, self._startup_sweep)
         self.update_statistics_visuals()
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
@@ -188,9 +199,13 @@ class AtomicaDashboard(tk.Tk):
         else:
             self._ata_lbl.config(text="No ATA loaded", foreground="gray")
             self._ata_picker_var.set("")
+        # The prober list is per-system, so it has to follow the toggle.
+        self._refresh_bench_picker()
+        self._refresh_routing_button()
         self.update_statistics_visuals()
         self.check_system_ready()
-        self.log(f"[SYSTEM] Switched active system to {system.capitalize()}.")
+        self.log(f"[SYSTEM] Switched active system to {system.capitalize()} "
+                 f"— prober {self._active_bench()}.")
 
     def _system_ready_loop(self):
         self.check_system_ready()
@@ -292,6 +307,59 @@ class AtomicaDashboard(tk.Tk):
         holder, self.bottom_routing = scrollable_routing(lf, self)
         holder.pack(fill="both", expand=True)
 
+    def accretech_benches(self) -> list:
+        return list(ACCRETECH_BENCHES)
+
+    def electroglas_benches(self) -> list:
+        try:
+            return eg_profiles.profile_names()
+        except Exception:
+            return []
+
+    def apply_prober(self, system: str, bench: str):
+        """Switch the whole GUI to a prober: system first, then bench.
+
+        Order matters - cmd_set_eg_profile reconnects instruments and pokes
+        the Electroglas UI, so the Electroglas side has to be the active one
+        before it runs.
+        """
+        if system not in self._by_system:
+            self.log(f"[SYSTEM] Unknown system {system!r}")
+            return
+        if system != self.active_system:
+            self.cmd_set_active_system(system)
+        if system == "electroglas" and bench:
+            try:
+                if bench != eg_profiles.active_name():
+                    self.cmd_set_eg_profile(bench)
+            except Exception as e:
+                self.log(f"[SYSTEM] Could not select {bench!r}: {e}")
+        self._refresh_bench_picker()
+
+    def _apply_default_prober(self):
+        """Startup only. Silent when nothing is set - Accretech stays the
+        fallback, which is what the app did before this setting existed."""
+        system, bench = app_settings.get_default_prober()
+        if not system:
+            return
+        self.log(f"[SYSTEM] Default prober: {system} / {bench}")
+        self.apply_prober(system, bench)
+
+    def _refresh_routing_button(self):
+        """Switch Routing is an Accretech-only view, so hide its toggle on the
+        Electroglas side rather than leaving a button that opens a pane with
+        nothing relevant in it. Collapses the pane first if it is open,
+        otherwise it would be stranded with no way to close it."""
+        btn = getattr(self, "_routing_toggle_btn", None)
+        if btn is None:
+            return
+        if self.active_system == "electroglas":
+            if getattr(self, "_routing_visible", False):
+                self.cmd_toggle_routing()
+            btn.pack_forget()
+        else:
+            btn.pack(side="right", padx=6, pady=2)
+
     def cmd_toggle_routing(self):
         if self._routing_visible:
             self._main_pane.forget(self._bottom_routing_frame)
@@ -349,6 +417,7 @@ class AtomicaDashboard(tk.Tk):
         txt.configure(state="disabled")
 
     def _connect_instruments(self, ui, drivers, connections):
+        ui.set_visible_instruments([name for name, _key, _drv in connections])
         for lbl in ui.status_labels.values():
             lbl.config(foreground="orange")
         self.update_idletasks()
@@ -380,12 +449,12 @@ class AtomicaDashboard(tk.Tk):
           ID-query timeout; this loop runs on the UI thread, so that froze the
           window for ~30s whenever something on the bench was powered off.
         """
+        # Only what this bench actually carries. Unfitted instruments used to
+        # sit here as permanently grey "(not fitted)" rows; they are now simply
+        # absent, and the Instruments tab still reports the full roster.
+        ui.set_visible_instruments([name for name, _key, _factory in connections])
         for lbl in ui.status_labels.values():
             lbl.config(foreground="orange")
-        for name in ELECTROGLAS_NOT_FITTED:
-            if name in ui.status_labels:
-                ui.status_labels[name].config(text=f"— {name} (not fitted)",
-                                              foreground="gray")
         self.update_idletasks()
         for name, key, build_driver in connections:
             try:
@@ -403,6 +472,20 @@ class AtomicaDashboard(tk.Tk):
                 ui.status_labels[name].config(text=f"❌ {name}", foreground="red") 
                 self.log(f"[ERROR] {name}: {e}") 
 
+    def _startup_sweep(self):
+        """Connect both systems, one after the other, then let later bench
+        switches reconnect on their own."""
+        try:
+            self.init_hardware()
+        finally:
+            self.after(200, self._startup_sweep_eg)
+
+    def _startup_sweep_eg(self):
+        try:
+            self.init_hardware_eg()
+        finally:
+            self._startup_done = True
+
     def init_hardware(self):
         self.log("[SYSTEM] Pinging Accretech hardware connections...")
         connections = [
@@ -416,36 +499,79 @@ class AtomicaDashboard(tk.Tk):
                                   self._by_system["accretech"]["drivers"], connections)
         self.check_system_ready()
 
+    # Driver per profile key. Which of these actually get connected depends on
+    # the active bench profile - see instruments/eg_probers.yaml. A key marked
+    # not-fitted there is skipped rather than reported as a failure, because the
+    # benches genuinely differ: probe02 has a Keithley 2400 and a working VXI
+    # multimeter, probe03 has neither.
+    _EG_DRIVERS = {
+        "prober_eg":     ("Electroglas 2001X",  "prober",  Electroglas2001X),
+        "smu_eg":        ("Keithley 2400",      "smu",     lambda: Keithley2400("smu_eg")),
+        "dmm_eg":        ("HP 3458A",           "dmm",     HP3458A),
+        "dmm_vxi_eg":    ("HP E1326B (VXI)",    "dmm_vxi", lambda: HPE1326B("dmm_vxi_eg")),
+        "relay1_eg":     ("HP Switchbox 1",     "relay1",  lambda: HPSwitchbox("relay1_eg")),
+        "relay2_eg":     ("HP Switchbox 2",     "relay2",  lambda: HPSwitchbox("relay2_eg")),
+        "relay3_eg":     ("HP Switchbox 3",     "relay3",  lambda: HPSwitchbox("relay3_eg")),
+        "power_supply_eg": ("Agilent 6634B", "power_supply", Agilent6634B),
+    }
+
     def init_hardware_eg(self):
-        self.log("[SYSTEM] Pinging Electroglas hardware connections...")
-        # The Keithley 2400 and Agilent 6634B are not fitted to this prober, so
-        # they are left out of the connect sweep - see _EG_INSTRUMENTS in
-        # gui/instruments_eg_panel.py, which still lists them (and still lets
-        # you ping them individually) and carries the same note. Different EG
-        # probers carry different instruments; Scan Bus reports what a given
-        # one actually has.
-        connections = [
-            ("Electroglas 2001X", "prober",  Electroglas2001X),
-            # The 3458A is the measurement instrument for probe03. Its ohms
-            # functions source a known current and read the resulting voltage,
-            # which is the isolation test, and it ranges to 1.2 GOhm - against
-            # the E1326B's 1.048 MOhm. It needs wiring to the relay card's NO
-            # terminals; only its GPIB link exists so far.
-            ("HP 3458A",          "dmm",     HP3458A),
-            # The E1326B at LADDR 56 has FAILED its self-test - the mainframe
-            # reports 'Config error 1, Failed device' and publishes no GPIB
-            # instrument for it. Kept in the sweep so a repaired or replacement
-            # module is picked up automatically; it is expected to fail today.
-            ("HP E1326B (VXI)",   "dmm_vxi", lambda: HPE1326B("dmm_vxi_eg")),
-            ("HP Switchbox 1",    "relay1",  lambda: HPSwitchbox("relay1_eg")),
-            ("HP Switchbox 2",    "relay2",  lambda: HPSwitchbox("relay2_eg")),
-            ("HP Switchbox 3",    "relay3",  lambda: HPSwitchbox("relay3_eg")),
-        ]
+        profile = eg_profiles.active_name() 
+        self.log(f"[SYSTEM] Pinging Electroglas hardware — {eg_profiles.label(profile)}")
+        # instruments.yaml is derived from the profile, so make sure it matches
+        # the active bench before any driver reads an address out of it.
+        try:
+            eg_profiles.apply_to_instruments_yaml(profile)
+        except Exception as e:
+            self.log(f"[SYSTEM] Could not apply profile {profile!r}: {e}")
+
+        connections = []
+        for key in eg_profiles.fitted_keys(profile):
+            entry = self._EG_DRIVERS.get(key)
+            if entry is None:
+                self.log(f"[SYSTEM] {key} is in the profile but has no driver — skipped")
+                continue
+            display, drv_key, factory = entry
+            connections.append((display, drv_key, factory))
+
         self._connect_instruments_eg(self._by_system["electroglas"]["ui"],
                                      self._by_system["electroglas"]["drivers"],
                                      connections)
         self.check_system_ready()
 
+    def cmd_set_eg_profile(self, name: str):
+        """Switch the Electroglas bench and reconnect against it."""
+        try:
+            changed = eg_profiles.set_active(name)
+        except Exception as e:
+            self.log(f"[SYSTEM] Could not switch to {name!r}: {e}")
+            return
+        # Old sessions point at the previous bench's addresses; drop them rather
+        # than leave stale handles that would talk to the wrong instrument.
+        drivers = self._by_system["electroglas"]["drivers"]
+        for drv in list(drivers.values()):
+            try:
+                drv.close()
+            except Exception:
+                pass
+        drivers.clear()
+        self.log(f"[SYSTEM] Electroglas bench -> {eg_profiles.label(name)}"
+                 + (f" ({len(changed)} address(es) updated)" if changed else ""))
+        self.log(eg_profiles.summary(name))
+        # The Recipe tab only offers instruments the bench actually has, so it
+        # has to be told the bench changed.
+        panel = getattr(self._by_system["electroglas"]["ui"], "recipe_panel", None)
+        refresh = getattr(panel, "refresh_bench_instruments", None)
+        if refresh:
+            try:
+                refresh()
+            except Exception as e:
+                self.log(f"[SYSTEM] Recipe tab instrument refresh failed: {e}")
+        # During startup the scheduled sweep has not run yet and will pick this
+        # bench up, so connecting here as well would just sweep the bus twice.
+        if self._startup_done:
+            self.init_hardware_eg()
+ 
     def check_system_ready(self):
         missing = []
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
@@ -511,10 +637,30 @@ class AtomicaDashboard(tk.Tk):
         self._ata_lbl = ttk.Label(toolbar, text="No ATA loaded", foreground="gray",
                                   font=("Segoe UI", 9))
         self._ata_lbl.pack(side="left", padx=(2, 8), pady=2)
+
+        # Which physical prober the active system is pointed at. The Electroglas
+        # benches carry different instruments at different addresses, so this
+        # decides what gets connected - see instruments/eg_probers.yaml.
+        # Accretech has only probe08 for now, so its list is a single entry and
+        # the control is inert rather than hidden, to keep the toolbar stable.
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y",
+                                                       padx=4, pady=3)
+        ttk.Label(toolbar, text="Prober:").pack(side="left", padx=(2, 2), pady=2)
+        self._bench_picker_var = tk.StringVar()
+        self._bench_picker = ttk.Combobox(
+            toolbar, textvariable=self._bench_picker_var, state="readonly",
+            width=10, postcommand=self._refresh_bench_picker)
+        self._bench_picker.pack(side="left", padx=(0, 4), pady=2)
+        self._bench_picker.bind("<<ComboboxSelected>>",
+                                lambda _e: self._on_bench_picker_selected())
+        self._bench_lbl = ttk.Label(toolbar, text="", foreground="gray",
+                                    font=("Segoe UI", 9))
+        self._bench_lbl.pack(side="left", padx=(2, 8), pady=2)
+        self._refresh_bench_picker()
         ttk.Button(toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear).pack(side="left", padx=4, pady=2)
         self._routing_toggle_btn = ttk.Button(
             toolbar, text="▸ Show Routing", command=self.cmd_toggle_routing)
-        self._routing_toggle_btn.pack(side="right", padx=6, pady=2)
+        self._refresh_routing_button()
         ttk.Button(toolbar, text="⛶ Fit Windows", command=self.cmd_fit_windows).pack(
             side="right", padx=2, pady=2)
         self.after(200, self._refresh_ata_picker)
@@ -547,6 +693,69 @@ class AtomicaDashboard(tk.Tk):
         names = self._find_ata_folders()
         self._ata_picker_label_to_name = {self._ata_display_name(n): n for n in names}
         self._ata_picker.configure(values=list(self._ata_picker_label_to_name.keys()))
+
+    # -- prober bench picker ------------------------------------------------
+    #
+    # Only Electroglas has real profiles today. Accretech is a single machine,
+    # so its "list" is one entry - the control still shows which prober you are
+    # on, which is the point, and it grows the day a second Accretech appears.
+
+    def _bench_names(self) -> list:
+        if self.active_system == "electroglas":
+            try:
+                return eg_profiles.profile_names()
+            except Exception as e:
+                self.log(f"[SYSTEM] Could not read prober profiles: {e}")
+                return []
+        return list(ACCRETECH_BENCHES)
+
+    def _active_bench(self) -> str:
+        if self.active_system == "electroglas":
+            try:
+                return eg_profiles.active_name()
+            except Exception:
+                return ""
+        return ACCRETECH_BENCHES[0]
+
+    def _refresh_bench_picker(self):
+        names = self._bench_names()
+        self._bench_picker.configure(values=names)
+        active = self._active_bench()
+        if self._bench_picker_var.get() != active:
+            self._bench_picker_var.set(active)
+        if self.active_system == "electroglas" and active:
+            try:
+                fitted = eg_profiles.fitted_keys(active)
+                self._bench_lbl.config(text=f"{len(fitted)} instruments",
+                                       foreground="#1d4ed8")
+            except Exception:
+                self._bench_lbl.config(text="", foreground="gray")
+        else:
+            self._bench_lbl.config(text="Accretech", foreground="gray")
+        # A single-entry list is not a choice; make that visible rather than
+        # letting someone click at it expecting something to happen.
+        self._bench_picker.configure(
+            state="readonly" if len(names) > 1 else "disabled")
+
+    def _on_bench_picker_selected(self):
+        name = self._bench_picker_var.get()
+        if self.active_system != "electroglas":
+            return
+        if name == eg_profiles.active_name():
+            return
+        self.cmd_set_eg_profile(name)
+        self._refresh_bench_picker()
+        # Keep the Instruments tab's own copy of this selector in step.
+        panel = getattr(self._by_system["electroglas"]["ui"], "instruments_eg", None)
+        for method in ("_refresh_bench_label", "_rebuild_addresses"):
+            fn = getattr(panel, method, None)
+            if fn:
+                try:
+                    fn()
+                except Exception:
+                    pass
+        if panel is not None and hasattr(panel, "_bench_var"):
+            panel._bench_var.set(name)
 
     def _on_ata_picker_selected(self):
         label = self._ata_picker_var.get()
@@ -724,8 +933,8 @@ class AtomicaDashboard(tk.Tk):
             if fmt_type == "csv":
                 reason = "at least one current or resistance reading from a die touchdown"
             else:
-                reason = ("readings recorded during a ▶ Test PMA run (they carry the "
-                         "shot's device-ID string; Full Die/Test Die readings don't)"
+                reason = ("readings that carry a device-ID string — the wafer map "
+                         "needs an ID column, or set the IDs with Overlay…"
                          if fmt.get("requires_die_id", True) else "measurement results")
             self.ui.exec_panel.log(
                 f"[ERROR] No matching results yet from the last run for '{fmt['name']}' — "

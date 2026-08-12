@@ -39,6 +39,69 @@ from instruments.gpib_base import GPIBInstrument
 
 CHANNELS = tuple(range(16))          # E1364A channels are numbered 00-15
 
+# ---------------------------------------------------------------------------
+# Card families. Two very different animals answer *IDN? with the SAME string
+# ("HEWLETT-PACKARD,SWITCHBOX,0,A.06.00"), so SYST:CTYP? is the only way to
+# tell them apart - and the same secondary address holds a different card
+# depending on which bench is plugged in.
+# ---------------------------------------------------------------------------
+FAMILY_MUX = "mux"          # E1343A/44A/45A/47A relay multiplexers
+FAMILY_FORM_C = "formc"     # E1364A form C (SPDT) switch
+FAMILY_UNKNOWN = "unknown"
+
+_MUX_MODELS = ("E1343", "E1344", "E1345", "E1346", "E1347")
+_FORM_C_MODELS = ("E1364", "E1365", "E1366", "E1367")
+
+
+def card_family(card_type: str) -> str:
+    """'HEWLETT-PACKARD,E1345A,0,A.06.00' -> FAMILY_MUX."""
+    text = (card_type or "").upper()
+    if any(m in text for m in _MUX_MODELS):
+        return FAMILY_MUX
+    if any(m in text for m in _FORM_C_MODELS):
+        return FAMILY_FORM_C
+    return FAMILY_UNKNOWN
+
+
+# --- multiplexer topology (E1343A / E1345A), confirmed on the hardware ------
+#
+# Each channel carries High, Low and Guard. Channels split into two banks, and
+# a closed channel reaches only its bank common - it gets to the outside world
+# through a TREE SWITCH, which is itself an addressable channel. Close a
+# channel without its tree switch and you have connected nothing, which looks
+# exactly like a clean open circuit.
+#
+#   ch00..07  Bank 0 --[ AT  90 ]-- AT terminals + analog bus H / L / G   sense
+#                          |
+#                     [ AT2 92 ]
+#                          |
+#   ch08..15  Bank 1 --[ BT  91 ]-- BT terminals + analog bus I+ / I- / IG source
+#
+# Every common, tree and analog-bus line carries a 100 ohm series resistor for
+# relay protection. It is in any 2-wire measurement - irrelevant at megohms,
+# not at single ohms.
+TREE_AT = 90            # Bank 0 -> AT terminals / analog bus H,L,G  (sense)
+TREE_BT = 91            # Bank 1 -> BT terminals / analog bus I+,I-,IG (source)
+TREE_AT2 = 92           # Bank 1 -> AT terminals
+TREE_SWITCHES = (TREE_AT, TREE_BT, TREE_AT2)
+
+TREE_LABELS = {TREE_AT: "AT  Bank 0 -> analog bus H/L/G (sense)",
+               TREE_BT: "BT  Bank 1 -> analog bus I+/I-/IG (source)",
+               TREE_AT2: "AT2 Bank 1 -> AT terminals"}
+
+BANK0 = tuple(range(0, 8))
+BANK1 = tuple(range(8, 16))
+
+
+def bank_of(channel: int) -> int:
+    return 0 if int(channel) in BANK0 else 1
+
+
+def fres_partner(channel: int) -> int:
+    """The 4-wire partner of a Bank 0 channel: sense N pairs with source N+8."""
+    ch = int(channel)
+    return ch + 8 if ch in BANK0 else ch - 8
+
 # From references/hpe1364 manual.pdf, all confirmed against this bench:
 #
 #   "the Form C Switch consists of 16 channels (channels 00 through 15)"
@@ -196,6 +259,122 @@ def conflicts_with(channel: int, already_closed) -> list:
             if int(c) != channel and POLARITY_OF_CHANNEL.get(int(c)) == side]
 
 
+# ---------------------------------------------------------------------------
+# PER-BENCH WIRING
+#
+# The two benches are wired to different cards in different ways, so the panel
+# needs to know which bench it is looking at rather than assuming probe03's
+# form-C build. Everything above stays as it was - probe03's constants are the
+# probe03 entry here, re-exported so existing callers keep working.
+#
+# probe02 (RELAY1, E1345A @ 9::15) was mapped ON THE BENCH, 2026-08-10, by
+# closing each channel in turn against an all-open reference taken immediately
+# before it, forward then reverse, with the Keithley 2400 sourcing 10 V into
+# a 1 uA compliance. Channels 0-3 added +101..+155 pA (65-99 GOhm per die) in
+# BOTH directions; every other channel stayed inside a +-40 pA noise band and
+# six of them changed sign between passes. Tree switches 90/91/92 moved the
+# reading by less than the noise, alone or combined with a channel - so the
+# SMU is on the card's own terminals and the VXI analog bus is not in the
+# path. That matches the original LaMP executable, whose database logs
+# fldSwitch cycling 1,2,3,4 per quad against this one card.
+# ---------------------------------------------------------------------------
+
+BENCH_WIRING = {
+    "probe03": {
+        "driver_key": "relay2_eg",
+        "card_type": "E1364A",
+        "family": FAMILY_FORM_C,
+        "wires_per_die": 2,
+        "die_sets": DIE_SETS,
+        "coax_of_channel": COAX_OF_CHANNEL,
+        "node_of_channel": NODE_OF_CHANNEL,
+        "conflict_groups": CONFLICT_GROUPS,
+        "ground_channel": GROUND_TERMINAL_CHANNEL,
+        "uses_analog_bus": False,
+        "instrument": "HP 3458A / E1326B at the card's terminals",
+        "summary": ("Form C SPDT, 8 wired channels: two per die (one HI, one LO) "
+                    "for the four dies of a 2x2 shot. Open grounds the pin via "
+                    "the chained NC bus."),
+        "evidence": "transcribed from the physical wiring (references/probe03mapping)",
+    },
+    "probe02": {
+        "driver_key": "relay1_eg",
+        "card_type": "E1345A",
+        "family": FAMILY_MUX,
+        # A mux channel switches a HI/LO PAIR, so one die needs one channel -
+        # unlike probe03's form-C card, where a die costs two.
+        "wires_per_die": 1,
+        "die_sets": {1: (0,), 2: (1,), 3: (2,), 4: (3,)},
+        "coax_of_channel": {},
+        "node_of_channel": {},
+        # Nothing here can damage anything: closing two channels just puts two
+        # dies in parallel, which spoils the reading rather than shorting pins.
+        "conflict_groups": (),
+        "ground_channel": None,
+        "uses_analog_bus": False,
+        "instrument": ("Keithley 2400 SMU, rear IN/OUT HI/LO into the card's "
+                       "DIRECT voltage-sense terminals (the bank common, not "
+                       "the analog bus - which is why the tree switches make "
+                       "no difference), 2-wire (SYST:RSEN OFF)"),
+        "summary": ("16-channel relay multiplexer, 4 wired channels: CH00-CH03, "
+                    "one per die of a 2x2 shot, each switching a HI/LO pair. "
+                    "CH04-CH15 unwired. Tree switches unused."),
+        "evidence": ("measured on the bench 2026-08-10 (see module header); "
+                     "probe-card pin mapping and the 8-wire harness confirmed "
+                     "with the operator 2026-08-12, see references/"
+                     "SWITCHBOX_REPORT.txt section 8C"),
+        # HI/LO within a pair is inferred from pin ordering, not measured -
+        # the pad pair is symmetric so it cannot be measured from here.
+        "die_pins": {1: ("A32", "A33"), 2: ("A34", "A36"),
+                     3: ("A13", "A12"), 4: ("A11", "A9")},
+    },
+}
+
+# Same numbering the original LaMP executable logged in fldSwitch.
+LAMP_SWITCH_OF_CHANNEL = {0: 1, 1: 2, 2: 3, 3: 4}
+
+
+def bench_wiring(name: str) -> dict:
+    """Wiring model for a bench, or an empty-but-valid one if unknown."""
+    return BENCH_WIRING.get(str(name), {
+        "driver_key": "", "card_type": "", "family": FAMILY_UNKNOWN,
+        "wires_per_die": 0, "die_sets": {}, "coax_of_channel": {},
+        "node_of_channel": {}, "conflict_groups": (), "ground_channel": None,
+        "uses_analog_bus": False, "instrument": "",
+        "summary": "No wiring recorded for this bench yet.", "evidence": "",
+    })
+
+
+def wired_channels(name: str) -> tuple:
+    wiring = bench_wiring(name)
+    out = []
+    for chans in wiring["die_sets"].values():
+        out.extend(chans)
+    return tuple(sorted(set(out)))
+
+
+def die_of_channel_on(name: str, channel: int):
+    for die, chans in bench_wiring(name)["die_sets"].items():
+        if int(channel) in chans:
+            return die
+    return None
+
+
+def describe_channel_on(name: str, channel: int) -> str:
+    """What closing this channel connects, for the named bench."""
+    channel = int(channel)
+    wiring = bench_wiring(name)
+    if name == "probe03":
+        return describe_channel(channel)
+    die = die_of_channel_on(name, channel)
+    if die is None:
+        return f"CH{channel:02d} - not wired on {name}"
+    sw = LAMP_SWITCH_OF_CHANNEL.get(channel)
+    tail = f"  (LaMP switch {sw})" if sw else ""
+    return (f"CH{channel:02d} - die {die} of the 2x2 shot, HI+LO pair "
+            f"-> {wiring['instrument'].split(',')[0]}{tail}")
+
+
 def _chan_spec(channel, card: int = 1) -> str:
     """(@ccnn) - card number then two-digit channel, per the manual."""
     return f"(@{int(card):02d}{int(channel):02d})"
@@ -319,6 +498,70 @@ class HPSwitchbox(GPIBInstrument):
         if not verify:
             return {c: True for c in channels}
         return {c: self.read_channel(c) for c in channels}
+
+    # -- multiplexer routing ------------------------------------------------
+
+    def family(self, slot: int = None) -> str:
+        """Which card family is in this switchbox - mux or form C."""
+        return card_family(self.card_type(slot or self.card))
+
+    def scan_port(self) -> str:
+        """ROUT:SCAN:PORT? -> 'ABUS' or 'NONE'."""
+        return (self.query("ROUT:SCAN:PORT?") or "").strip()
+
+    def set_scan_port(self, port: str = "ABUS"):
+        """Route scanned channels to the analog bus (ABUS) or not (NONE).
+
+        Only meaningful on a multiplexer, and only useful if the analog bus
+        ribbon is physically fitted to the multimeter - on probe02 it is not.
+        """
+        self.write(f"ROUT:SCAN:PORT {port}")
+
+    def tree_states(self) -> dict:
+        """{90: bool, 91: bool, 92: bool} - which tree switches are closed."""
+        return {t: self.read_channel(t) for t in TREE_SWITCHES}
+
+    def mux_states(self) -> dict:
+        """Every channel plus the tree switches, in one pass."""
+        states = self.channel_states()
+        states.update(self.tree_states())
+        return states
+
+    def close_2wire(self, channel: int, verify: bool = True) -> dict:
+        """Select one device 2-wire: its channel plus the AT tree switch.
+
+        Channel must be in Bank 0 - Bank 1 reaches the analog bus through BT,
+        which carries the SOURCE pair, not the sense pair. Use AT2 if you
+        really want a Bank 1 channel on the AT terminals.
+        """
+        ch = int(channel)
+        if ch not in BANK0:
+            raise ValueError(
+                f"channel {ch:02d} is in Bank 1; 2-wire selection goes through "
+                f"the AT tree switch, which serves Bank 0 (00-07). Close "
+                f"AT2 ({TREE_AT2}) explicitly if you meant to bring Bank 1 to "
+                "the AT terminals.")
+        self.open_all()
+        self.close_channel(TREE_AT)
+        self.close_channel(ch)
+        if not verify:
+            return {TREE_AT: True, ch: True}
+        return {TREE_AT: self.read_channel(TREE_AT), ch: self.read_channel(ch)}
+
+    def close_4wire(self, channel: int, verify: bool = True) -> dict:
+        """Select one device 4-wire: sense channel N, source channel N+8, and
+        both tree switches. This is the pairing SCAN:MODE FRES uses."""
+        sense = int(channel)
+        if sense not in BANK0:
+            sense = fres_partner(sense)
+        source = fres_partner(sense)
+        wanted = (TREE_AT, TREE_BT, sense, source)
+        self.open_all()
+        for c in wanted:
+            self.close_channel(c)
+        if not verify:
+            return {c: True for c in wanted}
+        return {c: self.read_channel(c) for c in wanted}
 
     def route_die(self, die: int, verify: bool = True) -> dict:
         """Select one die of the 2x2 shot - closes its HI and LO channels.

@@ -1,0 +1,653 @@
+===============================================================================
+  HP/AGILENT SWITCHBOX REFERENCE  --  Electroglas benches probe02 / probe03
+  Compiled 2026-08-07 from the manuals in references/ and from commands sent
+  to the live hardware. Every claim is tagged:
+
+      [MEASURED]  observed on this hardware, reproducible
+      [MANUAL]    stated in the vendor manual, not independently re-tested
+      [INFERRED]  reasoned from the above; NOT confirmed. Treat with suspicion.
+===============================================================================
+
+
+CONTENTS
+  1.  Why this document exists
+  2.  What is fitted, and where
+  3.  How a card is addressed
+  4.  Card family A - relay multiplexers (E1343A / E1345A)
+  5.  Card family B - form C switch (E1364A)
+  6.  Command reference
+  7.  Wiring an actual measurement
+  8.  probe03's form C wiring (the 2x2 die map)
+  8B. probe02's multiplexer wiring (measured on the bench)
+  9.  What is NOT established
+  10. Ways to fool yourself (read this one)
+  11. Quick reference card
+
+
+===============================================================================
+ 1.  WHY THIS DOCUMENT EXISTS
+===============================================================================
+
+There are three relay cards in each bench's HP 75000 Series B (E1300A)
+mainframe. They look interchangeable from GPIB - all three answer *IDN? with
+the identical string:
+
+    HEWLETT-PACKARD,SWITCHBOX,0,A.06.00                             [MEASURED]
+
+They are not interchangeable. Two different card families are in use, they
+behave differently, and the same GPIB secondary address holds a DIFFERENT card
+depending on which bench is plugged in. Closing "channel 3" without knowing
+which card answered is how you energise something you did not intend.
+
+The only reliable identification is SYST:CTYP?, per slot.                [MEASURED]
+
+
+===============================================================================
+ 2.  WHAT IS FITTED, AND WHERE
+===============================================================================
+
+Both benches present one E1300A mainframe at GPIB primary address 9. Each
+configured module appears at its own SECONDARY address.
+
+                    probe02 (the LaMP bench)      probe03 (dev bench)
+  -----------------------------------------------------------------------
+  9::0              E1300A mainframe              E1300A mainframe
+  9::3              E1326B multimeter  (LADDR 24) --
+  9::7              --                            E1326B, FAILED (LADDR 56)
+  9::9              E1343A mux         (LADDR 72) --
+  9::10             --                            E1364A form C  (LADDR 80)
+  9::14             E1364A form C     (LADDR 112) E1364A form C  (LADDR 112)
+  9::15             E1345A mux        (LADDR 120) E1343A mux     (LADDR 120)
+                                                                        [MEASURED]
+
+  NOTE THE TRAP: 9::15 is an E1345A on probe02 and an E1343A on probe03.
+  9::14 is a form C switch on both. probe03's only WIRED card is at 9::10,
+  which does not exist on probe02 at all.
+
+Card types in service:
+
+  E1343A   16-channel HIGH VOLTAGE relay multiplexer   250 Vdc / 354 Vac pk  [MANUAL]
+  E1345A   16-channel relay multiplexer                120 Vdc / 170 Vac pk  [MANUAL]
+  E1364A   16-channel form C (SPDT) switch             250 V, 1 A, 30 W      [MANUAL]
+
+The E1344A / E1347A thermocouple variants share the same manual but are not
+fitted on either bench.
+
+
+===============================================================================
+ 3.  HOW A CARD IS ADDRESSED
+===============================================================================
+
+Three nested levels. Getting any of them wrong silently talks to the wrong
+thing.
+
+    GPIB primary 9
+      |
+      +-- secondary address  =  VXI logical address / 8              [MEASURED]
+      |     e.g. LADDR 120 -> secondary 15 -> GPIB0::9::15::INSTR
+      |
+      +-- card number within the switchbox (1..8)
+      |     lowest logical address in the group is card 01           [MANUAL]
+      |     every card here is alone in its group, so card = 1       [MEASURED]
+      |
+      +-- channel number 00..15  (plus 90/91/92 on multiplexers)
+
+Channel list syntax:
+
+    (@ccnn)     cc = card number, nn = channel      e.g. (@0103) or (@103)
+                Leading zero on the card may be dropped: "close channel 02 of
+                card 1, send 102 instead of 0102".                    [MANUAL]
+                Both forms verified accepted.                       [MEASURED]
+
+    Tree switches are addressed the same way: (@190) is card 1, channel 90.
+
+
+===============================================================================
+ 4.  CARD FAMILY A - RELAY MULTIPLEXERS (E1343A / E1345A)
+===============================================================================
+
+Each channel carries THREE lines: High (H), Low (L), Guard (G).       [MANUAL]
+Sixteen channels, split into two banks:
+
+        Bank 0  =  channels 00 .. 07
+        Bank 1  =  channels 08 .. 15                                  [MANUAL]
+
+THE PART THAT CATCHES PEOPLE OUT: closing a channel connects it only to its
+bank common. It reaches the outside world through a TREE SWITCH, and the tree
+switch is itself an addressable channel. Close a channel without its tree
+switch and you have connected nothing.
+
+        channel 90  =  AT  tree switch
+        channel 91  =  BT  tree switch
+        channel 92  =  AT2 tree switch                                [MANUAL]
+                        all three verified to close and read back   [MEASURED]
+
+  BLOCK DIAGRAM
+  -------------
+
+                                                       ANALOG BUS CONNECTOR
+    ch00 --+                                           (ribbon to the E1326B)
+    ch01 --+                                                  |
+     ...   +--- Bank 0 common ---[ AT  ch90 ]--- AT terms ----+--  H  L  G
+    ch07 --+                          |                           (SENSE pair)
+                                      |
+                                 [ AT2 ch92 ]
+                                      |
+    ch08 --+                          |
+    ch09 --+                          |
+     ...   +--- Bank 1 common ---[ BT  ch91 ]--- BT terms ----+--  I+ I- IG
+    ch15 --+                                                      (SOURCE pair)
+
+    Every common line, tree switch line and analog bus line carries a
+    100 ohm series resistor for relay protection.                     [MANUAL]
+    That resistance IS in your 2-wire measurement. It does not matter at
+    megohms; it matters a great deal at single ohms.
+
+  WHAT EACH TREE SWITCH GIVES YOU
+  -------------------------------
+
+    ch90  AT    Bank 0 channels  ->  AT terminals  AND  analog bus H / L / G
+    ch91  BT    Bank 1 channels  ->  BT terminals  AND  analog bus I+ / I- / IG
+    ch92  AT2   Bank 1 channels  ->  AT terminals                     [MANUAL]
+
+  So the analog bus splits the card in half: Bank 0 is the SENSE side, Bank 1
+  is the SOURCE side. That is exactly the pairing the multimeter expects, and
+  it is why 4-wire scanning pairs channel N with channel N+8.
+
+  SELECTING ONE DEVICE, 2-WIRE
+  ----------------------------
+
+      ROUT:CLOS (@190)        close the AT tree switch
+      ROUT:CLOS (@103)        close channel 03  (must be 00..07)
+
+      device on channel 03  --H/L-->  Bank 0 common  -->  AT terminals
+                                                     -->  analog bus H/L
+
+  SELECTING ONE DEVICE, 4-WIRE (KELVIN)
+  -------------------------------------
+
+      ROUT:CLOS (@190)        AT tree  - sense path
+      ROUT:CLOS (@191)        BT tree  - source path
+      ROUT:CLOS (@103)        sense channel  N        (Bank 0)
+      ROUT:CLOS (@111)        source channel N+8      (Bank 1)
+
+      N and N+8 must be the same device, wired to both channels. This is the
+      pairing SCAN:MODE FRES uses.                                    [MANUAL]
+      All four closures verified accepted together.                 [MEASURED]
+
+
+===============================================================================
+ 5.  CARD FAMILY B - FORM C SWITCH (E1364A)
+===============================================================================
+
+Completely different animal. Sixteen INDEPENDENT single-pole double-throw
+relays. No banks, no tree switches, no analog bus.                    [MANUAL]
+
+Each channel has three terminals:
+
+        C    Common   - the moving contact
+        NO   Normally Open
+        NC   Normally Closed
+
+                    NC  o------.
+                               |
+        C  o--------- /        +-- relay coil energised = C to NO
+                       \       |   de-energised         = C to NC
+                    NO  o------'
+
+        CLOSE the channel  ->  C connects to NO                       [MANUAL]
+        OPEN  the channel  ->  C connects to NC                       [MANUAL]
+        A reset connects every C to its NC.                           [MANUAL]
+
+  *** THE RELAYS ARE LATCHING ***                                     [MANUAL]
+
+    "the relay remains in the last state during power-up or power-down"
+
+    The card comes back from a power cycle holding whatever it was left in.
+    All-open is the POST-RESET state, not the power-on state. Never assume
+    the state of a form C card you have not just reset.
+
+  RATINGS, per channel                                                [MANUAL]
+
+    250 Vdc or 250 Vac peak (177 Vac RMS)
+    1 A dc or ac RMS, non-inductive
+    30 W or 40 VA maximum
+    ~15 ms closure time  ->  ceiling of roughly 50 Hz scanning
+
+  All 16 channels on probe03's wired card were exercised individually and
+  read back correctly, 55 ms per close/read/open/read cycle.         [MEASURED]
+
+
+===============================================================================
+ 6.  COMMAND REFERENCE
+===============================================================================
+
+  Everything below was sent to the live cards unless marked otherwise.
+
+  ROUTING
+    ROUT:CLOS (@1nn)          close channel nn                      [MEASURED]
+    ROUT:OPEN (@1nn)          open it                               [MEASURED]
+    ROUT:CLOS? (@1nn)         -> "1" closed, "0" open                [MEASURED]
+    *RST                      open EVERY channel on the card        [MEASURED]
+
+    CLOS/OPEN also accept the bare form: CLOS (@1nn) without ROUT:  [MEASURED]
+
+  IDENTITY AND STATE
+    *IDN?                     -> HEWLETT-PACKARD,SWITCHBOX,0,A.06.00
+                                 identical on all three cards       [MEASURED]
+    SYST:CTYP? <slot>         -> the actual card type. THE ONLY WAY
+                                 to tell the cards apart.           [MEASURED]
+    SYST:ERR?                 -> one error, clearing as it goes     [MEASURED]
+    SYST:VERS?                -> 1990.0  (SCPI version)             [MEASURED]
+
+  SCANNING
+    ROUT:SCAN:PORT ABUS       route scanned channels to analog bus  [MEASURED]
+    ROUT:SCAN:PORT NONE       default; no analog bus routing        [MEASURED]
+    ROUT:SCAN:PORT?           -> ABUS | NONE                        [MEASURED]
+    TRIG:SOUR?                -> IMM at reset                       [MEASURED]
+    INIT:CONT?                -> 0 at reset                         [MEASURED]
+
+  NOT SUPPORTED on this firmware - do not waste time on them:
+    ROUT:SCAN?                -> -113 "Undefined header"            [MEASURED]
+    ROUT:FUNC?                -> -109 "Missing parameter"           [MEASURED]
+
+  MAINFRAME (secondary address 0, not the cards)
+    VXI:CONF:NUMB?            how many modules on the backplane     [MEASURED]
+    VXI:CONF:DLAD?            their logical addresses               [MEASURED]
+    VXI:READ? <laddr>,<off>   read a module register                [MEASURED]
+    VXI:WRITE <laddr>,<off>,<val>   write one  -- SEE SECTION 10    [MEASURED]
+
+  VXI:CONF:DLAD? is the authoritative inventory. A module that is present but
+  unassigned appears there and NOWHERE else - VISA will not even open its
+  address. A blind address sweep cannot find it.                     [MEASURED]
+
+
+===============================================================================
+ 7.  WIRING AN ACTUAL MEASUREMENT
+===============================================================================
+
+  The test being reproduced (from the .PMA recipes and LaMP's own tables):
+  apply 10 V, measure leakage current, to verify electrical isolation.
+  Recipe parameters: Voltage=10, MeterRange=1e-4, MeterCurrentLimit=1e-6,
+  NPLC=1.                                                            [MEASURED]
+
+  OPTION A - Keithley 2400 through a multiplexer   (recommended)
+  -------------------------------------------------------------
+  One instrument sources and measures. It is what LaMP used
+  (fldIsLampElectrical = TRUE, alongside RELAY1 and the 2001X).
+
+      2400 FORCE HI ------> AT tree switch terminal  H
+      2400 FORCE LO ------> AT tree switch terminal  L
+
+      per die N (N = 0..7):
+          ROUT:CLOS (@190)          AT tree
+          ROUT:CLOS (@10N)          the die's channel
+          :SOUR:FUNC VOLT ; :SOUR:VOLT 10
+          :SENS:FUNC 'CURR' ; :SENS:CURR:PROT 1E-6
+          :OUTP ON ; :READ?
+
+      Sixteen channels = up to 16 two-terminal devices per card, selected one
+      at a time. Far cleaner than the form C arrangement in section 8.
+
+  OPTION B - E1326B over the analog bus
+  -------------------------------------
+      The multiplexer's analog bus connector cables straight to the E1326B,
+      no external wiring. Bank 0 -> sense, Bank 1 -> source.
+      *** On probe02 this cable is NOT FITTED. See section 10. ***  [MEASURED]
+
+      E1326B ceiling is 1.048 Mohm, which an isolation reading will exceed.
+
+  OPTION C - HP 3458A
+  -------------------
+      Its ohms functions SOURCE a known current and read the resulting
+      voltage. Ranges to 1.2 Gohm - about a thousand times the E1326B's
+      headroom, and the right tool if you want resistance rather than
+      leakage-at-10-V.                                                [MANUAL]
+
+          range      current sourced        range      current sourced
+          10 ohm         10 mA              1 Mohm         5 uA
+          100 ohm         1 mA              10 Mohm      500 nA
+          1 kohm          1 mA              100 Mohm     500 nA
+          10 kohm       100 uA              1 Gohm       500 nA
+          100 kohm       50 uA
+
+      It cannot be commanded to 10 V - it is a current source. If the bias
+      voltage matters for comparability with LaMP's data, use option A.
+
+      Its front/rear Terminals switch is MECHANICAL and cannot be set over
+      GPIB; TERM? reports it.  probe02 reads REAR, probe03 reads FRONT. [MEASURED]
+
+
+===============================================================================
+ 8.  probe03's FORM C WIRING (THE 2x2 DIE MAP)
+===============================================================================
+
+  Transcribed in references/probe03mapping, encoded in
+  instruments/hp_switchbox.py. Card is the E1364A at 9::10.
+
+  The prober lands on a 2x2 shot; the relays then select each of the four dies
+  in turn, two pins per die, eight coax in total.
+
+    die   channels      coax        lands on
+    -------------------------------------------------------
+     1    CH00 CH01     3, 4        Input HI  / Input LO
+     2    CH02 CH03     5, 6        Input HI  / Input LO
+     3    CH08 CH09     7, 8        Current HI / Current LO
+     4    CH10 CH11     9, 10       Current HI / Current LO
+
+    HI-side channels: 00, 02, 08, 10   (coax 3, 5, 7, 9)
+    LO-side channels: 01, 03, 09, 11   (coax 4, 6, 8, 10)
+    Channels 04-07 and 12-14 are unwired spares.
+
+  EVERY NC TERMINAL IS DAISY-CHAINED TO GROUND via CH15 NC. So an OPEN channel
+  GROUNDS its probe pin. All-open is a guarded state, not a floating one:
+
+      CH00 NC - CH01 NC - CH02 NC - CH03 NC - CH11 NC - CH10 NC
+               - CH09 NC - CH08 NC - CH15 NC ---> ground
+
+  OPERATING RULE: one HI channel and one LO channel closed at a time.
+  Two HI closed at once shorts two probe pins through the HI terminal.
+  instruments/hp_switchbox.py refuses this rather than trusting the caller.
+
+  UNRESOLVED for this bench: two pins per die means the current has to be
+  forced down the same pair the voltage is read from, so Input HI must be
+  commoned with Current HI (and Input LO with Current LO). probe03mapping
+  records no such strap. Without it, dies 1-2 can only be sensed and dies 3-4
+  only driven, and no die is measurable.                              [INFERRED]
+  One continuity check at the adapter settles it.
+
+
+===============================================================================
+ 8B. probe02's MULTIPLEXER WIRING (MEASURED ON THE BENCH)
+===============================================================================
+
+  Card is the E1345A at 9::15 (LADDR 120) - RELAY1, the one LaMP's own
+  tblInstruments flags fldIsLampElectrical=True. The other two cards on this
+  bench (E1343A at 9::9, E1364A at 9::14) are present but were confirmed
+  unused by that application, and nothing was found wired to them.
+
+  ONLY FOUR CHANNELS GO ANYWHERE: CH00, CH01, CH02, CH03.       [MEASURED]
+
+    channel   die of the 2x2 shot   LaMP fldSwitch   added at 10 V
+    ----------------------------------------------------------------
+     CH00            1                    1           ~155 pA   64 GOhm
+     CH01            2                    2           ~148 pA   67 GOhm
+     CH02            3                    3           ~155 pA   65 GOhm
+     CH03            4                    4           ~101 pA   99 GOhm
+     CH04..CH15    unwired                -           within noise
+
+  A MUX CHANNEL SWITCHES A HI/LO PAIR, so one die costs ONE channel here -
+  unlike probe03's form C card, where a die costs two. That is what makes the
+  four channels line up one-for-one with LaMP's fldSwitch 1,2,3,4.  [MEASURED]
+
+  THE ANALOG BUS IS NOT IN THE PATH. The Keithley 2400 is on the card's own
+  terminals via rear triax. Closing tree switch 90, 91 or 92 - alone, or
+  together with a wired channel - moved the reading by less than the noise.
+  So the AT/BT/AT2 tree switches are irrelevant on this bench and should be
+  left open.                                                      [MEASURED]
+
+  HOW IT WAS MEASURED (2026-08-10, scrap wafer, pins in contact):
+    Keithley 2400 sourcing 10 V into a 1 uA compliance - 10 uW worst case,
+    which is why this was safe to sweep blind. Each channel was closed and
+    read against an ALL-OPEN reference taken IMMEDIATELY BEFORE IT, then the
+    whole sweep repeated in reverse order. CH00-CH03 came out positive in
+    both directions and far outside the +-40 pA noise band; every other
+    channel sat inside it and six of them CHANGED SIGN between passes.
+    That sign flip is the tell - see section 10.
+
+  OPERATING RULE: exactly one of CH00-CH03 closed at a time. Nothing here can
+  be damaged by closing two - a mux channel carries a whole pair, so there is
+  no pin-to-pin short of the kind probe03 can produce - but two closed
+  channels put two dies in PARALLEL, and the reading is then the pair, not
+  the die.
+
+  SETTLING - THE PART LaMP GOT WRONG. This path has a time constant of
+  several seconds (RC: roughly 10 GOhm against ~1 nF of probe card and
+  cabling). A reading taken straight after switching is NOT settled.
+  LaMP's own production database shows the consequence:      [MEASURED]
+
+      switch 1 : mean -1.1449e-09 A     <-- +97 pA less negative
+      switch 2 : mean -1.2330e-09 A
+      switch 3 : mean -1.2439e-09 A
+      switch 4 : mean -1.2474e-09 A          (n = 60 quads each)
+
+  Switch 1 reads systematically high across all 60 quads because it is the
+  first reading after the source steps. That is a per-POSITION artifact, not
+  a per-die one, and it means LaMP's historical switch-1 numbers are ~8% off.
+  Allow >10 s of settling after each switch before reading.
+
+  TYPICAL RESULT on the scrap wafer used: ~-1.0 nA at 10 V, i.e. 10 GOhm,
+  with each die adding 65-99 GOhm on top of a -700 pA instrument offset.
+  For comparison LaMP's own logged readings are -1.00 to -1.34 nA at 10 V,
+  so this reproduces the original system's numbers.                [MEASURED]
+
+
+===============================================================================
+ 9.  WHAT IS NOT ESTABLISHED
+===============================================================================
+
+  - Which physical die of the 2x2 quad is quad position 1, 2, 3 or 4.
+    The slash-separated device ID is now known to be COLUMN-major -
+    TL / BL / TR / BR (confirmed on a real align site, 54-00/44-70/54-01/
+    44-71) - so "die 1..4" here means the 1st..4th entry of that string. What
+    is NOT established is that relay CH00 addresses the FIRST entry rather
+    than some other corner.                                        [INFERRED]
+
+    An attempt to settle it from LaMP's production data FAILED and is worth
+    recording so nobody repeats it: if switch N addressed entry N, a switch
+    pointing at an 'NA' position should read like an open circuit. It does
+    not - NA rows mean -1.166e-09 A against -1.221e-09 A for real dies,
+    statistically indistinguishable. The reason is now obvious from the
+    numbers above: a connected die only shifts the reading ~150 pA on a
+    ~700 pA offset, so "connected" versus "open" is a ~15% change buried in
+    the spread. The isolation test simply is not sensitive enough to
+    self-identify which corner it is looking at.                   [MEASURED]
+
+    To settle it you need an asymmetry: a wafer with a known-different
+    structure at one corner, or a continuity check from a named pad.
+
+  - The strap question in section 8 (probe03 only).
+
+  - Whether LaMP used 2-wire or 4-wire is now ANSWERED, not open: strings in
+    the exe include "syst:rsen off", i.e. 2-wire. It also sent
+    "rout:term rear" and "syst:guar cabl".                          [MEASURED]
+
+
+===============================================================================
+ 10. WAYS TO FOOL YOURSELF  (READ THIS ONE)
+===============================================================================
+
+  (a) A FLOATING INPUT DRIFTS, AND THE DRIFT LOOKS LIKE SWITCHING.
+
+      Measuring the E1326B while changing multiplexer state produced readings
+      that changed every time - apparently proving the analog bus worked.
+      A control run of the SAME state, repeated, gave:
+
+          6516 -> 8337 -> 8203 -> 7161 -> 5834 ohm
+
+      and interleaving two states decayed straight through both, into
+      NEGATIVE resistance. It was the meter's input settling with nothing
+      connected. The first reading after a reset was 9.9e37 - overload, i.e.
+      open, the honest answer.
+
+      The analog bus cable is NOT fitted on probe02.                 [MEASURED]
+
+      ALWAYS run the repeat-the-same-state control before believing that a
+      relay changed anything.
+
+  (b) A CHANNEL WITHOUT ITS TREE SWITCH CONNECTS NOTHING.
+      Section 4. Easy to miss; produces a clean, confident open circuit.
+
+  (c) FORM C RELAYS LATCH.
+      Section 5. The card powers up however it was left. Send *RST before
+      trusting any state.
+
+  (d) ALL THREE CARDS ANSWER *IDN? IDENTICALLY.
+      Only SYST:CTYP? distinguishes them, and the mapping from address to
+      card type differs between benches.
+
+  (e) DO NOT WRITE 0 TO A FAILED MODULE'S CONTROL REGISTER.
+      On probe03, VXI:WRITE to the failed E1326B's control register bit 1
+      restored its ability to drive SYSFAIL. The Resource Manager had
+      disabled that deliberately to hold the failed card off-line. The whole
+      mainframe hung, and being mid-chain on GPIB it took the prober and the
+      3458A down with it. Recovery was a power cycle.                [MEASURED]
+
+  (f) A COLD GPIB OPEN CAN FAULT INSIDE THE VENDOR DLL.
+      The first open of an address needs longer than 500 ms and fails with an
+      access violation rather than a clean error; afterwards 500 ms is fine
+      forever. instruments/gpib_base.py now retries at 2500 ms.       [MEASURED]
+
+  (g) READING BEFORE THE RC HAS SETTLED. Same family of error as (a), and it
+      caught the probe02 mapping twice.
+
+      The measurement path is ~10 GOhm against ~1 nF, so several seconds.
+      A first attempt used 0.35 s per channel and concluded "no channel
+      changes anything" - which proved nothing, because nothing had settled.
+      A later I-V sweep at 0.8 s per point produced a beautifully linear fit
+      giving 4.26 GOhm; that number was also meaningless. The tell was in the
+      data: the MEASURED voltages lagged the COMMANDED ones by a gap that
+      grew to ~6 V. Always read back the source value, not just the current -
+      if V has not arrived, neither has I.                          [MEASURED]
+
+  (h) PEAK-OF-N-NOISY-SAMPLES IS NOT A SIGNAL.
+      An attempt to find connected channels quickly by looking for a
+      charging-current spike at NPLC 0.01 flagged 8 of 16 channels. It was
+      comparing the peak of 12 noisy fast samples against a quiet NPLC 10
+      baseline, so the "ratio" mostly measured fast-mode noise. The traces
+      gave it away - a real charging transient decays monotonically in ONE
+      direction, and these swung bipolar sample to sample.           [MEASURED]
+
+  (i) DRIFT IN A SWEEP LOOKS LIKE A GROUPING.
+      Sweeping channels in order and comparing each to ONE baseline taken at
+      the start attributes the drift since then to whatever channel is being
+      measured, producing a tidy-looking trend. Take the reference
+      IMMEDIATELY BEFORE each channel, and sweep in both directions: a real
+      effect keeps its sign when the order reverses, drift does not. On
+      probe02 six channels changed sign between passes - all of them noise.
+
+
+===============================================================================
+ 11. QUICK REFERENCE CARD
+===============================================================================
+
+  IDENTIFY WHAT YOU ARE TALKING TO
+      SYST:CTYP? 1
+
+  SAFE STATE
+      *RST                              all channels open
+
+  MULTIPLEXER, 2-WIRE, device on channel N (N = 00..07)
+      ROUT:CLOS (@190)                  AT tree switch
+      ROUT:CLOS (@1NN)                  the channel
+
+  MULTIPLEXER, 4-WIRE, device on channels N and N+8
+      ROUT:CLOS (@190)                  AT tree - sense
+      ROUT:CLOS (@191)                  BT tree - source
+      ROUT:CLOS (@1NN)
+      ROUT:CLOS (@1MM)                  MM = NN + 8
+
+  FORM C, one die on probe03
+      ROUT:CLOS (@1HH)                  one HI channel: 00 02 08 10
+      ROUT:CLOS (@1LL)                  one LO channel: 01 03 09 11
+      never two on the same side
+
+  MULTIPLEXER, one die on probe02  (E1345A at 9::15)
+      ROUT:OPEN (@100:103)              drop the other three dies first
+      ROUT:CLOS (@10N)                  N = 0,1,2,3 for die 1,2,3,4
+      ... then WAIT >10 s before reading - see section 8B
+      no tree switch needed; the analog bus is not in the path
+
+  CHECK
+      ROUT:CLOS? (@1nn)                 -> 1 or 0
+      SYST:ERR?                         -> +0,"No error" when clean
+
+  INVENTORY THE MAINFRAME
+      VXI:CONF:NUMB?    /    VXI:CONF:DLAD?      (at GPIB0::9::0)
+      or run references/find_vxi_instruments.py
+
+===============================================================================
+  SOURCES
+    references/HP E1347A Relay Multiplexer.pdf   E1343A/44A/45A/47A multiplexers
+    references/hpe1364 manual.pdf                E1364A form C switch
+    references/Agilent_E1326B_Manual.pdf         E1326B/E1411B multimeter
+    references/HP_3458A_User_Manual.pdf          3458A
+    references/probe03mapping                    probe03 relay-to-coax wiring
+    references/electroglasgpib.csv               LaMP's own instrument table
+    instruments/eg_probers.yaml                  per-bench recorded inventory
+    instruments/hp_switchbox.py                  driver + encoded wiring model
+    PROBER_NOTES.md                              full working notes
+===============================================================================
+
+
+======================================================================
+8C. PROBE CARD -> RELAY, probe02 / LaMP_HP  (2026-08-12)
+======================================================================
+Established with the operator at the back of the machine, plus the
+measurements in 8B. Cards, read from the instruments themselves via
+SYST:CTYP? 1 rather than from the labels:
+
+    GPIB0::9::15   LADDR 120   E1345A   <- the card in use
+    GPIB0::9::10   LADDR  80   (E1364A per instruments.yaml; did not
+                                answer on 2026-08-12, retry)
+    GPIB0::9::14   LADDR 112   E1364A
+
+The operator read the top card's label as E1343A; the card reports
+E1345A. Same family - 16 channels, same numbering, same tree topology,
+same 100 ohm series protection - so nothing about the wiring changes,
+but SYST:CTYP? is the authority and the label is not.
+
+EIGHT wires run from the probe card to the top card, landing on the
+CH0..CH3 HI/LO terminals. Four channels x a HI/LO pair is exactly eight,
+and each LaMP die has exactly two pads, so the count corroborates the
+model rather than merely fitting it.
+
+  channel   HI          LO          die (quad corner)   status
+  CH00      A32 TLU     A33 TLD     TL  = switch 1      die: MEASURED
+  CH01      A34 BLU     A36 BLD     BL  = switch 2      HI/LO: INFERRED
+  CH02      A13 TRU     A12 TRD     TR  = switch 3
+  CH03      A11 BRU     A9  BRD     BR  = switch 4
+
+CHANNEL -> DIE IS MEASURED, twice, on TARGET/41-71/TARGET/41-72: the
+TARGET positions are solid metal and clamp at compliance, the two real
+dies do not, and that pattern matched the original exe's own export 4
+times out of 4 both times.
+
+HI vs LO WITHIN A PAIR IS INFERRED, not measured, and cannot be measured
+from the instrument side. The pad pair is symmetric - at +10 V and -10 V
+a real die read +1.99 nA and -2.22 nA, agreeing within 10% - so swapping
+HI and LO produces the same magnitudes with flipped signs and there is no
+handedness to detect. The inference is from the pin ordering: taking the
+channels in order the pins run A32,A33 | A34,A36 up one side of the card
+and A13,A12 | A11,A9 back down the other, and in every pair the U pad
+comes first. If the harness was built pair-by-pair with the first wire on
+HI then U is HI throughout, which is the only self-consistent reading.
+Settle it with a continuity check from the 2400's rear HI to A32 vs A33.
+
+Nothing depends on it: the verdict is short-vs-not and the pair is
+symmetric. It matters only as a record of which needle carried the signal.
+
+THE KEITHLEY 2400 lands on the card's DIRECT voltage-sense HI/LO
+terminals - the bank common - not the analog bus. That is why the tree
+switch sweep in 8B found 90/91/92 made no difference: the trees gate the
+bank onto the VXI analog bus, which nothing on this bench uses. An
+oddity in 8B, explained.
+
+TWO PINS PER PAD on this card (A-side and B-side, e.g. A32 and B32 both
+on TLU). Only the A-side is landed. Per the operator these are spare
+needles the manufacturer fitted, NOT a Kelvin force/sense pair - an
+earlier reading of the pinout as 4-wire-capable was wrong. This is
+specific to LaMP_HP and must not be assumed of other cards.
+
+THE 3458A is not connected to the probe card on probe02. Four direct
+wires exist for a probe03-style 4-wire hookup but are not landed.
+
+Ways to fool yourself, continued:
+  (j) Reading the card type off the label. Two of the three cards here
+      are visually similar and the one in use reports a different model
+      than its label was read as.
+  (k) Concluding a polarity from a sign difference. This bench reads
+      +2 nA where the original logged -0.5 nA, which looks like reversed
+      HI/LO until the arithmetic is done: neither orientation reproduces
+      the original's sign, because both numbers are the respective
+      bench's own leakage floor rather than the die.

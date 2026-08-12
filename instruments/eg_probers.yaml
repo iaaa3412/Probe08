@@ -1,0 +1,158 @@
+active: probe03
+probers:
+  probe02:
+    label: probe02 — LaMP production bench
+    scanned: '2026-08-07'
+    notes: 'The bench the original LaMP executable ran on, and the only one with a complete measurement
+      chain. Matches LaMP''s own instrument table (references/electroglasgpib.csv) on every address except
+      RELAY2, which that table put at 9::12 and marked not-involved; the live bus has an E1343A at 9::9
+      instead. VXI backplane: LADDR 0, 24, 72, 112, 120 (VXI:CONF:DLAD?), all assigned. The E1326B passes
+      its self test (*TST? -> +0) - unlike probe03''s. The 3458A''s Terminals switch reads REAR (TERM?
+      -> 2).
+
+      '
+    instruments:
+      prober_eg:
+        name: Electroglas 2001X
+        address: GPIB0::29::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries: []
+        write_probe: ?S
+      smu_eg:
+        name: Keithley 2400 (SMU)
+        address: GPIB0::24::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: 'MODEL 2400, serial 0839891. Found configured source VOLT / sense CURR:DC with the output
+          off - the 10 V isolation test LaMP ran.
+
+          '
+      dmm_eg:
+        name: HP 3458A (DMM)
+        address: GPIB0::23::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - ID?
+        notes: REV 8,2. TERM? reads REAR. Needs END ALWAYS before any read.
+      dmm_vxi_eg:
+        name: HP E1326B (VXI DMM)
+        address: GPIB0::9::3::INSTR
+        timeout_ms: 5000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: LADDR 24 (the factory address). Self test passes.
+      relay1_eg:
+        name: HP Switchbox 1 — E1345A
+        address: GPIB0::9::15::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: LADDR 120. LaMP's RELAY1, the one it used for electrical test.
+      relay2_eg:
+        name: HP Switchbox 2 — E1343A
+        address: GPIB0::9::9::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: LADDR 72. 16-channel HV relay multiplexer.
+      relay3_eg:
+        name: HP Switchbox 3 — E1364A
+        address: GPIB0::9::14::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: LADDR 112. 16-channel form C switch.
+      power_supply_eg:
+        name: Agilent 6634B (Power Supply)
+        address: GPIB0::25::INSTR
+        timeout_ms: 3000
+        fitted: false
+        id_queries:
+        - ID?
+        notes: In LaMP's table but not on this bus - VISA cannot open 25.
+  probe03:
+    label: probe03 — relay/3458A development bench
+    scanned: '2026-07-30'
+    notes: 'No Keithley 2400 and no working VXI multimeter, so the measurement half of the LaMP workflow
+      cannot run here. Its E1326B sits on the backplane at LADDR 56 but FAILED its power-on self test:
+      the mainframe reports ''Config error 1, Failed device'' and publishes no GPIB instrument for it,
+      confirmed against the card''s device-type register (FF40 = E1326B). references/probe03mapping records
+      the relay wiring, which lands on the E1364A at 9::10 - four dies of a 2x2 shot, one HI and one LO
+      channel each. The 3458A''s Terminals switch reads FRONT; the wiring is on the REAR.
+
+      '
+    instruments:
+      prober_eg:
+        name: Electroglas 2001X
+        address: GPIB0::29::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries: []
+        write_probe: ?S
+      dmm_eg:
+        name: HP 3458A (DMM)
+        address: GPIB0::23::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - ID?
+      relay2_eg:
+        name: HP Switchbox — E1364A (WIRED)
+        address: GPIB0::9::10::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: 'LADDR 80. The card the probe card is wired to, established by elimination: pulling the
+          bottom E1364-66201 removed LADDR 112 from the backplane, so the top (wired) one is 80.
+
+          '
+      relay3_eg:
+        name: HP Switchbox — E1364A (spare)
+        address: GPIB0::9::14::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: LADDR 112.
+      relay1_eg:
+        name: HP Switchbox — E1343A (spare mux)
+        address: GPIB0::9::15::INSTR
+        timeout_ms: 3000
+        fitted: true
+        id_queries:
+        - '*IDN?'
+        notes: LADDR 120.
+      dmm_vxi_eg:
+        name: HP E1326B (VXI DMM — FAILED)
+        address: GPIB0::9::7::INSTR
+        timeout_ms: 5000
+        fitted: false
+        id_queries:
+        - '*IDN?'
+        notes: 'LADDR 56. Failed self test; the Resource Manager took it off-line, so nothing answers
+          at 9::7 and VISA will not even open the address.
+
+          '
+      smu_eg:
+        name: Keithley 2400 (SMU)
+        address: GPIB0::24::INSTR
+        timeout_ms: 3000
+        fitted: false
+        id_queries:
+        - '*IDN?'
+      power_supply_eg:
+        name: Agilent 6634B (Power Supply)
+        address: GPIB0::25::INSTR
+        timeout_ms: 3000
+        fitted: false
+        id_queries:
+        - ID?
