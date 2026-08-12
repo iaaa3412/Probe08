@@ -361,7 +361,8 @@ def pma_params_to_steps(params: dict) -> list:
     return steps
 
 
-def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None) -> list:
+def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None,
+                        pins=None) -> list:
     """One block of steps per die under the shot.
 
     The prober lands ONCE on a shot; the relay card then connects each of the
@@ -373,6 +374,11 @@ def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None) -> list
     `channels` is the relay channel per die, in die order. Without it the
     blocks are identical and every die is measured through whatever routing
     the previous one left closed, which silently measures die 1 four times.
+
+    `pins` is the (HI, LO) probe-card pin pair per die. It changes nothing
+    electrically - the relay decides what is connected - but it records which
+    needles the reading came from, and it is what the recipe validator checks
+    against the loaded card.
     """
     if dies_per_shot <= 1:
         return steps
@@ -383,6 +389,9 @@ def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None) -> list
         chan = ""
         if channels and i <= len(channels):
             chan = channels[i - 1]
+        hi = lo = ""
+        if pins and i <= len(pins):
+            hi, lo = pins[i - 1]
         # Open everything before connecting this die: the mux would otherwise
         # hold the previous die closed as well, putting two in parallel.
         if chan:
@@ -397,8 +406,11 @@ def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None) -> list
             # Route only the steps that actually touch the wafer. A delay has
             # no connection, and giving one a channel would close a relay at
             # a point the original sequence had it open.
-            if chan and s2.get("type") in ("voltage", "current", "resistance"):
-                s2["conn"] = chan
+            if s2.get("type") in ("voltage", "current", "resistance"):
+                if chan:
+                    s2["conn"] = chan
+                if hi and lo:
+                    s2["hi"], s2["lo"] = hi, lo
             out.append(s2)
     return out
 
@@ -419,6 +431,41 @@ def _pma_dies_per_shot(path: str) -> int:
         return 1
     widths = [len((t.get("device_id") or "").split("/")) for t in touchdowns]
     return max(widths) if widths else 1
+
+
+def die_pins_from_card(wiring: list, dies_per_shot: int) -> list:
+    """[(hi_pin, lo_pin)] per die, read off the probe card's own pin table.
+
+    Derived, never assumed. A pad is matched to a die only when its label
+    starts with that die's quad corner (TL/BL/TR/BR) and ends U or D, which
+    is how the LaMP_HP card is labelled; the U pad becomes HI and the D pad
+    LO. A card labelled any other way simply yields nothing and the steps
+    keep their blank pins, which is what they had before - a wrong guess here
+    would put a needle on the wrong die and still look plausible.
+
+    Where a pad carries more than one pin the first is taken. On LaMP_HP the
+    second is a manufacturer's spare that is not connected to anything, and
+    that is specific to that card - it is not a pattern to rely on elsewhere,
+    which is exactly why this picks one rather than trying to use both.
+    """
+    try:
+        from electroglas_pma import QUAD_ORDER
+    except Exception:
+        QUAD_ORDER = ("TL", "BL", "TR", "BR")
+    pin_of_pad = {}
+    for row in wiring or []:
+        pad = (row.get("pad") or "").strip().upper()
+        pin = (row.get("pin") or "").strip()
+        if pad and pin:
+            pin_of_pad.setdefault(pad, pin)
+    out = []
+    for corner in QUAD_ORDER[:dies_per_shot]:
+        hi = pin_of_pad.get(f"{corner}U")
+        lo = pin_of_pad.get(f"{corner}D")
+        if not (hi and lo):
+            return []
+        out.append((hi, lo))
+    return out
 
 
 def die_channels_for_bench(dies_per_shot: int) -> list:
@@ -1982,8 +2029,13 @@ class RecipePanel(ttk.Frame):
         # a recipe that measured one die and called the shot done.
         dies_per_shot = _pma_dies_per_shot(path)
         if dies_per_shot > 1:
-            steps = repeat_steps_per_die(steps, dies_per_shot,
-                                         die_channels_for_bench(dies_per_shot))
+            try:
+                wiring = self._get_wiring()
+            except Exception:
+                wiring = []
+            steps = repeat_steps_per_die(
+                steps, dies_per_shot, die_channels_for_bench(dies_per_shot),
+                die_pins_from_card(wiring, dies_per_shot))
 
         name = os.path.splitext(os.path.basename(path))[0]
         orig_name, n = name, 2
