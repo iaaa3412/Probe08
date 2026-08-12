@@ -346,9 +346,28 @@ def pma_params_to_steps(params: dict) -> list:
     }))
 
     if limit:
+        # The threshold must sit WELL BELOW the compliance limit, not at it.
+        # A source held in compliance reads a hair under its limit - 999.99 nA
+        # against a 1 uA setting - so "max = limit" can never be exceeded and
+        # a dead short passes by a fraction of a nanoamp. Measured on the
+        # wafer: a TARGET, which is solid metal, passed a Leakage Check
+        # written that way.
+        #
+        # A tenth of the compliance separates the two populations by a wide
+        # margin in both directions. In the LaMP reference data a short sits
+        # at the clamp and an isolated die three orders below it, so anything
+        # between is safe; a tenth is far from both.
+        #
+        # Bounded on BOTH sides, because a large negative current is just as
+        # much a failure and an upper bound alone lets it through.
+        try:
+            edge = abs(float(limit)) / 10.0
+            lo, hi = f"{-edge:.12g}", f"{edge:.12g}"
+        except (TypeError, ValueError):
+            lo, hi = "", limit
         steps.append(_normalize_step({
             **_pma_blank_step(), "type": "passfail", "name": "Leakage Check",
-            "target": meas_name, "max": limit}))
+            "target": meas_name, "min": lo, "max": hi}))
 
     steps.append(_normalize_step({
         **_pma_blank_step(), "type": "open", "name": "Release", "target": apply_name}))
