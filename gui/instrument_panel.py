@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
 import os
+import re
 import threading
 import time
 
@@ -285,6 +286,7 @@ class MainLayout(ttk.Frame):
 
         inst_frame = ttk.LabelFrame(sidebar, text="Instruments")
         inst_frame.pack(fill="x", pady=4)
+        self._inst_frame = inst_frame
         for inst in self._instrument_names:
             lbl = ttk.Label(inst_frame, text=f"⏳ {inst}", foreground="orange")
             lbl.pack(anchor="w", padx=4, pady=2)
@@ -323,6 +325,12 @@ class MainLayout(ttk.Frame):
         selector changes - hence re-applied on every connect sweep rather
         than fixed at build time.
         """
+        missing = [n for n in (names or []) if n not in self.status_labels]
+        if missing:
+            # Not fatal, but the caller asked to show something with no row, so
+            # it will silently never appear. Surfacing it beats hunting for a
+            # bench instrument that is connected yet invisible.
+            print(f"[MainLayout] no status row for: {', '.join(missing)}")
         wanted = set(names or [])
         for inst in self._instrument_names:
             lbl = self.status_labels.get(inst)
@@ -334,6 +342,18 @@ class MainLayout(ttk.Frame):
                 # pack() would re-append the label underneath it.
                 lbl.pack(anchor="w", padx=4, pady=2,
                          before=self._refresh_conn_btn)
+
+    def set_bench_label(self, bench: str = ""):
+        """Name the bench this roster is reporting on, in the frame's title.
+
+        The Electroglas benches carry different instruments, so a roster with
+        no bench on it is genuinely ambiguous - "Keithley 2400" missing could
+        mean broken or simply not fitted here.
+        """
+        frame = getattr(self, "_inst_frame", None)
+        if frame is None:
+            return
+        frame.config(text=f"Instruments — {bench}" if bench else "Instruments")
 
     @staticmethod
     def _enable_tab_drag(nb: ttk.Notebook):
@@ -1418,6 +1438,19 @@ class MainLayout(ttk.Frame):
         self._pad_custom_loaded = False
 
         self.pin_wiring.load_from_ata(folder_path)
+        # Drop the recipe the Run tab adopted from the PREVIOUS folder. Its
+        # touchdowns, anchor list and row/col index all belong to that wafer,
+        # and nothing else clears them - so switching folder left the Run tab
+        # offering the old wafer's dies over the new wafer's map, with the two
+        # silently disagreeing about what a given square is.
+        run = getattr(self, "eg_pma_run", None)
+        reset = getattr(run, "forget_recipe", None)
+        if callable(reset):
+            try:
+                reset()
+            except Exception as exc:
+                self._exec2_log(f"[RUN] Could not reset the Run tab for the new "
+                                f"ATA folder: {type(exc).__name__}: {exc}")
         self._exec2_autoload_default_recipe(folder_path)
 
         all_files = {f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))}
@@ -1891,6 +1924,16 @@ class MainLayout(ttk.Frame):
         if hasattr(self, "_exec2_card_var"):
             self._exec2_card_cb.config(values=[""] + sorted(self.pin_wiring.get_card_names()))
             self._exec2_card_var.set(card_name)
+        # The Wafer Builder's shot map shows THIS card's die-to-pin table, so
+        # it has to follow a card change or it would offer to save one card's
+        # pins onto another.
+        gen = getattr(self, "recipe_gen", None)
+        if gen is not None:
+            try:
+                gen._load_die_pins()
+            except Exception as exc:
+                self.controller.log(f"[SHOT] Shot map did not follow the card "
+                                    f"change: {type(exc).__name__}: {exc}")
         if not hasattr(self, "recipe_panel"):
             return
         self.recipe_panel.load_recipes(card_name, self.pin_wiring.get_recipes())
@@ -1939,7 +1982,9 @@ class MainLayout(ttk.Frame):
                                       if hasattr(self, "pin_wiring") else None),
             get_card_names=lambda: (self.pin_wiring.get_card_names()
                                     if hasattr(self, "pin_wiring") else []),
-            get_ata_folder=lambda: self._ata_folder)
+            get_ata_folder=lambda: self._ata_folder,
+            get_die_pins=lambda: (self.pin_wiring.get_die_pins()
+                                  if hasattr(self, "pin_wiring") else {}))
         self.recipe_panel.grid(row=0, column=0, sticky="nsew")
 
     def _tab_dmm_debug(self, nb):
@@ -2008,15 +2053,15 @@ class MainLayout(ttk.Frame):
         self.accr_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _tab_pma_wafer(self, nb):
-        """Accretech only. On Electroglas this panel lives inside the Wafer Map
-        tab instead - see _tab_recipe_gen, which owns both views."""
+        """Accretech only. On Electroglas this panel lives inside the Wafer
+        Builder tab instead - see _tab_recipe_gen, which owns both views."""
         tab = ttk.Frame(nb)
-        nb.add(tab, text="Wafer Map")
+        nb.add(tab, text="Wafer Builder")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
         self.pma_wafer = PmaWaferPanel(
             tab, controller=self.controller, get_folder=lambda: self._ata_folder,
-            main_layout=None)
+            main_layout=self)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _tab_pma_process(self, nb):
@@ -2028,16 +2073,18 @@ class MainLayout(ttk.Frame):
         self.pma_process.grid(row=0, column=0, sticky="nsew")
 
     def _tab_recipe_gen(self, nb):
-        """The one Wafer Map tab on Electroglas: build it, and view it.
+        """The one Wafer Builder tab on Electroglas: build it, and view it.
 
         There used to be two tabs with this name - the editable grid, and the
         read-only PMA wafer view. They show the same wafer, so they are two
-        pages of one tab now. PmaWaferPanel is still built and still assigned
-        to self.pma_wafer, because it holds workbook_data, which the Run tab
-        derives the map from and the overlay dialog reads.
+        pages of one tab now. "Wafer Map" named both this and the read-only
+        maps on the Run and Results tabs, which is why it is "Builder" here:
+        this is the page that WRITES the wafer. PmaWaferPanel is still built
+        and still assigned to self.pma_wafer, because it holds workbook_data,
+        which the Run tab derives the map from and the overlay dialog reads.
         """
         tab = ttk.Frame(nb)
-        nb.add(tab, text="Wafer Map")
+        nb.add(tab, text="Wafer Builder")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
 
@@ -2058,7 +2105,7 @@ class MainLayout(ttk.Frame):
         view.columnconfigure(0, weight=1)
         self.pma_wafer = PmaWaferPanel(
             view, controller=self.controller, get_folder=lambda: self._ata_folder,
-            main_layout=None)
+            main_layout=self)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
     def _build_exec_panel(self):
@@ -2082,6 +2129,9 @@ class MainLayout(ttk.Frame):
         self._exec2_aborted  = False
         self._exec2_run_mode = None
         self._exec2_die_num  = 0
+        # Set per touchdown by the Electroglas run so exports name the whole
+        # shot; blank means fall back to the map/overlay per-cell die ID.
+        self._exec2_die_id_override = ""
         self._exec2_total_dies = 0
         # Bumped on every start/abort. A run thread captures its own token and
         # re-checks it at every loop step/finish — if a new run (or an abort)
@@ -3456,6 +3506,53 @@ class MainLayout(ttk.Frame):
             return None
         return nplc if nplc != 1 else None
 
+    def _exec2_measure_averaged(self, smu, smu_ch, read_one, avg_count: int,
+                                avg_delay_ms: float, unit: str) -> float:
+        """Average a reading, on the instrument itself where it can do it.
+
+        The 2400 averages internally (sens:aver:coun N with tcon rep) and
+        returns the mean from ONE :READ?. Averaging in software instead meant N
+        separate :READ?s - and with sour:clear:auto on, that is N source cycles
+        per die rather than one. Slower than the original LaMP executable, and
+        audible: each cycle re-applies the bias to a discharged path, which can
+        trip the compliance beeper.
+
+        Falls back to the software loop for anything without set_averages (the
+        DMM path), and if the instrument refuses, so a recipe's Averages value
+        is always honoured one way or the other.
+        """
+        # averaged_reading_ok lets a driver advertise set_averages while saying
+        # its averaged read is not trusted yet (the 3458A). Anything that does
+        # not define it is treated as fine, which is the verified default.
+        trusted = getattr(smu, "averaged_reading_ok", True)
+        can_hw = (avg_count > 1 and smu is not None
+                  and getattr(smu, "inst", None) is not None
+                  and hasattr(smu, "set_averages") and trusted)
+        if can_hw:
+            try:
+                smu.set_averages(smu_ch, avg_count)
+                value = (smu.read_average() if hasattr(smu, "read_average")
+                         else read_one())
+                self._exec2_log(f"[MEASURE]      {avg_count} readings averaged "
+                                f"inside the {type(smu).__name__} -> "
+                                f"{value:.6g} {unit}")
+                return value
+            except Exception as e:
+                self._exec2_log(f"[MEASURE]      instrument averaging failed "
+                                f"({type(e).__name__}: {e}) — averaging in software")
+        elif avg_count > 1 and not trusted:
+            self._exec2_log(f"[MEASURE]      {type(smu).__name__} can average "
+                            "internally but that path is unverified — averaging "
+                            "in software")
+        # Make sure the instrument is NOT also averaging, or the software loop
+        # would average an already-averaged value.
+        if smu is not None and hasattr(smu, "set_averages"):
+            try:
+                smu.set_averages(smu_ch, 1)
+            except Exception:
+                pass
+        return self._exec2_take_average(read_one, avg_count, avg_delay_ms, unit)
+
     def _exec2_take_average(self, read_one, avg_count: int, avg_delay_ms: float, unit: str) -> float:
         readings = []
         for k in range(avg_count):
@@ -3493,9 +3590,13 @@ class MainLayout(ttk.Frame):
 
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         recipe_name = self.recipe_panel.get_active_recipe() if hasattr(self, "recipe_panel") else ""
-        die_label = (self._exec2_die_var.get().replace("Die: ", "")
-                    if self._exec2_die_num else
-                    self._exec2_xy_var.get().replace("\n", " "))
+        # The override first: _exec2_die_num is an Accretech-only counter, so on
+        # Electroglas it is always 0 and this fell through to the XY label -
+        # which was unset, so every exported row read "X: — Y: —".
+        die_label = (getattr(self, "_exec2_die_id_override", "")
+                     or (self._exec2_die_var.get().replace("Die: ", "")
+                         if self._exec2_die_num else
+                         self._exec2_xy_var.get().replace("\n", " ")))
 
         cur_row, cur_col = self._exec2_current_rc or (None, None)
         # Two possible die-ID sources, in priority order:
@@ -3511,10 +3612,19 @@ class MainLayout(ttk.Frame):
                       if cur_row is not None else "")
         overlay_die_id = (self._exec2_overlay_die_ids.get((cur_row, cur_col), "")
                           if cur_row is not None else "")
-        die_id = overlay_die_id or map_die_id
+        #   0. A shot-level override set by the Electroglas run, which knows the
+        #      whole touchdown ("NA/92-74/NA/93-70") rather than the single die
+        #      under one map cell. fldDieID names the SHOT in LaMP's schema -
+        #      fldSwitch 1..4 is what picks the die within it - so exporting one
+        #      corner's ID made the row claim the wrong device.
+        die_id = (getattr(self, "_exec2_die_id_override", "")
+                  or overlay_die_id or map_die_id)
         last_set_voltage_by_ch = {}
 
         overall_ok = True
+        # slot (1..4) -> verdict, filled by any pass/fail step named "(Die N)".
+        # Read by the Electroglas run so each die's own square is coloured.
+        self._exec2_slot_verdicts = {}
         last_reading = None
         readings_by_name = {}
 
@@ -3586,6 +3696,12 @@ class MainLayout(ttk.Frame):
                     verdict = ((not mn or value >= float(mn)) and
                               (not mx or value <= float(mx)))
                     overall_ok = overall_ok and verdict
+                    # Keep each die's verdict as well as the combined one. A
+                    # shot's four dies pass or fail independently, so folding
+                    # them into a single bool threw away three results.
+                    slot_m = self._DIE_SLOT_RE.search(name or "")
+                    if slot_m:
+                        self._exec2_slot_verdicts[int(slot_m.group(1))] = verdict
                     spec = f"[{mn or '-inf'}, {mx or '+inf'}]"
                     self._exec2_log(f"[MEASURE] {i}. {name}: "
                                     f"{'PASS' if verdict else 'FAIL'}  "
@@ -3621,7 +3737,9 @@ class MainLayout(ttk.Frame):
                         read_one = ((lambda: abs(random.gauss(50, 15)))
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_resistance()))
-                    r = self._exec2_take_average(read_one, avg_count, avg_delay, "Ω")
+                    r = self._exec2_measure_averaged(
+                        smu if instrument == "SMU" else dmm, smu_ch,
+                        read_one, avg_count, avg_delay, "Ω")
                     self._exec2_log(f"[MEASURE]    R = {r:.4g} Ω  (via {instrument}){avg_txt}")
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{r:.6g}",
@@ -3643,7 +3761,9 @@ class MainLayout(ttk.Frame):
                         read_one = ((lambda: random.gauss(3.3, 0.1))
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_voltage_dc()))
-                    v = self._exec2_take_average(read_one, avg_count, avg_delay, "V")
+                    v = self._exec2_measure_averaged(
+                        smu if instrument == "SMU" else dmm, smu_ch,
+                        read_one, avg_count, avg_delay, "V")
                     self._exec2_log(f"[MEASURE]    V = {v:.4g} V  (via {instrument}){avg_txt}")
                     self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
                                        step=name, type=t, mode=mode, value=f"{v:.6g}",
@@ -3710,6 +3830,27 @@ class MainLayout(ttk.Frame):
                             nplc = self._exec2_nplc_spec(s)
                             if nplc is not None:
                                 smu.set_nplc(smu_ch, nplc)
+                            # LaMP's MeterRange, carried from the .PMA. Pinned
+                            # rather than autoranged, so a different PMA
+                            # reconfigures the meter on LOAD ALL instead of
+                            # inheriting whatever the last recipe left set.
+                            mrange = (s.get("mrange") or "").strip()
+                            if mrange and hasattr(smu, "set_current_range"):
+                                try:
+                                    smu.set_current_range(smu_ch, float(mrange))
+                                except (TypeError, ValueError) as e:
+                                    self._exec2_log(f"[MEASURE]    ignoring bad "
+                                                    f"meter range {mrange!r}: {e}")
+                            # sour:clear:auto on drops the output after every
+                            # :READ?, so each of the averaged readings
+                            # re-applies the bias to a discharged path. With no
+                            # source delay the integration starts on the
+                            # charging transient - a good die read ~90 nA where
+                            # the original LaMP data shows sub-nanoamp. This is
+                            # LaMP's MeterDelay, carried on the step as
+                            # avg_delay (ms).
+                            if avg_delay and hasattr(smu, "set_source_delay"):
+                                smu.set_source_delay(avg_delay / 1000.0)
                             read_one = lambda: smu.measure_current(smu_ch)
                         else:
                             read_one = lambda: abs(random.gauss(4e-7, 2e-7))
@@ -3720,22 +3861,25 @@ class MainLayout(ttk.Frame):
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_current_dc()))
                         bias_txt = "  (via DMM)"
-                    i_a = self._exec2_take_average(read_one, avg_count, avg_delay, "A")
+                    i_a = self._exec2_measure_averaged(
+                        smu if instrument == "SMU" else dmm, smu_ch,
+                        read_one, avg_count, avg_delay, "A")
                     if instrument == "SMU" and not sim and smu and smu.inst:
                         try:
                             actual_voltage = smu.measure_voltage(smu_ch)
                         except Exception:
                             actual_voltage = None
                     self._exec2_log(f"[MEASURE]    I = {i_a:.4g} A{bias_txt}{avg_txt}")
-                    die_slot_m = _die_slot_re.search(name)
                     if actual_voltage is None:
                         actual_voltage = set_voltage
+                    slot_die, slot_row, slot_col, slot_sw = self._exec2_slot_identity(
+                        name, die_label, (cur_row, cur_col))
                     self.record_result(
-                        timestamp=ts, recipe=recipe_name, die=die_label,
+                        timestamp=ts, recipe=recipe_name, die=slot_die,
                         step=name, type=t, mode=mode, value=f"{i_a:.6g}", unit="A",
                         die_id=die_id or None,
-                        switch=int(die_slot_m.group(1)) if die_slot_m else None,
-                        die_row=cur_row, die_col=cur_col,
+                        switch=slot_sw,
+                        die_row=slot_row, die_col=slot_col,
                         set_voltage=set_voltage, voltage=actual_voltage,
                         connection=conn_str, instrument=instrument)
                     last_reading = (name, i_a, "A")
@@ -3759,6 +3903,31 @@ class MainLayout(ttk.Frame):
                         f"{'PASS' if overall_ok else 'FAIL'}")
         return overall_ok
 
+
+    _DIE_SLOT_RE = re.compile(r"\(Die (\d+)\)\s*$")
+
+    def _exec2_slot_identity(self, step_name, fallback_die, fallback_rc):
+        """(die label, row, col, switch) for a step named "... (Die N)".
+
+        The Electroglas run publishes the shot's four die IDs and map cells in
+        QUAD_ORDER before each touchdown, so a per-die step can be filed
+        against the die it actually measured rather than against the shot's
+        anchor cell - which is why every reading used to land on the top-left
+        square and no row named a device.
+
+        Falls back to the shot-level values when the step is not per-die, or
+        when nothing has been published, so Accretech is unaffected.
+        """
+        m = self._DIE_SLOT_RE.search(step_name or "")
+        if not m:
+            return fallback_die, fallback_rc[0], fallback_rc[1], None
+        switch = int(m.group(1))
+        slot = switch - 1
+        ids = getattr(self, "_exec2_die_ids_by_slot", None) or []
+        rcs = getattr(self, "_exec2_die_rc_by_slot", None) or []
+        die = ids[slot] if 0 <= slot < len(ids) and ids[slot] else fallback_die
+        rc = rcs[slot] if 0 <= slot < len(rcs) and rcs[slot] else fallback_rc
+        return die, rc[0], rc[1], switch
 
     def record_result(self, timestamp, recipe, die, step, type, mode, value, unit,
                       die_id=None, switch=None, set_voltage=None, voltage=None,
@@ -4145,7 +4314,10 @@ class MainLayout(ttk.Frame):
         die_id = (self._exec2_overlay_die_ids.get(rc, "")
                  or wm.die_ids.get(rc, ""))
         if not die_id:
-            die_id = next((r.get("die_id") for r in matches if r.get("die_id")), "")
+            # The recorded per-die name, NOT die_id - die_id is the whole shot
+            # ("B26/B27/NA/B29/B30"), so falling back to it labelled an empty
+            # corner with every device in the touchdown.
+            die_id = next((r.get("die") for r in matches if r.get("die")), "")
         die_desc = f"{die_id} (R{row}C{col})" if die_id else f"R{row}C{col}"
         self._results_die_var.set(
             f"Die {die_desc} — {len(matches)} reading(s)" if matches

@@ -26,7 +26,12 @@ _WAVE_SHAPES   = ("SIN", "SQU", "RAMP", "PULS", "DC")
 # parse - _parse_step matches on key name, not position.
 _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", "lo",
                   "level", "limit", "shape", "freq", "conn", "min", "max",
-                  "avg_count", "avg_delay", "nplc", "his", "los")
+                  "avg_count", "avg_delay", "nplc", "his", "los",
+                  # LaMP's MeterRange - the fixed measurement range. Appended
+                  # rather than inserted so existing card CSVs, which are read
+                  # by column NAME, keep loading unchanged; a file without the
+                  # column just yields "" and the meter autoranges as before.
+                  "mrange")
 
 # The one step type that takes four pins: source HI/LO carry the test current,
 # sense HI/LO read the voltage right at the pad, so the probe/lead resistance
@@ -269,8 +274,10 @@ def write_recipe_file(path: str, recipe: dict):
 
 
 _PMA_MAPPED_KEYS   = {"Voltage", "MeterCurrentLimit", "Averages", "MeterDelay",
-                      "Delay1", "Delay2", "Delay3", "NPLC"}
-_PMA_UNMAPPED_KEYS = {"MeterRange", "Iterations"}
+                      "Delay1", "Delay2", "Delay3", "NPLC", "MeterRange"}
+# Iterations is the only one left with nowhere to go: it repeats the whole
+# measurement block, which is a run-level concern rather than a step field.
+_PMA_UNMAPPED_KEYS = {"Iterations"}
 _PMA_USEFUL_KEYS   = _PMA_MAPPED_KEYS | _PMA_UNMAPPED_KEYS
 
 
@@ -343,6 +350,10 @@ def pma_params_to_steps(params: dict) -> list:
         **_pma_blank_step(), "type": "current", "mode": "measure",
         "instrument": "SMU", "chan": "A", "name": meas_name,
         "avg_count": avg_count, "avg_delay": avg_delay_ms, "nplc": nplc,
+        # MeterRange used to be dropped, so the SMU autoranged where LaMP had
+        # pinned it. Carrying it means a different .PMA reconfigures the meter
+        # on LOAD ALL rather than silently inheriting the last recipe's range.
+        "mrange": (params.get("MeterRange") or "").strip(),
     }))
 
     if limit:
@@ -452,7 +463,9 @@ def _pma_dies_per_shot(path: str) -> int:
     return max(widths) if widths else 1
 
 
-def die_pins_from_card(wiring: list, dies_per_shot: int) -> list:
+def die_pins_from_card(wiring: list, dies_per_shot: int,
+                       rows: int = 0, cols: int = 0,
+                       die_pins: dict = None) -> list:
     """[(hi_pin, lo_pin)] per die, read off the probe card's own pin table.
 
     Derived, never assumed. A pad is matched to a die only when its label
@@ -467,10 +480,27 @@ def die_pins_from_card(wiring: list, dies_per_shot: int) -> list:
     that is specific to that card - it is not a pattern to rely on elsewhere,
     which is exactly why this picks one rather than trying to use both.
     """
+    # An explicit slot -> (hi, lo) PIN table on the card wins outright. Pins
+    # are the durable identifier: they are the physical contacts, they are what
+    # lands on the relay, and they still mean something on the next probe card.
+    # Pad names like "BRU" are one project's drawing convention, so deriving
+    # dies from them only works by luck.
+    if die_pins:
+        out = []
+        for slot in range(1, dies_per_shot + 1):
+            pair = die_pins.get(slot) or die_pins.get(str(slot))
+            if not pair or not (pair[0] and pair[1]):
+                out = []
+                break
+            out.append((str(pair[0]), str(pair[1])))
+        if out:
+            return out
+
     try:
-        from electroglas_pma import QUAD_ORDER
+        from electroglas_pma import shot_geometry, slot_names
+        order = slot_names(*shot_geometry(dies_per_shot, rows, cols))
     except Exception:
-        QUAD_ORDER = ("TL", "BL", "TR", "BR")
+        order = ("TL", "BL", "TR", "BR")
     pin_of_pad = {}
     for row in wiring or []:
         pad = (row.get("pad") or "").strip().upper()
@@ -478,7 +508,7 @@ def die_pins_from_card(wiring: list, dies_per_shot: int) -> list:
         if pad and pin:
             pin_of_pad.setdefault(pad, pin)
     out = []
-    for corner in QUAD_ORDER[:dies_per_shot]:
+    for corner in order[:dies_per_shot]:
         hi = pin_of_pad.get(f"{corner}U")
         lo = pin_of_pad.get(f"{corner}D")
         if not (hi and lo):
@@ -495,7 +525,10 @@ def die_channels_for_bench(dies_per_shot: int) -> list:
     probe03's form-C card needs two channels for the same job.
     """
     try:
-        import eg_profiles
+        # 'from instruments import', not a bare import - eg_profiles lives in
+        # the instruments package, so the bare form raised ModuleNotFoundError
+        # into the except below and every recipe came out with no channels.
+        from instruments import eg_profiles
         from instruments.hp_switchbox import bench_wiring
         die_sets = bench_wiring(eg_profiles.active_name()).get("die_sets") or {}
     except Exception:
@@ -588,11 +621,14 @@ def rows_to_recipes(rows: list) -> dict:
 class RecipePanel(ttk.Frame):
     def __init__(self, parent, controller, get_pins=None, get_wiring=None,
                  get_active_card=None, save_recipes=None, system: str = "accretech",
-                 switch_card=None, get_card_names=None, get_ata_folder=None):
+                 switch_card=None, get_card_names=None, get_ata_folder=None,
+                 get_die_pins=None):
         super().__init__(parent)
         self.controller = controller
         self._get_pins = get_pins or (lambda: [])
         self._get_wiring = get_wiring or (lambda: [])
+        # slot -> (hi pin, lo pin) for the active card, if it declares one.
+        self._get_die_pins = get_die_pins or (lambda: {})
         self._get_active_card = get_active_card or (lambda: "")
         self._save_recipes = save_recipes or (lambda _card, _recipes: False)
         self._switch_card_cb = switch_card or (lambda _name: None)
@@ -2052,15 +2088,61 @@ class RecipePanel(ttk.Frame):
                 wiring = self._get_wiring()
             except Exception:
                 wiring = []
-            steps = repeat_steps_per_die(
-                steps, dies_per_shot, die_channels_for_bench(dies_per_shot),
-                die_pins_from_card(wiring, dies_per_shot))
+            get_dp = getattr(self, "_get_die_pins", None)
+            card_die_pins = {}
+            if callable(get_dp):
+                try:
+                    card_die_pins = get_dp() or {}
+                except Exception:
+                    card_die_pins = {}
+            channels = die_channels_for_bench(dies_per_shot)
+            pins = die_pins_from_card(wiring, dies_per_shot,
+                                      die_pins=card_die_pins)
+            # Say so when the bench cannot reach every die. Without a channel
+            # per die the steps all measure whichever path is already closed,
+            # so N dies come back as N copies of one reading - which looks
+            # like a working multi-die recipe right up until the data is used.
+            if dies_per_shot > 1 and not channels:
+                self.controller.log(
+                    f"[RECIPE] ⚠ This shot has {dies_per_shot} dies but the "
+                    f"active bench has no relay channel mapping for that many "
+                    f"— the steps carry no channel, so every die would measure "
+                    f"the same path. Wire the extra channels and add them to "
+                    f"BENCH_WIRING before trusting a run.")
+            if dies_per_shot > 1 and not pins:
+                self.controller.log(
+                    f"[RECIPE] ⚠ No probe-card pin mapping for {dies_per_shot} "
+                    f"dies — add a DIEPIN table to the card so each die names "
+                    f"its own HI/LO pins.")
+            steps = repeat_steps_per_die(steps, dies_per_shot, channels, pins)
 
         name = os.path.splitext(os.path.basename(path))[0]
-        orig_name, n = name, 2
-        while name in self._recipes:
-            name = f"{orig_name} ({n})"
-            n += 1
+        # Silently uniquifying was wrong for the main caller. LOAD ALL exists to
+        # regenerate a recipe from its .PMA, so a name clash is the normal case,
+        # not an accident - and minting "name (2)" meant every regeneration went
+        # somewhere the user was not looking. Seven stale copies of the gauge
+        # recipe accumulated that way while the loaded one kept its old steps.
+        if name in self._recipes:
+            choice = messagebox.askyesnocancel(
+                "Recipe Already Exists",
+                f"A recipe named '{name}' is already saved under this probe "
+                f"card.\n\n"
+                f"Yes — replace it with the one built from this .PMA\n"
+                f"No — keep both, saving this as '{name} (2)'\n"
+                f"Cancel — leave everything as it is\n\n"
+                f"Replacing overwrites its measurement steps and touchdown "
+                f"list.")
+            if choice is None:
+                self.controller.log(
+                    f"[RECIPE] Import cancelled — '{name}' left unchanged.")
+                return False
+            if choice is False:
+                orig_name, n = name, 2
+                while name in self._recipes:
+                    name = f"{orig_name} ({n})"
+                    n += 1
+            else:
+                self.controller.log(f"[RECIPE] Replacing existing recipe '{name}'.")
         self._store_form()
         self._recipes[name] = {"steps": steps, "sites": []}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name

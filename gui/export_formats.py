@@ -96,6 +96,13 @@ def sql_num(value, default: float = 0.0) -> str:
         f = default
     if f == int(f) and abs(f) < 1e15:
         return str(int(f))
+    # Below about a nanoamp, fixed-point at 15 decimals starts discarding
+    # significant figures, and anything under 1e-15 collapsed to a flat "0.0" -
+    # silently turning a real leakage reading into zero. Leakage currents live
+    # exactly here. The original LaMP export switched to scientific at the same
+    # sort of magnitude (e.g. -3.265189E-10), so this matches it.
+    if f != 0 and abs(f) < 1e-9:
+        return f"{f:.6E}"
     s = f"{f:.15f}".rstrip("0")
     return s if not s.endswith(".") else s + "0"
 

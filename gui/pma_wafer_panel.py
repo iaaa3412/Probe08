@@ -6,10 +6,11 @@ import math
 import os
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Dict, List, Optional
 
 import electroglas_pma as egpma
+from electroglas_pma import shot_geometry, slot_names
 
 try:
     import xlrd
@@ -253,21 +254,38 @@ ATA_XLS_FILENAME = "ata_wafer_map_pma.csv"
 ATA_PMA_TOUCHDOWN_FILENAME = "ata_wafer_map_pma_touchdowns.csv"
 ATA_CSV_MAP_FILENAME = "ata_wafer_map_csv_import.csv"
 _ATA_SHOT_META_FIELDS = ("recipe_name", "die_size_x", "die_size_y",
-                         "x_move_first", "y_move_first", "align_die")
+                         "x_move_first", "y_move_first", "align_die",
+                         # How the dies sit inside one touchdown. Persisted so
+                         # a 1x5 strip does not silently reload as the 2x2 quad
+                         # that shot_geometry() assumes for four dies.
+                         "shot_rows", "shot_cols")
 
 
 def save_shots_to_ata(data: Dict[str, Any], folder: str, filename: str) -> str:
     path = os.path.join(folder, filename)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
+        # As many die columns as the widest shot needs, not a hardcoded four.
+        # A 1x5 strip lost its fifth die on every save, and because this file
+        # IS the wafer once the source is closed, the die simply ceased to
+        # exist. Four stays the minimum so quad files keep their usual shape.
+        n_die_cols = max(4, max((len(s.get("dies") or [])
+                                 for s in data.get("shots", [])), default=4))
+        die_cols = [f"die{i}" for i in range(1, n_die_cols + 1)]
         w.writerow([*_ATA_SHOT_META_FIELDS, "row", "col", "x_um", "y_um",
-                   "die1", "die2", "die3", "die4"])
+                   "included", *die_cols])
         for s in data.get("shots", []):
-            if not s["included"]:
+            # Every shot naming real dies, not only the probed ones, and the
+            # 'included' flag alongside. Once the workbook is closed THIS FILE
+            # IS THE WAFER: filtering here persisted a 634-shot wafer as the
+            # 15 shots the gauge probes, so after a restart the map reloaded
+            # as touchdowns only and took the Run tab's grid with it.
+            if not (s.get("included") or real_die_ids(s)):
                 continue
-            dies = (s["dies"] + ["", "", "", ""])[:4]
+            dies = (list(s["dies"]) + [""] * n_die_cols)[:n_die_cols]
             w.writerow([data.get(k, "") for k in _ATA_SHOT_META_FIELDS]
-                      + [s["row"], s["col"], s["x_um"], s["y_um"], *dies])
+                      + [s["row"], s["col"], s["x_um"], s["y_um"],
+                         1 if s.get("included") else 0, *dies])
     return path
 
 
@@ -287,24 +305,50 @@ def load_shots_from_ata(folder: str, filename: str) -> Optional[Dict[str, Any]]:
                 x_um, y_um = float(row["x_um"]), float(row["y_um"])
             except (KeyError, ValueError):
                 continue
-            dies = [row.get(f"die{i}", "") for i in range(1, 5)]
+            # Read every die column the file actually has, in order - a 1x5
+            # wafer writes die1..die5 and stopping at four would drop the last
+            # die of every shot on the way back in.
+            dies = []
+            i = 1
+            while f"die{i}" in row:
+                dies.append(row.get(f"die{i}") or "")
+                i += 1
             dies = [d for d in dies if d != ""]
+            # Files written before 'included' was persisted contain probed
+            # shots only, so a missing column has to mean True or they would
+            # all reload as unprobed.
+            raw_inc = row.get("included")
+            included = (True if raw_inc in (None, "") else
+                        str(raw_inc).strip().lower() not in ("0", "false", "no"))
             shots.append({"row": r, "col": c, "x_um": x_um, "y_um": y_um,
-                          "included": True, "raw_text": "/".join(dies), "dies": dies})
+                          "included": included,
+                          "raw_text": "/".join(dies), "dies": dies})
     if not shots:
         return None
     real_count = sum(len(real_die_ids(s)) for s in shots)
     na_count = sum(len(s["dies"]) - len(real_die_ids(s)) for s in shots)
     x_headers = sorted({s["x_um"] for s in shots})
     y_headers = sorted({s["y_um"] for s in shots})
+    # Rebase row/col onto those headers. The stored numbers are absolute
+    # positions in whatever grid the wafer was authored in, so a wafer whose
+    # first CSV line is empty starts at row 1 while its columns start at 0 -
+    # two different bases in one record. The headers are built from occupied
+    # coordinates only, so indexing them by the raw row walked off the end.
+    # save_csv_map_to_ata sizes its grid from these same header counts and
+    # skips anything outside, which is how the last row of a wafer could go
+    # missing on export without a word.
+    x_at = {v: i for i, v in enumerate(x_headers)}
+    y_at = {v: i for i, v in enumerate(y_headers)}
+    for s in shots:
+        s["row"], s["col"] = y_at[s["y_um"]], x_at[s["x_um"]]
     return {
         "path": path,
         **meta,
         "x_headers": x_headers, "y_headers": y_headers,
-        "rows": len({s["row"] for s in shots}), "cols": len({s["col"] for s in shots}),
+        "rows": len(y_headers), "cols": len(x_headers),
         "shots": shots,
         "shot_count": len(shots),
-        "included_shot_count": len(shots),
+        "included_shot_count": sum(1 for s in shots if s["included"]),
         "excluded_shot_count": 0,
         "real_die_count": real_count,
         "na_die_count": na_count,
@@ -318,7 +362,10 @@ def save_csv_map_to_ata(data: Dict[str, Any], folder: str, filename: str) -> str
     for s in data.get("shots", []):
         r, c = s["row"], s["col"]
         if 0 <= r < rows and 0 <= c < cols and s.get("dies"):
-            grid[r][c] = s["dies"][0]
+            # The whole shot, slash-separated, the same way the importer reads
+            # it. Writing only dies[0] turned a 1x5 strip back into a
+            # single-die wafer on the next round-trip.
+            grid[r][c] = "/".join(s["dies"])
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerows(grid)
@@ -394,19 +441,41 @@ def centroid_offset(pma_grid: List[Dict[str, Any]], accretech_rc) -> tuple:
 
 
 def parse_plain_csv_wafer_map(path: str) -> Dict[str, Any]:
+    """A wafer laid out as a grid of cells, one cell per TOUCHDOWN.
+
+    A cell holding one ID is a single-die shot. A cell holding several,
+    slash-separated ("A1/A2/A3/A4/A5"), is a multi-die shot listed in the same
+    order a .PMA lists them - so a plain CSV can describe a 1x5 strip or a 2x2
+    quad without a legacy workbook. Blank cells are off-wafer.
+
+    Die IDs are free text: letters, digits, dashes. Nothing here parses them.
+    """
     with open(path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.reader(f))
     shots = []
+    widest = 1
     for r, row_cells in enumerate(rows):
         for c, cell in enumerate(row_cells):
-            die_id = (cell or "").strip()
-            if not die_id:
+            text = (cell or "").strip()
+            if not text:
                 continue
-            shots.append({"row": r, "col": c, "dies": [die_id]})
-    return {"path": path, "shots": shots, "die_count": len(shots)}
+            dies = [d.strip() for d in text.split("/") if d.strip()]
+            if not dies:
+                continue
+            widest = max(widest, len(dies))
+            shots.append({"row": r, "col": c, "dies": dies,
+                          "raw_text": "/".join(dies)})
+    return {"path": path, "shots": shots,
+            "die_count": sum(len(s["dies"]) for s in shots),
+            "dies_per_shot": widest}
 
 
 _COLOR_EXCLUDED = "#374151"
+# On the wafer but not probed by this recipe. Needs its own colour: a sampled
+# recipe like the electrical gauge probes 15 of 634 shots, and painting the
+# other 619 the same flat "excluded" tone left a map that read as touchdowns
+# only even though the whole wafer was drawn.
+_COLOR_UNPROBED = "#9aa5b1"
 _COLOR_FULL     = "#16a34a"
 _COLOR_PARTIAL  = "#d97706"
 _COLOR_EMPTY    = "#dc2626"
@@ -420,6 +489,9 @@ _WAFER_EDGE     = "#333333"
 _EDGE_EXCL      = "#aaaaaa"
 _CROSSHAIR      = "#cccccc"
 _DIE_EDGE       = "#4a7090"
+# The touchdown outline drawn over the dies it covers - darker than the die
+# edge so the shot boundary reads through a block of same-coloured dies.
+_SHOT_EDGE      = "#0f172a"
 
 
 class PmaWaferPanel(ttk.Frame):
@@ -434,12 +506,19 @@ class PmaWaferPanel(ttk.Frame):
         self._csv_shot_data: Optional[Dict[str, Any]] = None
         self._loaded_ata_folder: Optional[str] = None
         self._show_labels_var = tk.BooleanVar(value=True)
+        # Dies per touchdown and how they sit inside it. 0 means "work it out"
+        # - shot_geometry then treats four dies as the historical 2x2 quad and
+        # anything else as a single row.
+        self._shot_rows_var = tk.StringVar(value="0")
+        self._shot_cols_var = tk.StringVar(value="0")
         self._source_var = tk.StringVar(value="pma")
         self.path_var = tk.StringVar(value="No workbook loaded.")
         self.summary_var = tk.StringVar(value="")
-        self.selected_var = tk.StringVar(value="Click a shot on the map to see its dies.")
+        self.selected_var = tk.StringVar(value="Click a die on the map to see it.")
         self._selected_patch = None
+        self._selected_die_patch = None
         self._shots_by_rc: Dict[tuple, Dict[str, Any]] = {}
+        self._die_boxes_drawn: List[Dict[str, Any]] = []
         self._label_artists: List[Any] = []
         self._label_hint = None
         self._view_debounce_id = None
@@ -473,6 +552,18 @@ class PmaWaferPanel(ttk.Frame):
         ttk.Button(ctl, text="📥  Load CSV Wafer Map…",
                   command=self._load_csv_dialog).pack(side="left", padx=2)
         ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(ctl, text="Shot layout:").pack(side="left", padx=(0, 2))
+        for var, width in ((self._shot_rows_var, 3), (self._shot_cols_var, 3)):
+            ttk.Entry(ctl, textvariable=var, width=width).pack(side="left")
+            if var is self._shot_rows_var:
+                ttk.Label(ctl, text="x").pack(side="left", padx=1)
+        ttk.Label(ctl, text="dies (0 = auto)").pack(side="left", padx=(3, 0))
+        ttk.Button(ctl, text="Apply",
+                   command=self._apply_shot_layout).pack(side="left", padx=(4, 0))
+        ttk.Button(ctl, text="Re-shot…",
+                   command=self._reshot).pack(side="left", padx=(2, 0))
+
+        ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Label(ctl, text="View:").pack(side="left", padx=(0, 2))
         ttk.Radiobutton(ctl, text="PMA Touchdowns", variable=self._source_var, value="pma",
                         command=self._on_source_change).pack(side="left")
@@ -480,12 +571,13 @@ class PmaWaferPanel(ttk.Frame):
                         command=self._on_source_change).pack(side="left")
         ttk.Radiobutton(ctl, text="CSV Wafer Map", variable=self._source_var, value="csv",
                         command=self._on_source_change).pack(side="left")
-        if self._main_layout is not None:
-            ttk.Separator(ctl, orient="vertical").pack(side="left", fill="y", padx=8)
-            ttk.Button(ctl, text="📥  Import Legacy (.pma)…",
-                      command=self._import_recipe_pma).pack(side="left", padx=(0, 2))
-            ttk.Button(ctl, text="📥  Import Legacy Workbook (.xls)…",
-                      command=self._import_recipe_workbook).pack(side="left", padx=2)
+        # The Import Legacy buttons used to live here, hidden behind
+        # "main_layout is not None" - and both call sites passed None, so they
+        # were never drawn. Using the layout reference as a visibility flag
+        # meant the panel could not reach the rest of the GUI either, which is
+        # why the Build / Edit page never followed this one. The buttons are
+        # gone (the same pair was removed from the Recipe tab) and the layout
+        # reference is now a real reference.
         ttk.Label(ctl, textvariable=self.path_var, foreground="gray").pack(
             side="left", padx=10)
         ttk.Checkbutton(ctl, text="🏷 Die Labels", variable=self._show_labels_var,
@@ -538,11 +630,11 @@ class PmaWaferPanel(ttk.Frame):
         legend = ttk.Frame(right)
         legend.grid(row=1, column=0, sticky="w", pady=(8, 4))
         self._legend_labels: Dict[str, ttk.Label] = {}
+        # One square is one die now, so the legend describes dies.
         for key, color, text in [
-            ("full", _COLOR_FULL, "full"),
-            ("partial", _COLOR_PARTIAL, "partial"),
-            ("empty", _COLOR_EMPTY, "none"),
-            ("excluded", _COLOR_EXCLUDED, "excluded"),
+            ("full", _COLOR_FULL, "probed"),
+            ("unprobed", _COLOR_UNPROBED, "on wafer, not probed"),
+            ("empty", _COLOR_EMPTY, "NA (no die)"),
         ]:
             sw = tk.Canvas(legend, width=12, height=12, highlightthickness=0)
             sw.create_rectangle(0, 0, 12, 12, fill=color, outline="")
@@ -551,7 +643,7 @@ class PmaWaferPanel(ttk.Frame):
             lbl.pack(side="left", padx=(0, 10))
             self._legend_labels[key] = lbl
 
-        ttk.Label(right, text="Selected shot:", font=("Segoe UI", 9, "bold")).grid(
+        ttk.Label(right, text="Selected die:", font=("Segoe UI", 9, "bold")).grid(
             row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Label(right, textvariable=self.selected_var, justify="left",
                   wraplength=280).grid(row=3, column=0, sticky="nw", pady=(2, 8))
@@ -621,19 +713,183 @@ class PmaWaferPanel(ttk.Frame):
         max_col = max((s["col"] for s in raw["shots"]), default=-1)
         shots = [{"row": s["row"], "col": s["col"],
                  "x_um": float(s["col"]), "y_um": float(s["row"]),
-                 "dies": s["dies"], "included": True} for s in raw["shots"]]
+                 "dies": s["dies"], "included": True,
+                 "raw_text": s.get("raw_text") or "/".join(s["dies"])}
+                 for s in raw["shots"]]
         name = os.path.splitext(os.path.basename(raw["path"]))[0]
+        # An imported CSV carries no shot layout of its own, so honour whatever
+        # the tab is set to and fall back to shot_geometry's default.
+        n_dies = int(raw.get("dies_per_shot") or 1)
+        s_rows, s_cols = shot_geometry(n_dies, self._shot_rows_setting(),
+                                       self._shot_cols_setting())
         return {
             "path": raw["path"], "recipe_name": name,
             "die_size_x": 1.0, "die_size_y": 1.0,
             "x_move_first": "", "y_move_first": "",
+            "shot_rows": s_rows, "shot_cols": s_cols,
             "x_headers": [float(c) for c in range(max_col + 1)],
             "y_headers": [float(r) for r in range(max_row + 1)],
             "rows": max_row + 1, "cols": max_col + 1,
             "shots": shots,
             "included_shot_count": len(shots), "excluded_shot_count": 0,
-            "real_die_count": len(shots), "na_die_count": 0,
+            "real_die_count": sum(len(real_die_ids(s)) for s in shots),
+            "na_die_count": sum(len(s["dies"]) - len(real_die_ids(s))
+                                for s in shots),
         }
+
+    def shot_layout(self) -> tuple:
+        """(rows, cols) of the die block a touchdown covers, for the loaded map."""
+        data = self.workbook_data or {}
+        widest = max((len(s.get("dies") or []) for s in data.get("shots", [])),
+                     default=1)
+        return shot_geometry(widest,
+                             int(data.get("shot_rows") or self._shot_rows_setting()),
+                             int(data.get("shot_cols") or self._shot_cols_setting()))
+
+    def _reshot(self):
+        """Regroup the SAME dies into touchdowns of a different size.
+
+        How many dies a touchdown covers is set by the probe card, not by
+        preference - so moving a 1x5 wafer onto a 4-up card is not a relabel,
+        it is a re-grouping. The dies and their IDs are untouched; what changes
+        is which of them come down together, and therefore how many touchdowns
+        the wafer has.
+
+        Only defined for single-row shots, where "next die along" is
+        unambiguous. A 2x2 regrouped into 1x3 would need to know how the block
+        folds, and guessing that would silently move dies.
+        """
+        data = self.workbook_data
+        if not data or not data.get("shots"):
+            messagebox.showinfo("No Data", "Load a wafer map first.")
+            return
+        rows, _cols = self.shot_layout()
+        if rows != 1:
+            messagebox.showerror(
+                "Not a single-row shot",
+                f"This wafer is laid out {rows} dies deep. Re-shotting is only "
+                "defined for single-row shots, where the next die along is "
+                "unambiguous — otherwise dies would be silently regrouped "
+                "across rows.")
+            return
+        n = simpledialog.askinteger(
+            "Re-shot wafer", "Dies per touchdown:", parent=self,
+            minvalue=1, maxvalue=64)
+        if not n:
+            return
+        self._reshot_to(n)
+
+    def _reshot_to(self, n: int):
+        """The regrouping itself, without asking. See _reshot for the rules.
+
+        Split out so the Wafer Builder's shot-layout box can drive it: typing
+        a smaller shot there IS a request to regroup, and it already asks.
+        """
+        data = self.workbook_data
+        if not data or not data.get("shots"):
+            return
+        rows, _ = self.shot_layout()
+        if rows != 1:
+            raise ValueError(f"this wafer is {rows} dies deep; regrouping is "
+                             "only defined for single-row shots")
+        by_row: Dict[int, List[str]] = {}
+        for s in sorted(data["shots"], key=lambda s: (s["row"], s["col"])):
+            by_row.setdefault(s["row"], []).extend(s.get("dies") or [])
+        new_shots, widest = [], 0
+        for r in sorted(by_row):
+            dies = by_row[r]
+            for c, start in enumerate(range(0, len(dies), n)):
+                chunk = dies[start:start + n]
+                widest = max(widest, len(chunk))
+                new_shots.append({"row": r, "col": c, "dies": chunk,
+                                  "raw_text": "/".join(chunk),
+                                  "included": True})
+        if not new_shots:
+            return
+
+        pitch_x = float(data.get("die_size_x") or 1) or 1.0
+        pitch_y = float(data.get("die_size_y") or 1) or 1.0
+        old_cols = max((s["col"] for s in data["shots"]), default=0) + 1
+        new_cols = max(s["col"] for s in new_shots) + 1
+        # One die keeps its width, so a wider shot steps further between
+        # touchdowns. Derive the new pitch from the old rather than reusing it.
+        die_w = pitch_x / max(1, int(self.shot_layout()[1]))
+        new_pitch_x = die_w * n
+        for s in new_shots:
+            s["x_um"] = s["col"] * new_pitch_x
+            s["y_um"] = s["row"] * pitch_y
+
+        out = dict(data)
+        out.update({
+            "shots": new_shots, "shot_rows": 1, "shot_cols": widest,
+            "die_size_x": new_pitch_x, "die_size_y": pitch_y,
+            "x_headers": [i * new_pitch_x for i in range(new_cols)],
+            "y_headers": sorted({s["y_um"] for s in new_shots}),
+            "rows": len({s["row"] for s in new_shots}), "cols": new_cols,
+            "shot_count": len(new_shots),
+            "included_shot_count": len(new_shots),
+            "real_die_count": sum(len(real_die_ids(s)) for s in new_shots),
+        })
+        self._csv_shot_data = out
+        self._source_var.set("csv")
+        self._shot_rows_var.set("1")
+        self._shot_cols_var.set(str(widest))
+        self._log(f"[PMA] Re-shot: {len(data['shots'])} touchdowns of "
+                  f"{old_cols and self.shot_layout()[1]} dies -> "
+                  f"{len(new_shots)} touchdowns of {widest} "
+                  f"(same {out['real_die_count']} dies, pitch now "
+                  f"{new_pitch_x:g} um).")
+        self._refresh_view()
+        self._save_source_to_ata("csv")
+
+    def _apply_shot_layout(self):
+        """Re-stamp every loaded source with the layout typed in the boxes."""
+        rows, cols = self._shot_rows_setting(), self._shot_cols_setting()
+        touched = []
+        for label, attr in (("PMA", "_pma_shot_data"),
+                            ("Recipe Generator", "_xls_shot_data"),
+                            ("CSV", "_csv_shot_data")):
+            data = getattr(self, attr, None)
+            if not data:
+                continue
+            widest = max((len(s.get("dies") or []) for s in data["shots"]),
+                         default=1)
+            r, c = shot_geometry(widest, rows, cols)
+            if r * c < widest:
+                messagebox.showerror(
+                    "Shot Layout Too Small",
+                    f"{label} has touchdowns of up to {widest} dies, which does "
+                    f"not fit a {r}x{c} shot.")
+                return
+            data["shot_rows"], data["shot_cols"] = r, c
+            touched.append(f"{label} {r}x{c}")
+        if not touched:
+            messagebox.showinfo("No Data", "Load a wafer map first.")
+            return
+        self._log("[PMA] Shot layout set: " + ", ".join(touched)
+                  + ".  Slots: " + ", ".join(slot_names(*self.shot_layout())))
+        self._refresh_view()
+        self._save_all_loaded_sources()
+
+    def _save_all_loaded_sources(self):
+        for source in ("pma", "xls", "csv"):
+            if self._data_for_source(source):
+                try:
+                    self._save_source_to_ata(source)
+                except Exception as exc:
+                    self._log(f"[PMA] Could not persist {source}: {exc}")
+
+    def _shot_rows_setting(self) -> int:
+        try:
+            return max(0, int(self._shot_rows_var.get() or 0))
+        except (AttributeError, ValueError):
+            return 0
+
+    def _shot_cols_setting(self) -> int:
+        try:
+            return max(0, int(self._shot_cols_var.get() or 0))
+        except (AttributeError, ValueError):
+            return 0
 
     def load_csv_path(self, path: str):
         try:
@@ -757,21 +1013,33 @@ class PmaWaferPanel(ttk.Frame):
         self._csv_shot_data = self._load_csv_ata_file(folder)
         loaded = [self._SOURCE_LABELS[s] for s in ("pma", "xls", "csv")
                  if self._data_for_source(s)]
-        if not self._data_for_source(self._source_var.get()):
-            for s in ("pma", "xls", "csv"):
-                if self._data_for_source(s):
-                    self._source_var.set(s)
-                    break
+        # Open on whatever describes the whole WAFER, falling back to the
+        # touchdowns only when nothing does. The old rule kept the current
+        # source unless it was empty - and the default is "pma" - so with a
+        # .PMA saved in the folder this tab always opened on the 15 touchdowns
+        # even though the 634-shot wafer was sitting right beside it.
+        for s in ("xls", "csv", "pma"):
+            if self._data_for_source(s):
+                self._source_var.set(s)
+                break
         self._refresh_view()
         if loaded:
             self._log(f"[PMA] Auto-loaded from ATA folder: {', '.join(loaded)}")
 
     def show_touchdowns(self, data: Dict[str, Any]):
         self._pma_shot_data = data
-        self._source_var.set("pma")
+        # Only claim the view if nothing yet describes the whole wafer. The
+        # .PMA is a subset of the .xls, and LOAD ALL loads the PMA last, so
+        # switching here replaced a full 634-die wafer with the 15 touchdowns
+        # the gauge probes - which is what the tab then drew.
+        if not (self._xls_shot_data or self._csv_shot_data):
+            self._source_var.set("pma")
         self._log(
             f"[PMA] PMA touchdowns loaded: {data['included_shot_count']} shot(s), "
             f"{data['real_die_count']} die(s) on the map."
+            + ("" if not (self._xls_shot_data or self._csv_shot_data) else
+               "  View left on the wafer map — the touchdowns are the "
+               "highlighted shots on it.")
         )
         self._save_source_to_ata("pma")
         self._refresh_view()
@@ -792,6 +1060,22 @@ class PmaWaferPanel(ttk.Frame):
         self._save_source_to_ata("xls")
         self._refresh_view()
 
+    def show_wafer_definition(self) -> bool:
+        """Switch the view to whatever describes the whole wafer, if anything.
+
+        LOAD ALL loads the .PMA last, so this tab was left showing the
+        touchdown subset even when the workbook it built the map from was
+        sitting right there. Returns False when only a .PMA is loaded, which
+        is the one case where the touchdown view is all there is.
+        """
+        for source, data in (("xls", self._xls_shot_data),
+                             ("csv", self._csv_shot_data)):
+            if data:
+                self._source_var.set(source)
+                self._refresh_view()
+                return True
+        return False
+
     def clear_pma_source(self):
         self._pma_shot_data = None
         self._refresh_view()
@@ -807,6 +1091,15 @@ class PmaWaferPanel(ttk.Frame):
         source = self._source_var.get()
         data = self._data_for_source(source)
         self.workbook_data = data
+        # Keep the Build / Edit page in step - same wafer, same fields.
+        gen = getattr(self._main_layout, "recipe_gen", None)
+        adopt = getattr(gen, "adopt_from_wafer_view", None)
+        if callable(adopt):
+            try:
+                adopt()
+            except Exception as exc:
+                self._log(f"[PMA] Build/Edit did not follow the wafer view: "
+                          f"{type(exc).__name__}: {exc}")
         if data is None:
             self.path_var.set(f"No {self._SOURCE_LABELS[source]} loaded.")
             self.summary_var.set("")
@@ -880,7 +1173,10 @@ class PmaWaferPanel(ttk.Frame):
         dies = [d for d in shot.get("dies", []) if d.strip().upper() != "NA"]
         return "/".join(dies)
 
-    _MAX_VISIBLE_LABELS = 900
+    # Counted in dies, not touchdowns - a 1x5 wafer has five times the labels
+    # it used to for the same zoom, so the old shot-based ceiling would have
+    # blanked maps that were perfectly readable.
+    _MAX_VISIBLE_LABELS = 2500
 
     def _connect_view_callbacks(self):
         self.ax.callbacks.connect("xlim_changed", self._on_view_changed)
@@ -909,9 +1205,12 @@ class PmaWaferPanel(ttk.Frame):
                 float(self.workbook_data.get("die_size_y") or 1) or 1.0)
 
     def _current_label_shots(self) -> List[Dict[str, Any]]:
-        if self.workbook_data:
-            return [s for s in self.workbook_data["shots"] if s.get("included")]
-        return []
+        # Any die that really exists, not just the probed ones. "included"
+        # means "this recipe probes it", so labelling only those left the
+        # electrical gauge's 619 other dies anonymous on a map that does
+        # describe them. One entry per die: the box carries its own size, so
+        # a 1x5 strip gets five labels rather than one slash-joined smear.
+        return [b for b in (self._die_boxes_drawn or []) if b["present"]]
 
     # Below this the IDs are a grey smear rather than text, so they are not
     # drawn at all - zoom in and they appear. The old code clamped at 3pt and
@@ -950,16 +1249,15 @@ class PmaWaferPanel(ttk.Frame):
             self._set_label_hint("")
             self.canvas.draw_idle()
             return
-        shots = self._current_label_shots()
-        if not shots:
+        boxes = self._current_label_shots()
+        if not boxes:
             self._set_label_hint("")
             return
-        dx, dy = self._current_die_size()
         xlim = sorted(self.ax.get_xlim())
         ylim = sorted(self.ax.get_ylim())
-        visible = [s for s in shots
-                  if xlim[0] <= s["x_um"] + dx / 2 <= xlim[1]
-                  and ylim[0] <= s["y_um"] + dy / 2 <= ylim[1]]
+        visible = [b for b in boxes
+                  if xlim[0] <= b["x"] + b["w"] / 2 <= xlim[1]
+                  and ylim[0] <= b["y"] + b["h"] / 2 <= ylim[1]]
         if not visible or len(visible) > self._MAX_VISIBLE_LABELS:
             self._set_label_hint("zoom in to show die IDs" if visible else "")
             self.canvas.draw_idle()
@@ -967,17 +1265,17 @@ class PmaWaferPanel(ttk.Frame):
         bbox = self.ax.get_window_extent()
         span_x = (xlim[1] - xlim[0]) or 1.0
         span_y = (ylim[1] - ylim[0]) or 1.0
-        box_w_px = bbox.width * dx / span_x
-        box_h_px = bbox.height * dy / span_y
         drawn = 0
-        for s in visible:
-            label = self._shot_label(s)
+        for b in visible:
+            label = b["die"]
             if not label:
                 continue
+            box_w_px = bbox.width * b["w"] / span_x
+            box_h_px = bbox.height * b["h"] / span_y
             fs = self._fit_fontsize(box_w_px, box_h_px, len(label))
             if fs < self._MIN_LABEL_FONT:
                 continue
-            t = self.ax.text(s["x_um"] + dx / 2, s["y_um"] + dy / 2, label,
+            t = self.ax.text(b["x"] + b["w"] / 2, b["y"] + b["h"] / 2, label,
                             fontsize=fs, ha="center", va="center",
                             color="black", zorder=6, clip_on=True)
             self._label_artists.append(t)
@@ -986,9 +1284,11 @@ class PmaWaferPanel(ttk.Frame):
         self.canvas.draw_idle()
 
     def _update_legend(self, data: Dict[str, Any]):
-        width = max((len(s["dies"]) for s in data["shots"] if s["included"]), default=0)
-        n = width or 1
-        self._legend_labels["full"].config(text=f"{n}/{n} dies (full)")
+        rows, cols = self.shot_layout()
+        n = max((len(s["dies"]) for s in data["shots"] if s["included"]), default=0)
+        shape = f"{rows}x{cols}" if rows and cols else f"1x{n or 1}"
+        self._legend_labels["full"].config(
+            text=f"probed ({shape} = {n or 1} dies per touchdown)")
 
     def _populate_tree(self, data: Dict[str, Any]):
         self.tree.delete(*self.tree.get_children())
@@ -1005,6 +1305,7 @@ class PmaWaferPanel(ttk.Frame):
     def _draw_empty(self):
         self.ax.clear()
         self._shots_by_rc = {}
+        self._die_boxes_drawn = []
         self._label_artists = []
         self._label_hint = None
         self.ax.set_title("Wafer Map")
@@ -1014,13 +1315,52 @@ class PmaWaferPanel(ttk.Frame):
 
     def _shot_color(self, shot: Dict[str, Any]) -> str:
         if not shot["included"]:
-            return _COLOR_EXCLUDED
+            # A shot naming real dies exists on the wafer whether or not this
+            # recipe probes it. Only a cell with no dies at all is "excluded".
+            return _COLOR_UNPROBED if real_die_ids(shot) else _COLOR_EXCLUDED
         n_real = len(real_die_ids(shot))
         if n_real == len(shot["dies"]) and n_real > 0:
             return _COLOR_FULL
         if n_real == 0:
             return _COLOR_EMPTY
         return _COLOR_PARTIAL
+
+    def _die_color(self, box: Dict[str, Any]) -> str:
+        if not box["present"]:
+            # An NA slot is a position the shot covers where no die exists.
+            return _COLOR_EMPTY
+        return _COLOR_FULL if box["shot"].get("included") else _COLOR_UNPROBED
+
+    def _die_boxes(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """One box per DIE, not per touchdown.
+
+        This view used to draw a touchdown as a single square, so a 1x5 shot
+        looked like one die and the map disagreed with the Run tab, which has
+        always drawn dies. The die is the thing that gets an ID and a result,
+        so it is the thing that gets a square; the touchdown is recoverable
+        from ["shot"] and is what the selection outline still shows.
+        """
+        dx = float(data.get("die_size_x") or 1) or 1.0
+        dy = float(data.get("die_size_y") or 1) or 1.0
+        rows, cols = self.shot_layout()
+        out = []
+        for s in data["shots"]:
+            text = s.get("raw_text") or "/".join(s.get("dies") or [])
+            if not text.strip():
+                continue
+            entries = egpma.quad_positions(text, rows, cols)
+            n_r, n_c = shot_geometry(len(entries), rows, cols)
+            grid = egpma.slot_grid(n_r, n_c)
+            w, h = dx / max(1, n_c), dy / max(1, n_r)
+            for ent in entries:
+                col0, row0 = grid[ent["pos"]] if ent["pos"] else (0, 0)
+                out.append({
+                    "x": s["x_um"] + col0 * w, "y": s["y_um"] + row0 * h,
+                    "w": w, "h": h, "die": ent["device"],
+                    "present": ent["present"], "slot": ent["index"] + 1,
+                    "pos": ent["pos"] or "", "shot": s,
+                })
+        return out
 
     def _wafer_disc(self, shots, dx: float, dy: float):
         """Centre and radius of the wafer outline, in map microns.
@@ -1064,15 +1404,32 @@ class PmaWaferPanel(ttk.Frame):
         dx = float(data["die_size_x"] or 1) or 1.0
         dy = float(data["die_size_y"] or 1) or 1.0
         self._map_die_um = (dx, dy)
-        shots = data["shots"]
-        self._shots_by_rc = {(s["row"], s["col"]): s for s in shots}
+        # Click lookup keeps every cell; drawing keeps only what is on the
+        # wafer. The grid is a bounding rectangle, so the cells naming no dies
+        # are the corners outside the disc - drawing them squared off the
+        # wafer and swamped the dies that are really there.
+        self._shots_by_rc = {(s["row"], s["col"]): s for s in data["shots"]}
+        shots = [s for s in data["shots"]
+                 if s.get("included") or real_die_ids(s)]
         disc = self._draw_wafer(shots, dx, dy) if shots else None
-        if shots:
-            patches = [Rectangle((s["x_um"], s["y_um"]), dx, dy) for s in shots]
-            coll = PatchCollection(patches, edgecolor=_DIE_EDGE, linewidths=0.3,
+        # One rectangle per die. The touchdown is still drawn, as the thin
+        # outline around its dies, so you can see what lands together.
+        self._die_boxes_drawn = [b for b in self._die_boxes(data)
+                                 if b["shot"].get("included")
+                                 or real_die_ids(b["shot"])]
+        if self._die_boxes_drawn:
+            patches = [Rectangle((b["x"], b["y"]), b["w"], b["h"])
+                       for b in self._die_boxes_drawn]
+            coll = PatchCollection(patches, edgecolor=_DIE_EDGE, linewidths=0.25,
                                    zorder=3)
-            coll.set_facecolor([self._shot_color(s) for s in shots])
+            coll.set_facecolor([self._die_color(b) for b in self._die_boxes_drawn])
             self.ax.add_collection(coll)
+        if shots and len(self._die_boxes_drawn) > len(shots):
+            outlines = [Rectangle((s["x_um"], s["y_um"]), dx, dy) for s in shots]
+            shot_coll = PatchCollection(outlines, facecolor="none",
+                                        edgecolor=_SHOT_EDGE, linewidths=0.6,
+                                        zorder=4)
+            self.ax.add_collection(shot_coll)
         for s in find_align_shots(data):
             cx, cy = s["x_um"] + dx / 2, s["y_um"] + dy / 2
             self.ax.plot(cx, cy, marker="o", markersize=8, color="#facc15",
@@ -1088,8 +1445,16 @@ class PmaWaferPanel(ttk.Frame):
                 self.ax.set_xlim(min(x_headers) - dx, max(x_headers) + 2 * dx)
                 self.ax.set_ylim(min(y_headers) - dy, max(y_headers) + 2 * dy)
         self.ax.invert_yaxis()
-        self.ax.set_title(f"{data['recipe_name']} — {data['included_shot_count']} shots, "
-                          f"{data['real_die_count']} dies")
+        # Both numbers, because they differ and the difference is the point:
+        # a sampled recipe describes the whole wafer but probes a fraction of
+        # it. A title reading "15 shots" over a 634-shot map looked like a bug.
+        on_wafer = sum(1 for s in shots if real_die_ids(s))
+        probed_dies = sum(1 for b in self._die_boxes_drawn
+                          if b["present"] and b["shot"].get("included"))
+        self.ax.set_title(
+            f"{data['recipe_name']} — {data['real_die_count']} dies in "
+            f"{on_wafer} shots, {probed_dies} dies probed by this recipe "
+            f"({data['included_shot_count']} touchdowns)")
         # No axis furniture, matching the canvas wafer maps on the other tabs.
         # The navigation toolbar still reports the cursor's micron position.
         self.ax.set_axis_off()
@@ -1112,13 +1477,17 @@ class PmaWaferPanel(ttk.Frame):
     def _on_map_click(self, event):
         if not self.workbook_data or event.xdata is None or event.ydata is None:
             return
-        x_headers = self.workbook_data["x_headers"]
-        y_headers = self.workbook_data["y_headers"]
-        col = bisect.bisect_right(x_headers, event.xdata) - 1
-        row = bisect.bisect_right(y_headers, event.ydata) - 1
-        shot = self._shots_by_rc.get((row, col))
-        if shot:
-            self._select_shot(shot)
+        # Hit test the die boxes directly. Going through x_headers/y_headers
+        # meant trusting a shot's row index to address them, and the .xls
+        # reader numbers rows from 1 while columns start at 0 - so a click
+        # resolved to the wrong shot, or to none. The boxes carry their own
+        # micron rectangle and their own shot, which settles it.
+        die = next((b for b in self._die_boxes_drawn
+                    if b["x"] <= event.xdata < b["x"] + b["w"]
+                    and b["y"] <= event.ydata < b["y"] + b["h"]), None)
+        if die is None:
+            return
+        self._select_shot(die["shot"], die=die)
 
     def _on_tree_select(self, _event=None):
         sel = self.tree.selection()
@@ -1129,29 +1498,45 @@ class PmaWaferPanel(ttk.Frame):
         if shot:
             self._select_shot(shot, from_tree=True)
 
-    def _select_shot(self, shot: Dict[str, Any], from_tree: bool = False):
+    def _select_shot(self, shot: Dict[str, Any], from_tree: bool = False,
+                     die: Optional[Dict[str, Any]] = None):
         if _MPL:
-            if self._selected_patch is not None:
-                try:
-                    self._selected_patch.remove()
-                except Exception:
-                    pass
-                self._selected_patch = None
+            for attr in ("_selected_patch", "_selected_die_patch"):
+                patch = getattr(self, attr, None)
+                if patch is not None:
+                    try:
+                        patch.remove()
+                    except Exception:
+                        pass
+                setattr(self, attr, None)
             dx, dy = self._current_die_size()
+            # Both outlines: the touchdown, because that is what the prober
+            # moves to, and the die inside it, because that is what was
+            # clicked and what carries the result.
             hl = Rectangle((shot["x_um"], shot["y_um"]), dx, dy, fill=False,
                           edgecolor=_COLOR_SELECTED, linewidth=2.0, zorder=7)
             self.ax.add_patch(hl)
             self._selected_patch = hl
+            if die is not None:
+                dhl = Rectangle((die["x"], die["y"]), die["w"], die["h"],
+                                fill=False, edgecolor="#111827", linewidth=1.6,
+                                linestyle=(0, (3, 2)), zorder=8)
+                self.ax.add_patch(dhl)
+                self._selected_die_patch = dhl
             self.canvas.draw_idle()
         if shot["included"]:
             align_ids = {i.upper() for i in align_die_ids(self.workbook_data or {})}
             is_align = bool(align_ids & {d.upper() for d in shot["dies"]})
             tag = "  ★ ALIGN DIE" if is_align else ""
-            lines = [f"Row {shot['row']}, Col {shot['col']}  —  "
-                    f"X={shot['x_um']:.0f} µm, Y={shot['y_um']:.0f} µm{tag}", ""]
+            head = (f"Die {die['die']}" if die is not None and die["present"]
+                    else "NA (no die here)" if die is not None else "Touchdown")
+            lines = [f"{head}",
+                     f"Touchdown row {shot['row']}, col {shot['col']}  —  "
+                     f"X={shot['x_um']:.0f} µm, Y={shot['y_um']:.0f} µm{tag}", ""]
             for i, d in enumerate(shot["dies"]):
                 mark = "NA (skipped)" if d.strip().upper() == "NA" else d
-                lines.append(f"  Die {i + 1}: {mark}")
+                here = "  ←" if die is not None and die["slot"] == i + 1 else ""
+                lines.append(f"  Die {i + 1}: {mark}{here}")
         else:
             lines = [f"Row {shot['row']}, Col {shot['col']}  —  excluded (not on map)"]
         self.selected_var.set("\n".join(lines))

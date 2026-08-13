@@ -25,9 +25,13 @@ import app_settings
 
 ACCRETECH_INSTRUMENT_NAMES = ["UF200R Prober", "SMU (2636B)", "DMM (34461A)",
                               "SW_MATRIX", "Wave Gen (33512B)"]
+# Every display name _EG_DRIVERS can produce, in the order eg_profiles.EG_KEYS
+# connects them, so the sidebar reads top-to-bottom as the sweep progresses.
+# A name missing from here has no status label, and the connect loop cannot
+# report on it - keep the two in step.
 ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A",
-                                "Agilent 6634B", "HP Switchbox 1", "HP Switchbox 2",
-                                "HP Switchbox 3"]
+                                "HP E1326B (VXI)", "HP Switchbox 1", "HP Switchbox 2",
+                                "HP Switchbox 3", "Agilent 6634B"]
 
 # Accretech is one machine for now. Electroglas benches come from
 # instruments/eg_probers.yaml instead, because they genuinely differ.
@@ -416,22 +420,42 @@ class AtomicaDashboard(tk.Tk):
         txt.see(tk.END)
         txt.configure(state="disabled")
 
+    def _set_status(self, ui, name, mark, colour):
+        """Update one roster row, tolerating a name with no label.
+
+        The status labels are built from a fixed name list while the sweep
+        works off the bench profile, so the two can drift. A KeyError here used
+        to escape the connect loop's own except clause - which repeats the
+        lookup - and abort the whole sweep, leaving every instrument after the
+        missing one stuck on its previous result. A drifted name is a bug worth
+        logging, but never one worth losing the rest of the bench over.
+        """
+        lbl = ui.status_labels.get(name)
+        if lbl is None:
+            self.log(f"[SYSTEM] {name} has no status row — add it to the "
+                     f"instrument name list for this system")
+            return
+        lbl.config(text=f"{mark} {name}", foreground=colour)
+
     def _connect_instruments(self, ui, drivers, connections):
         ui.set_visible_instruments([name for name, _key, _drv in connections])
-        for lbl in ui.status_labels.values():
-            lbl.config(foreground="orange")
+        # Reset the text, not just the colour. Leaving the previous sweep's
+        # tick or cross showing meant an orange row was ambiguous - it could be
+        # "not pinged yet" or a stale result from another bench entirely.
+        for inst_name, lbl in ui.status_labels.items():
+            lbl.config(text=f"⏳ {inst_name}", foreground="orange")
         self.update_idletasks()
         for name, key, driver in connections:
             try:
                 response = driver.get_id() if hasattr(driver, "get_id") else driver.query("*IDN?")
                 if response:
                     drivers[key] = driver
-                    ui.status_labels[name].config(text=f"✅ {name}", foreground="green")
+                    self._set_status(ui, name, "✅", "green")
                     self.log(f"[SYSTEM] Connected: {name}")
                 else:
                     raise Exception("No response")
             except Exception as e:
-                ui.status_labels[name].config(text=f"❌ {name}", foreground="red")
+                self._set_status(ui, name, "❌", "red")
                 self.log(f"[ERROR] {name}: {e}")
 
     def _connect_instruments_eg(self, ui, drivers, connections):
@@ -453,8 +477,11 @@ class AtomicaDashboard(tk.Tk):
         # sit here as permanently grey "(not fitted)" rows; they are now simply
         # absent, and the Instruments tab still reports the full roster.
         ui.set_visible_instruments([name for name, _key, _factory in connections])
-        for lbl in ui.status_labels.values():
-            lbl.config(foreground="orange")
+        # Reset the text, not just the colour. Leaving the previous sweep's
+        # tick or cross showing meant an orange row was ambiguous - it could be
+        # "not pinged yet" or a stale result from another bench entirely.
+        for inst_name, lbl in ui.status_labels.items():
+            lbl.config(text=f"⏳ {inst_name}", foreground="orange")
         self.update_idletasks()
         for name, key, build_driver in connections:
             try:
@@ -464,13 +491,16 @@ class AtomicaDashboard(tk.Tk):
                 response = driver.get_id()
                 if response:
                     drivers[key] = driver
-                    ui.status_labels[name].config(text=f"✅ {name}", foreground="green")
+                    self._set_status(ui, name, "✅", "green")
                     self.log(f"[SYSTEM] Connected: {name}")
                 else:
                     raise Exception("No response")
             except Exception as e:
-                ui.status_labels[name].config(text=f"❌ {name}", foreground="red") 
-                self.log(f"[ERROR] {name}: {e}") 
+                self._set_status(ui, name, "❌", "red")
+                self.log(f"[ERROR] {name}: {e}")
+            # Each row settles as it is pinged rather than all at the end, so a
+            # slow instrument reads as "still going" instead of "hung".
+            self.update_idletasks()
 
     def _startup_sweep(self):
         """Connect both systems, one after the other, then let later bench
@@ -495,7 +525,12 @@ class AtomicaDashboard(tk.Tk):
             ("SW_MATRIX",        "switch",   Keithley707B()),
             ("Wave Gen (33512B)","wave_gen", Keysight33512B()),
         ]
-        self._connect_instruments(self._by_system["accretech"]["ui"],
+        acc_ui = self._by_system["accretech"]["ui"]
+        try:
+            acc_ui.set_bench_label(ACCRETECH_BENCHES[0])
+        except Exception:
+            pass
+        self._connect_instruments(acc_ui,
                                   self._by_system["accretech"]["drivers"], connections)
         self.check_system_ready()
 
@@ -506,7 +541,10 @@ class AtomicaDashboard(tk.Tk):
     # multimeter, probe03 has neither.
     _EG_DRIVERS = {
         "prober_eg":     ("Electroglas 2001X",  "prober",  Electroglas2001X),
-        "smu_eg":        ("Keithley 2400",      "smu",     lambda: Keithley2400("smu_eg")),
+        # Keithley2400.__init__ takes no config key - it hardcodes 'smu_eg'.
+        # Passing one raised TypeError inside the connect loop, so the SMU went
+        # red on a bench where it answers perfectly well.
+        "smu_eg":        ("Keithley 2400",      "smu",     Keithley2400),
         "dmm_eg":        ("HP 3458A",           "dmm",     HP3458A),
         "dmm_vxi_eg":    ("HP E1326B (VXI)",    "dmm_vxi", lambda: HPE1326B("dmm_vxi_eg")),
         "relay1_eg":     ("HP Switchbox 1",     "relay1",  lambda: HPSwitchbox("relay1_eg")),
@@ -524,6 +562,12 @@ class AtomicaDashboard(tk.Tk):
             eg_profiles.apply_to_instruments_yaml(profile)
         except Exception as e:
             self.log(f"[SYSTEM] Could not apply profile {profile!r}: {e}")
+
+        eg_ui = self._by_system["electroglas"]["ui"]
+        try:
+            eg_ui.set_bench_label(profile)
+        except Exception:
+            pass
 
         connections = []
         for key in eg_profiles.fitted_keys(profile):
@@ -951,7 +995,10 @@ class AtomicaDashboard(tk.Tk):
             if fmt_type == "csv":
                 rows = xfmt.build_csv_rows(fmt, last_run_results, current_lot, wafer_id)
                 fieldnames = [c["field"] for c in fmt["columns"]]
-                with open(filepath, "w", newline="") as f:
+                # Explicit utf-8: without it Python uses the Windows locale
+                # encoding (cp1252 here), which wrote an em-dash as a lone
+                # 0x97 byte - not valid UTF-8, so the export would not reopen.
+                with open(filepath, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
                     writer.writeheader()
                     writer.writerows(rows)
@@ -959,7 +1006,10 @@ class AtomicaDashboard(tk.Tk):
                     f"[SYSTEM] Success! {len(rows)} '{fmt['name']}' row(s) saved to -> {filepath}")
             else:
                 statements = xfmt.build_insert_statements(fmt, last_run_results, current_lot, wafer_id)
-                with open(filepath, "w", newline="") as f:
+                # Explicit utf-8: without it Python uses the Windows locale
+                # encoding (cp1252 here), which wrote an em-dash as a lone
+                # 0x97 byte - not valid UTF-8, so the export would not reopen.
+                with open(filepath, "w", newline="", encoding="utf-8") as f:
                     f.write("\n".join(statements) + "\n")
                 self.ui.exec_panel.log(
                     f"[SYSTEM] Success! {len(statements)} '{fmt['name']}' row(s) saved to -> {filepath}")

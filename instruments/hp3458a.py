@@ -209,6 +209,47 @@ class HP3458A(GPIBInstrument):
     def set_nrdgs(self, count: int, event: str = "AUTO"):
         self.write(f"NRDGS {int(count)},{event}")
 
+    # -- averaging ----------------------------------------------------------
+    #
+    # UNVERIFIED ON HARDWARE. Probed 2026-08-12: this meter does support the
+    # pieces - NRDGS? answered "1, 1" and MATH? answered "0,0" - but the full
+    # burst-then-RMATH sequence was never run against a known source, and on
+    # this bench the 3458A is not wired to the probe path at all.
+    #
+    # It also does not work like the others. NRDGS n makes ONE trigger return n
+    # READINGS, not their mean; the mean only exists because MATH STAT
+    # accumulates statistics over the burst, and it is read back with
+    # RMATH MEAN. So set_averages() has to arm the burst and the reader has to
+    # consume it - which is why averaging state is tracked here rather than
+    # left to the instrument alone.
+    #
+    # Until someone confirms it against a known input, averaged_reading_ok
+    # stays False and the runner falls back to averaging in software. That is
+    # slower but cannot silently return a number nobody has checked.
+
+    averaged_reading_ok = False
+
+    def set_averages(self, channel, count: int):
+        """Arm an internal burst average of COUNT readings. See caveat above."""
+        count = max(1, int(count))
+        self._averages = count
+        if count > 1 and self.averaged_reading_ok:
+            self.write("MATH STAT")
+            self.set_nrdgs(count, "AUTO")
+        else:
+            self.write("MATH OFF")
+            self.set_nrdgs(1, "AUTO")
+
+    def read_average(self) -> float:
+        """The mean of the armed burst (RMATH MEAN). See caveat above."""
+        self.write("TARM SGL")
+        for _ in range(max(1, getattr(self, "_averages", 1))):
+            try:
+                self.read()
+            except Exception:
+                break
+        return float(self.query("RMATH MEAN"))
+
     def autorange(self, on: bool = True):
         self.write(f"ARANGE {'ON' if on else 'OFF'}")
 

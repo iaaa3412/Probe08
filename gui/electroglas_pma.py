@@ -148,22 +148,88 @@ QUAD_LABELS = {"TL": "top left", "TR": "top right",
 # (col, row) with col 0 = left, row 0 = top.
 QUAD_GRID = {"TL": (0, 0), "TR": (1, 0), "BL": (0, 1), "BR": (1, 1)}
 
+# ---------------------------------------------------------------------------
+# SHOT GEOMETRY
+#
+# A touchdown covers a block of dies, and DieSizeX/Y is the block's PITCH, not
+# one die. The 2x2 quad above is the LaMP case; other products land 1x5 strips,
+# 3x1 columns and so on, so the layout is a parameter rather than a constant.
+#
+# QUAD_ORDER is column-major - TL, BL, TR, BR is down the left column then down
+# the right - and the generic naming keeps that, so a 2x2 shot produces exactly
+# the same slot order and offsets it always did. Existing recipes, saved pin
+# maps and stored results therefore keep working untouched.
+# ---------------------------------------------------------------------------
 
-def quad_positions(device_id: str) -> list:
-    """Pair each die of a touchdown with its physical corner.
+
+def shot_geometry(n_dies: int, rows: int = 0, cols: int = 0) -> tuple:
+    """(rows, cols) of the die block a touchdown covers.
+
+    An explicit layout always wins. Without one, four dies mean the historical
+    2x2 quad and anything else is treated as a single row, which is the only
+    arrangement that can be read off a slash list without guessing.
+    """
+    rows, cols = int(rows or 0), int(cols or 0)
+    if rows > 0 and cols > 0:
+        return rows, cols
+    n = max(1, int(n_dies or 1))
+    if n == 4:
+        return 2, 2
+    if n <= 1:
+        return 1, 1
+    return 1, n
+
+
+def slot_names(rows: int, cols: int) -> tuple:
+    """Slot names in the slash order a device ID lists them, column-major."""
+    if (rows, cols) == (2, 2):
+        return QUAD_ORDER
+    return tuple(f"R{r}C{c}" for c in range(cols) for r in range(rows))
+
+
+def slot_grid(rows: int, cols: int) -> dict:
+    """slot name -> (col, row) inside the shot, col 0 left, row 0 top."""
+    if (rows, cols) == (2, 2):
+        return dict(QUAD_GRID)
+    return {name: (i // rows, i % rows)
+            for i, name in enumerate(slot_names(rows, cols))}
+
+
+def slot_label(name: str, rows: int, cols: int) -> str:
+    if name in QUAD_LABELS:
+        return QUAD_LABELS[name]
+    grid = slot_grid(rows, cols)
+    if name not in grid:
+        return ""
+    col, row = grid[name]
+    if rows == 1:
+        return f"position {col + 1} of {cols}"
+    if cols == 1:
+        return f"position {row + 1} of {rows}"
+    return f"row {row + 1}, column {col + 1}"
+
+
+def quad_positions(device_id: str, rows: int = 0, cols: int = 0) -> list:
+    """Pair each die of a touchdown with its position inside the shot.
 
     Returns [{"index", "pos", "label", "device", "col", "row", "present"}, ...]
-    in the recipe's own slash order. Any touchdown that is not four-up is
-    returned with pos=None - a single-die recipe has no corners to assign,
-    and guessing would be worse than saying nothing.
+    in the recipe's own slash order. With no explicit layout a four-up shot is
+    the 2x2 quad and anything else is a single row - see shot_geometry.
+
+    A single-die touchdown still comes back with pos=None: there is only one
+    place it can be, and naming it would imply a layout nobody stated.
     """
     dies = split_quad_devices(device_id)
+    n_rows, n_cols = shot_geometry(len(dies), rows, cols)
+    names = slot_names(n_rows, n_cols)
+    grid = slot_grid(n_rows, n_cols)
     out = []
     for i, die in enumerate(dies):
-        pos = QUAD_ORDER[i] if len(dies) == len(QUAD_ORDER) else None
-        col, row = QUAD_GRID[pos] if pos else (None, None)
+        pos = names[i] if (len(dies) > 1 and i < len(names)) else None
+        col, row = grid[pos] if pos else (None, None)
         out.append({
-            "index": i, "pos": pos, "label": QUAD_LABELS.get(pos, ""),
+            "index": i, "pos": pos,
+            "label": slot_label(pos, n_rows, n_cols) if pos else "",
             "device": die, "col": col, "row": row,
             "present": die.strip().upper() not in ("NA", "TARGET", ""),
         })
@@ -186,19 +252,22 @@ def quad_die_offsets(die_size_x: float, die_size_y: float) -> dict:
     return {pos: (col * hx, row * hy) for pos, (col, row) in QUAD_GRID.items()}
 
 
-def format_quad(device_id: str) -> str:
+def format_quad(device_id: str, rows: int = 0, cols: int = 0) -> str:
     """One-line 'TL:54-00  TR:54-01  BL:44-70  BR:44-71' for the UI.
 
-    Reordered into reading order so it matches what you see down a scope,
-    rather than the recipe's column-major storage order.
+    Reordered into READING order - left to right, top to bottom - so it matches
+    what you see down a scope rather than the recipe's column-major storage
+    order. Works for any shot layout: the old version indexed a fixed
+    TL/TR/BL/BR list and raised KeyError the moment a shot was not a quad.
     """
-    entries = quad_positions(device_id)
+    entries = quad_positions(device_id, rows, cols)
     if len(entries) == 1:
         return entries[0]["device"]
     if not entries or entries[0]["pos"] is None:
         return "   ".join(f"{e['index'] + 1}:{e['device']}" for e in entries)
-    by_pos = {e["pos"]: e["device"] for e in entries}
-    return "   ".join(f"{p}:{by_pos[p]}" for p in ("TL", "TR", "BL", "BR"))
+    # Sort by (row, col) rather than naming positions explicitly.
+    ordered = sorted(entries, key=lambda e: (e["row"] or 0, e["col"] or 0))
+    return "   ".join(f"{e['pos']}:{e['device']}" for e in ordered)
 
 
 def load_touchdowns(pma_path: str, fields: dict) -> list:
@@ -427,7 +496,8 @@ def die_grid_index(dies: list) -> tuple:
             {y: i for i, y in enumerate(ys)})
 
 
-def expand_touchdowns_to_dies(touchdowns: list, die_size_x, die_size_y) -> list:
+def expand_touchdowns_to_dies(touchdowns: list, die_size_x, die_size_y,
+                              rows: int = 0, cols: int = 0) -> list:
     """One record per DIE, not per touchdown.
 
     A touchdown coordinate is the corner of the 2x2 quad the same way
@@ -441,16 +511,22 @@ def expand_touchdowns_to_dies(touchdowns: list, die_size_x, die_size_y) -> list:
     special-case them.
     """
     dx, dy = float(die_size_x), float(die_size_y)
-    half_x, half_y = dx / 2.0, dy / 2.0
     out = []
     for t in touchdowns:
-        entries = quad_positions(t["device_id"])
+        entries = quad_positions(t["device_id"], rows, cols)
+        n_dies = len(entries)
+        n_rows, n_cols = shot_geometry(n_dies, rows, cols)
+        # DieSizeX/Y is the BLOCK pitch, so one die is a fraction of it. For
+        # the 2x2 quad that is the half-pitch this always used; for a 1x5 strip
+        # it is a fifth of the pitch across and the full pitch down.
+        step_x, step_y = dx / max(1, n_cols), dy / max(1, n_rows)
+        grid = slot_grid(n_rows, n_cols)
         for ent in entries:
             if ent["pos"] is None:
                 ox = oy = 0.0
             else:
-                col, row = QUAD_GRID[ent["pos"]]
-                ox, oy = col * half_x, row * half_y
+                col, row = grid[ent["pos"]]
+                ox, oy = col * step_x, row * step_y
             out.append({
                 "seq": t["seq"],
                 "quad_pos": ent["pos"] or "",

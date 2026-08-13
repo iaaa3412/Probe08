@@ -175,7 +175,9 @@ class PmaProcessPanel(ttk.Frame):
         wafer = getattr(self._main_layout, "pma_wafer", None)
         if wafer is None:
             return ""
-        for attr in ("_xls_shot_data", "workbook_data"):
+        # Only the wafer-defining sources. workbook_data is whichever source
+        # the Wafer Map tab is displaying, so it can be the .PMA's own data.
+        for attr in ("_xls_shot_data", "_csv_shot_data"):
             data = getattr(wafer, attr, None)
             if isinstance(data, dict) and data.get("align_die"):
                 return str(data["align_die"])
@@ -648,7 +650,10 @@ class PmaProcessPanel(ttk.Frame):
             return 0
         try:
             shots = run._map_source_touchdowns()
-            from_workbook = shots is not run._touchdowns
+            # Ask what is loaded, not whether two lists differ by identity -
+            # that test passed even when the "workbook" was the PMA's own
+            # shots, so the log claimed a full wafer while drawing touchdowns.
+            from_workbook = run.wafer_definition_data() is not None
             path = egpma.save_wafer_map_csv(folder, shots, run._fields)
             n = len(egpma.expand_touchdowns_to_dies(shots, *run._die_um))
         except Exception as exc:
@@ -673,6 +678,28 @@ class PmaProcessPanel(ttk.Frame):
         except Exception as exc:
             self._log(f"[PMA] LOAD ALL: map written but the Run tab did not "
                       f"redraw — {type(exc).__name__}: {exc}")
+
+        # The Run tab is not the only place this wafer is drawn. The Wafer Map
+        # tab and its Wafer View page read the map from the file, so without
+        # this they kept showing whatever was there before LOAD ALL - which is
+        # the stale touchdown map the user was still looking at.
+        wafer = getattr(layout, "pma_wafer", None)
+        if wafer is not None and hasattr(wafer, "show_wafer_definition"):
+            try:
+                if not wafer.show_wafer_definition():
+                    self._log("[PMA] LOAD ALL: no recipe generator .xls or CSV "
+                              "loaded, so the Wafer Map tab can only show this "
+                              "recipe's touchdowns.")
+            except Exception as exc:
+                self._log(f"[PMA] LOAD ALL: the Wafer Map tab did not switch to "
+                          f"the wafer view — {type(exc).__name__}: {exc}")
+        gen = getattr(layout, "recipe_gen", None)
+        if gen is not None and hasattr(gen, "_sync_views"):
+            try:
+                gen._sync_views(folder)
+            except Exception as exc:
+                self._log(f"[PMA] LOAD ALL: the Wafer Map tab did not refresh — "
+                          f"{type(exc).__name__}: {exc}")
         return n
 
     def _push_touchdowns_to_recipe(self, run, recipe_panel, recipe: str) -> int:
@@ -687,7 +714,13 @@ class PmaProcessPanel(ttk.Frame):
         if set_sites is None:
             self._log("[PMA] LOAD ALL: this Recipe tab has no touchdown list.")
             return 0
-        touchdowns = getattr(run, "_touchdowns", None) or []
+        # The .PMA's touchdowns in .PMA order - NOT run._touchdowns, which is
+        # now every position on the wafer so the chuck can be driven anywhere.
+        # Reading that here would attach all 634 shots to a 15-shot recipe and
+        # turn it into a whole-wafer run.
+        positions = getattr(run, "_touchdowns", None) or []
+        order = run._pma_order() if hasattr(run, "_pma_order") else []
+        touchdowns = ([positions[i] for i in order] if order else positions)
         cells = getattr(run, "_anchor_rc", None) or {}
         # The row/col index is derived from the recipe alone, not from the
         # loaded map, so it can always be rebuilt. Do that rather than attach
@@ -785,9 +818,29 @@ class PmaProcessPanel(ttk.Frame):
         ata_folder = getattr(self._main_layout, "_ata_folder", "")
         saved_note = ""
         if ata_folder and touchdowns:
+            # The .PMA names TOUCHDOWNS, not the wafer. Writing the run map
+            # straight from them replaced the full 634-shot wafer with the 15
+            # this recipe probes - and since the .PMA is restored whenever the
+            # GUI opens, it did that again on every startup, undoing LOAD ALL.
+            run = getattr(self._main_layout, "eg_pma_run", None)
+            wafer_data = (run.wafer_definition_data()
+                          if run is not None and hasattr(run, "wafer_definition_data")
+                          else None)
+            map_shots, source_note = touchdowns, "the PMA's touchdowns"
+            if wafer_data:
+                try:
+                    shots = egpma.workbook_touchdowns(wafer_data)
+                    if shots:
+                        map_shots = shots
+                        source_note = "the recipe generator's wafer"
+                except Exception as exc:
+                    self._log(f"[PMA] Could not read the wafer from the recipe "
+                              f"generator ({type(exc).__name__}: {exc}) — the map "
+                              "was written from the PMA's touchdowns instead.")
             try:
-                csv_path = egpma.save_wafer_map_csv(ata_folder, touchdowns, fields)
-                saved_note = f" — wafer map saved to {os.path.basename(csv_path)}"
+                csv_path = egpma.save_wafer_map_csv(ata_folder, map_shots, fields)
+                saved_note = (f" — wafer map saved from {source_note} "
+                              f"({len(map_shots)} shots) to {os.path.basename(csv_path)}")
             except OSError as exc:
                 self._log(f"[PMA] Could not save wafer map CSV: {exc}")
         elif touchdowns:

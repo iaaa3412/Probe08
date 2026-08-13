@@ -1,4 +1,4 @@
-active: probe03
+active: probe02
 probers:
   probe02:
     label: probe02 — LaMP production bench

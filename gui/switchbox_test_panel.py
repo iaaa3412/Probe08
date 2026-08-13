@@ -92,6 +92,48 @@ class SwitchboxTestPanel(ttk.Frame):
         self._reload_cards()
         self._refresh_assignments()
 
+    def _layout(self):
+        """The Electroglas MainLayout, for reaching the active probe card."""
+        try:
+            return self.controller._by_system["electroglas"]["ui"]
+        except Exception:
+            return None
+
+    def _card_die_pins(self) -> dict:
+        """{slot: (hi, lo)} from the active probe card, or {}."""
+        layout = self._layout()
+        wiring = getattr(layout, "pin_wiring", None) if layout else None
+        getter = getattr(wiring, "get_die_pins", None)
+        try:
+            return getter() or {} if callable(getter) else {}
+        except Exception:
+            return {}
+
+    def _card_pin_names(self) -> list:
+        layout = self._layout()
+        wiring = getattr(layout, "pin_wiring", None) if layout else None
+        try:
+            return sorted({(r.get("pin") or "").strip()
+                           for r in (wiring.get_wiring() or [])
+                           if (r.get("pin") or "").strip()})
+        except Exception:
+            return []
+
+    def _pins_for_channel(self, bench: str, channel: int) -> str:
+        """The probe-card PINS this channel lands on, via the die it serves.
+
+        Pins rather than pad labels: a pin is the physical contact wired to
+        the relay, and it still identifies the same thing on the next probe
+        card. "BRU" only means something inside one project's drawing.
+        """
+        die = die_of_channel_on(bench, channel)
+        if die is None:
+            return ""
+        pair = self._card_die_pins().get(die) or self._card_die_pins().get(str(die))
+        if not pair:
+            return ""
+        return f"{pair[0]} / {pair[1]}"
+
     # -- channel assignments ------------------------------------------------
     #
     # Every channel of every fitted card, not just the ones this project
@@ -111,19 +153,20 @@ class SwitchboxTestPanel(ttk.Frame):
 
         bar = ttk.Frame(lf)
         bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-        ttk.Label(bar, text="Double-click a row to assign it. Wired-by-this-"
-                            "project channels are filled in and can be "
-                            "overridden.",
+        ttk.Label(bar, text="Double-click a row to assign it. Pins come from "
+                            "the active probe card - they are what actually "
+                            "lands on the relay.",
                   foreground="#4b5563", font=("Segoe UI", 8)).pack(side="left")
         ttk.Button(bar, text="↻ Refresh",
                    command=self._refresh_assignments).pack(side="right")
 
-        cols = ("card", "chan", "known", "assignment")
+        cols = ("card", "chan", "pins", "known", "assignment")
         self._asg = ttk.Treeview(lf, columns=cols, show="headings", height=10)
-        for cid, text, width, stretch in (("card", "Card", 210, False),
+        for cid, text, width, stretch in (("card", "Card", 200, False),
                                           ("chan", "Ch", 46, False),
-                                          ("known", "Known wiring", 250, False),
-                                          ("assignment", "Assigned to", 260, True)):
+                                          ("pins", "Probe-card pins", 120, False),
+                                          ("known", "Known wiring", 230, False),
+                                          ("assignment", "Assigned to", 240, True)):
             self._asg.heading(cid, text=text)
             self._asg.column(cid, width=width, anchor="w", stretch=stretch)
         self._asg.grid(row=1, column=0, sticky="nsew")
@@ -163,8 +206,10 @@ class SwitchboxTestPanel(ttk.Frame):
                     if die is not None:
                         known = describe_channel_on(bench, ch)
                 iid = f"{key}/{ch:02d}"
+                pins = self._pins_for_channel(bench, ch) if key == wired_key else ""
                 tree.insert("", "end", iid=iid,
-                            values=(name, f"{ch:02d}", known, saved.get(iid, "")))
+                            values=(name, f"{ch:02d}", pins, known,
+                                    saved.get(iid, "")))
         # Tree switches are addressable channels too, and forgetting that is
         # how a "spare" channel turns out to be the thing routing a bank.
         if wiring.get("family") == FAMILY_MUX and wired_key in fitted:
@@ -172,7 +217,7 @@ class SwitchboxTestPanel(ttk.Frame):
             for tree_ch in TREE_SWITCHES:
                 iid = f"{wired_key}/{tree_ch}"
                 tree.insert("", "end", iid=iid,
-                            values=(name, str(tree_ch),
+                            values=(name, str(tree_ch), "",
                                     TREE_LABELS.get(tree_ch, "tree switch"),
                                     saved.get(iid, "")))
 

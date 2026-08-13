@@ -7,6 +7,8 @@ import os
 from recipe_panel import recipes_to_rows, rows_to_recipes, STEP_FIELDS
 import electroglas_pma
 
+DIE_PIN_KIND = "DIEPIN"
+
 CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq"] + list(STEP_FIELDS)
 
 
@@ -505,6 +507,9 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         self._cards: dict = {}
         self._current: str = ""
         self._card_recipes: dict = {}
+        # card -> {slot: (hi pin, lo pin)}. Explicit, so nothing
+        # has to infer a die from how a pad happens to be named.
+        self._card_die_pins: dict = {}
         self._card_move_lists: dict = {}
         self._card_src: dict = {}
         self._ata_card_names: set = set()
@@ -857,21 +862,64 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                         for raw in csv.DictReader(f)]
         except OSError as exc:
             self._log(f"[WIRING] Error reading {os.path.basename(path)}: {exc}")
-            return None, None
+            return None, None, None
         pins = []
+        die_pins = {}
         for row in rows:
-            if (row.get("kind") or "PIN").upper() != "PIN":
+            kind = (row.get("kind") or "PIN").upper()
+            if kind == DIE_PIN_KIND:
+                # slot -> the two PINS that land on that die. Pins are the
+                # durable identifier: they are physically on the card and they
+                # are what reaches the relay, where a pad name like "BRU" is a
+                # per-project label that means nothing on the next card.
+                try:
+                    slot = int(row.get("seq") or 0)
+                except ValueError:
+                    continue
+                hi, lo = row.get("hi", ""), row.get("lo", "")
+                if slot > 0 and hi and lo:
+                    die_pins[slot] = (hi, lo)
+                continue
+            if kind != "PIN":
                 continue
             pin = row.get("pin", "")
             if not pin:
                 continue
             pins.append({"pin": pin, "pad": row.get("pad", ""), "net": row.get("net", "")})
         recipes = rows_to_recipes(rows)
-        return pins, recipes
+        return pins, recipes, die_pins
 
-    def _write_card_file(self, path: str, pins: list, recipes: dict):
+    def _write_card_file(self, path: str, pins: list, recipes: dict,
+                         die_pins: dict = None):
+        # Never let an empty pin list erase a card's wiring. The side-recipe
+        # file legitimately carries no pins, but the main card file does - and
+        # rewriting it from a card whose pins were not in memory wiped
+        # LaMP_HP's 16 pad mappings, after which every recipe was generated
+        # with blank HI/LO and nothing said so.
+        if not pins and os.path.isfile(path):
+            try:
+                existing, _, _ = self._read_card_file(path)
+            except Exception:
+                existing = []
+            if existing:
+                self._log(f"[WIRING] {os.path.basename(path)}: save supplied no "
+                          f"pins, so the {len(existing)} already on file were "
+                          f"kept rather than erased.")
+                pins = existing
+        # Same reasoning as the pins above: a save that supplies no die-pin
+        # table must not erase the one on file.
+        if die_pins is None and os.path.isfile(path):
+            try:
+                _, _, existing_dp = self._read_card_file(path)
+            except Exception:
+                existing_dp = None
+            die_pins = existing_dp or None
         rows = [{"kind": "PIN", "pin": r["pin"], "pad": r["pad"], "net": r["net"]}
                 for r in pins]
+        for slot in sorted(die_pins or {}):
+            hi, lo = (die_pins or {})[slot]
+            rows.append({"kind": DIE_PIN_KIND, "seq": slot,
+                         "name": f"die {slot}", "hi": hi, "lo": lo})
         rows.extend(recipes_to_rows(recipes))
         with open(path, "w", newline="", encoding="utf-8") as f:
             wr = csv.DictWriter(f, fieldnames=CARD_CSV_FIELDS, restval="")
@@ -885,14 +933,14 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
     def _read_main_file_recipes(self, path: str) -> dict:
         if not path or not os.path.isfile(path):
             return {}
-        _, recipes = self._read_card_file(path)
+        _, recipes, _ = self._read_card_file(path)
         return recipes or {}
 
     def _read_side_recipes(self, main_path: str) -> dict:
         side = self._recipe_side_path(main_path)
         if not os.path.isfile(side):
             return {}
-        _, recipes = self._read_card_file(side)
+        _, recipes, _ = self._read_card_file(side)
         return recipes or {}
 
     def _write_side_recipes(self, main_path: str, recipes: dict):
@@ -929,6 +977,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         cards_dir = os.path.join(folder, "probe_cards")
         self._ata_probe_cards_dir = cards_dir
         found, found_src, found_recipes, found_move_lists = {}, {}, {}, {}
+        found_die_pins = {}
         if os.path.isdir(cards_dir):
             for fname in sorted(os.listdir(cards_dir)):
                 if not fname.lower().endswith(".csv"):
@@ -938,12 +987,13 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                 path = os.path.join(cards_dir, fname)
                 if not os.path.isfile(path):
                     continue
-                pins, main_recipes = self._read_card_file(path)
+                pins, main_recipes, die_pins = self._read_card_file(path)
                 if pins is None:
                     continue
                 name = os.path.splitext(fname)[0]
                 found[name] = pins
                 found_src[name] = path
+                found_die_pins[name] = die_pins or {}
                 found_recipes[name] = (main_recipes if self._system == "accretech"
                                        else self._read_side_recipes(path))
                 found_move_lists[name] = (
@@ -956,12 +1006,14 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             self._card_src.pop(name, None)
             self._card_recipes.pop(name, None)
             self._card_move_lists.pop(name, None)
+            self._card_die_pins.pop(name, None)
         self._ata_card_names = set(found)
 
         self._cards.update(found)
         self._card_src.update(found_src)
         self._card_recipes.update(found_recipes)
         self._card_move_lists.update(found_move_lists)
+        self._card_die_pins.update(found_die_pins)
 
         if self._current not in self._cards:
             self._current = next(iter(self._cards), "")
@@ -1007,8 +1059,54 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                   "one file each")
 
 
+    def get_die_pins(self, card: str = None) -> dict:
+        """{slot: (hi pin, lo pin)} for a card - the die-to-pin map.
+
+        Pins, not pad names. A pad label ("BRU") describes one project's
+        drawing; the pin is the physical contact that lands on the relay and
+        is still meaningful on the next card and the next product.
+        """
+        return dict(self._card_die_pins.get(card or self._current, {}))
+
+    def set_die_pins(self, card: str, mapping: dict) -> bool:
+        """Record slot -> (hi, lo) pins for a card and persist it."""
+        if card not in self._cards:
+            return False
+        clean = {}
+        for slot, pair in (mapping or {}).items():
+            try:
+                slot = int(slot)
+            except (TypeError, ValueError):
+                continue
+            hi, lo = (list(pair) + ["", ""])[:2]
+            if slot > 0 and str(hi).strip() and str(lo).strip():
+                clean[slot] = (str(hi).strip(), str(lo).strip())
+        self._card_die_pins[card] = clean
+        path = self._card_src.get(card)
+        if not path:
+            return False
+        try:
+            recipes = (self._card_recipes.get(card, {})
+                       if self._system == "accretech" else
+                       self._read_main_file_recipes(path))
+            self._write_card_file(path, self._cards.get(card, []), recipes,
+                                  die_pins=clean)
+        except OSError as exc:
+            self._log(f"[WIRING] Could not save die pins for '{card}': {exc}")
+            return False
+        self._log(f"[WIRING] '{card}': die-pin map saved — "
+                  + ", ".join(f"die {s} = {h}/{l}" for s, (h, l) in sorted(clean.items())))
+        return True
+
     def get_recipes(self) -> dict:
-        return {name: {"steps": [dict(s) for s in rec.get("steps", [])]}
+        # 'sites' as well as 'steps' - the same omission save_recipes had. The
+        # touchdown list persisted to disk correctly and was read back into
+        # _card_recipes correctly, then dropped here on the way to the Recipe
+        # tab, so every recipe opened with a blank touchdown table. The Run tab
+        # looked right only by accident: with no sites, _probe_seqs() returns
+        # None and the run falls back to the .PMA's own list.
+        return {name: {"steps": [dict(s) for s in rec.get("steps", [])],
+                       "sites": [dict(s) for s in rec.get("sites", [])]}
                 for name, rec in self._card_recipes.get(self._current, {}).items()}
 
     def get_recipe_count(self, card: str) -> int:
@@ -1017,8 +1115,14 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
     def save_recipes(self, card: str, recipes: dict) -> bool:
         if card not in self._cards:
             return False
+        # Keep 'sites' as well as 'steps'. Rebuilding each recipe with only
+        # its steps discarded the touchdown list on every save, so a recipe
+        # that LOAD ALL had just given 15 touchdowns was written back with
+        # none - and the SITE rows recipes_to_rows would have emitted never
+        # existed to be written.
         self._card_recipes[card] = {
-            name: {"steps": [dict(s) for s in rec.get("steps", [])]}
+            name: {"steps": [dict(s) for s in rec.get("steps", [])],
+                   "sites": [dict(s) for s in rec.get("sites", [])]}
             for name, rec in recipes.items()}
         path = self._card_src.get(card)
         if not path:
