@@ -2073,38 +2073,30 @@ class MainLayout(ttk.Frame):
         self.pma_process.grid(row=0, column=0, sticky="nsew")
 
     def _tab_recipe_gen(self, nb):
-        """The one Wafer Builder tab on Electroglas: build it, and view it.
+        """The Wafer Builder tab on Electroglas - RecipeGenPanel owns three
+        pages of its own (Shot / Shot Map / Die Map) that together replace
+        the old Build/Edit + read-only Wafer View split entirely.
 
-        There used to be two tabs with this name - the editable grid, and the
-        read-only PMA wafer view. They show the same wafer, so they are two
-        pages of one tab now. "Wafer Map" named both this and the read-only
-        maps on the Run and Results tabs, which is why it is "Builder" here:
-        this is the page that WRITES the wafer. PmaWaferPanel is still built
-        and still assigned to self.pma_wafer, because it holds workbook_data,
-        which the Run tab derives the map from and the overlay dialog reads.
+        PmaWaferPanel is still built - just not shown - and still assigned
+        to self.pma_wafer: other code (the Overlay dialog,
+        _exec2_overlay_source_data, centroid matching against an Accretech
+        map) reads self.pma_wafer.workbook_data/_pma_shot_data/etc
+        defensively via getattr, so keeping the object alive avoids breaking
+        those paths even though there is no more .PMA/.xls-driven UI to feed
+        it from this tab.
         """
         tab = ttk.Frame(nb)
         nb.add(tab, text="Wafer Builder")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
 
-        sub = ttk.Notebook(tab)
-        sub.grid(row=0, column=0, sticky="nsew")
-
-        build = ttk.Frame(sub)
-        sub.add(build, text="Build / Edit")
-        build.rowconfigure(0, weight=1)
-        build.columnconfigure(0, weight=1)
-        self.recipe_gen = RecipeGenPanel(build, controller=self.controller,
+        self.recipe_gen = RecipeGenPanel(tab, controller=self.controller,
                                          main_layout=self)
         self.recipe_gen.grid(row=0, column=0, sticky="nsew")
 
-        view = ttk.Frame(sub)
-        sub.add(view, text="Wafer View")
-        view.rowconfigure(0, weight=1)
-        view.columnconfigure(0, weight=1)
+        hidden = ttk.Frame(tab)
         self.pma_wafer = PmaWaferPanel(
-            view, controller=self.controller, get_folder=lambda: self._ata_folder,
+            hidden, controller=self.controller, get_folder=lambda: self._ata_folder,
             main_layout=self)
         self.pma_wafer.grid(row=0, column=0, sticky="nsew")
 
