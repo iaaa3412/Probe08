@@ -58,7 +58,7 @@ class ExecutionDashboard(ttk.Frame):
         self.lbl_die   = _FakeLabel()
         self.lbl_route = _FakeLabel()
 
-        self.log("Simulation panel ready.  Load an ATA folder, then press Start.")
+        self.log("GUI started.")
 
     def set_wafer_map(self, wafer_map_panel, wafer_id="—"):
         self._wafer_map = wafer_map_panel

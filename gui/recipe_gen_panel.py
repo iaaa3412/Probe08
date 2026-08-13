@@ -575,11 +575,11 @@ class RecipeGenPanel(ttk.Frame):
         top = ttk.Frame(tab, padding=6)
         top.grid(row=0, column=0, sticky="ew")
         ttk.Label(top, text="Click mode:").pack(side="left")
-        for value, text in (("id", "✏ Set Die ID"), ("skip", "⛔ Mark Skip"),
-                           ("align", "📍 Mark Align")):
+        for value, text in (("id", "Set Die ID"), ("skip", "Mark Skip"),
+                           ("align", "Mark Align")):
             ttk.Radiobutton(top, text=text, value=value,
                            variable=self._diemap_mode_var).pack(side="left", padx=(6, 0))
-        ttk.Label(top, text="(right-click clears a die back to normal)",
+        ttk.Label(top, text="right click to clear",
                  foreground="#6b7280").pack(side="left", padx=(10, 0))
         ttk.Button(top, text="🗺 Save Wafer Map",
                   command=self._save_wafer_map).pack(side="left", padx=(16, 0))
