@@ -42,12 +42,21 @@ ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
 # Electroglas tab at PENDING forever.
 ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "dmm", "relay1", "relay2", "relay3")
 
+# Just-for-fun splash screen shown while the main window builds and the
+# startup instrument sweep runs. Flip to False to go straight back to the
+# old plain-launch behavior - nothing else needs to change; every splash
+# call below already no-ops harmlessly when this is off (see
+# _build_splash_screen/_dismiss_splash_screen).
+SHOW_SPLASH_SCREEN = True
+
 
 class AtomicaDashboard(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Electrical Prober")
         self.geometry("1400x800")
+        self._splash = None
+        self._build_splash_screen()
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
         self.simulation_running = False
@@ -267,6 +276,65 @@ class AtomicaDashboard(tk.Tk):
         self._prober_stb = stb
         self._prober_ready = (stb == 65) if stb is not None else None
         self.check_system_ready()
+
+    def _build_splash_screen(self):
+        """A small always-on-top window shown (logo + "Electrical Prober")
+        while the main window builds and the startup instrument sweep runs -
+        see _dismiss_splash_screen, called once _startup_sweep finishes.
+
+        Self-contained and off the SHOW_SPLASH_SCREEN switch at the top of
+        this file: with it False, this just returns and self._splash stays
+        None, so _dismiss_splash_screen's deiconify() is the only thing that
+        still runs - harmless on a window that was never withdrawn.
+        """
+        if not SHOW_SPLASH_SCREEN:
+            return
+        self.withdraw()
+        splash = tk.Toplevel(self)
+        self._splash = splash
+        # No title() - overrideredirect windows show no title bar anyway,
+        # and this keeps it out of _find_other_instance_window's title match.
+        splash.overrideredirect(True)
+        splash.configure(bg="#374558")
+        w, h = 420, 220
+        sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
+        splash.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        try:
+            splash.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        logo_path = os.path.join(os.path.dirname(__file__), "logo2.jpg")
+        if os.path.exists(logo_path):
+            try:
+                from PIL import Image, ImageTk
+                pil_img = Image.open(logo_path)
+                target_h = 90
+                scale = target_h / pil_img.height
+                pil_img = pil_img.resize(
+                    (max(1, int(pil_img.width * scale)), target_h))
+                img = ImageTk.PhotoImage(pil_img)
+                lbl_img = tk.Label(splash, image=img, bg="#374558")
+                lbl_img.image = img
+                lbl_img.pack(pady=(30, 12))
+            except Exception:
+                pass
+        tk.Label(splash, text="Electrical Prober", bg="#374558", fg="#f0a020",
+                 font=("Arial", 16)).pack()
+        tk.Label(splash, text="Starting up…", bg="#374558", fg="#cbd5e1",
+                 font=("Arial", 9)).pack(pady=(14, 0))
+        splash.update()
+
+    def _dismiss_splash_screen(self):
+        splash = self._splash
+        self._splash = None
+        if splash is not None:
+            try:
+                splash.destroy()
+            except Exception:
+                pass
+        self.deiconify()
+        self.lift()
 
     def _build_brand_header(self):
         hdr = tk.Frame(self, bg="#374558", height=48)
@@ -531,6 +599,7 @@ class AtomicaDashboard(tk.Tk):
                 self.init_hardware()
         finally:
             self._startup_done = True
+            self._dismiss_splash_screen()
 
     def init_hardware(self):
         self._connected_systems.add("accretech")
