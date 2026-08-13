@@ -59,9 +59,15 @@ class AtomicaDashboard(tk.Tk):
             "electroglas": {"drivers": {}, "results": [], "ui": None,
                             "total": 0, "tested": 0, "passed": 0, "failed": 0},
         }
-        # False until both startup sweeps have run, so a bench selected during
+        # False until the startup sweep has run, so a bench selected during
         # construction does not connect twice.
         self._startup_done = False
+        # Which systems have had a connect sweep run at least once - a
+        # system is only pinged when it is actually selected (at startup,
+        # or the first time the operator switches to it), never both, so
+        # switching to Accretech does not also probe an Electroglas rig
+        # that may not even be powered on, and vice versa.
+        self._connected_systems = set()
         self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
@@ -90,11 +96,12 @@ class AtomicaDashboard(tk.Tk):
         # loaded; before init_hardware, so the first connect sweep runs
         # against the bench that was actually chosen.
         self._apply_default_prober()
-        # Both systems sweep at startup. SEQUENCED, not concurrent: they share
-        # one GPIB board, and two sweeps opening resources at the same time is
-        # exactly how the VI_ERROR_SYSTEM_ERROR races happen - so the
-        # Electroglas sweep is kicked off by the Accretech one finishing
-        # rather than by a guessed delay.
+        # Only the active system (Accretech unless a default prober says
+        # otherwise, applied just above) sweeps at startup - pinging the
+        # other rig's instruments when nobody selected it just produces
+        # "not connected" log noise for hardware that may not even be
+        # powered on. The other system connects itself the first time the
+        # operator actually switches to it - see cmd_set_active_system.
         self.after(500, self._startup_sweep)
         self.update_statistics_visuals()
         self.check_system_ready()
@@ -210,6 +217,12 @@ class AtomicaDashboard(tk.Tk):
         self.check_system_ready()
         self.log(f"[SYSTEM] Switched active system to {system.capitalize()} "
                  f"— prober {self._active_bench()}.")
+        # First time this system is actually selected, connect its own
+        # instruments - not before, and never the other system's. Deferred
+        # so the tab swap above finishes redrawing first.
+        if system not in self._connected_systems:
+            fn = self.init_hardware_eg if system == "electroglas" else self.init_hardware
+            self.after(100, fn)
 
     def _system_ready_loop(self):
         self.check_system_ready()
@@ -500,20 +513,27 @@ class AtomicaDashboard(tk.Tk):
             self.update_idletasks()
 
     def _startup_sweep(self):
-        """Connect both systems, one after the other, then let later bench
-        switches reconnect on their own."""
-        try:
-            self.init_hardware()
-        finally:
-            self.after(200, self._startup_sweep_eg)
+        """Connect whichever system is active (Accretech, unless a default
+        prober picked Electroglas above) - not both. See cmd_set_active_system
+        for how the other one connects on demand, the first time it is
+        actually selected.
 
-    def _startup_sweep_eg(self):
+        Skips the system if it is already in _connected_systems - a default
+        prober set at startup switches the active system via
+        cmd_set_active_system before this runs, which already scheduled its
+        own connect; sweeping again here would just ping the bus twice."""
         try:
-            self.init_hardware_eg()
+            if self.active_system in self._connected_systems:
+                pass
+            elif self.active_system == "electroglas":
+                self.init_hardware_eg()
+            else:
+                self.init_hardware()
         finally:
             self._startup_done = True
 
     def init_hardware(self):
+        self._connected_systems.add("accretech")
         self.log("[SYSTEM] Pinging Accretech hardware connections...")
         connections = [
             ("UF200R Prober",    "prober",   AccretechUF200R()),
@@ -551,7 +571,8 @@ class AtomicaDashboard(tk.Tk):
     }
 
     def init_hardware_eg(self):
-        profile = eg_profiles.active_name() 
+        self._connected_systems.add("electroglas")
+        profile = eg_profiles.active_name()
         self.log(f"[SYSTEM] Pinging Electroglas hardware — {eg_profiles.label(profile)}")
         # instruments.yaml is derived from the profile, so make sure it matches
         # the active bench before any driver reads an address out of it.
