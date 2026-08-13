@@ -1781,34 +1781,11 @@ class MainLayout(ttk.Frame):
     def _tab_probe_card(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Probe Card")
-        tab.rowconfigure(1, weight=1)
+        tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
 
-        ctrl = ttk.Frame(tab)
-        ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        self._pad_path_lbl = ttk.Label(ctrl, text="No folder selected", foreground="gray")
-        self._pad_path_lbl.pack(side="left", padx=10)
-        ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Label(ctrl, text="Layout:").pack(side="left")
-        self._pad_source_var = tk.StringVar(value="Custom")
-        pad_source_cb = ttk.Combobox(ctrl, textvariable=self._pad_source_var,
-                                     values=["ATA", "Custom"], state="readonly", width=8)
-        pad_source_cb.pack(side="left", padx=(4, 8))
-        pad_source_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_pad_source_change())
-        self._btn_pad_clear = ttk.Button(ctrl, text="🗑 Clear", state="disabled",
-                                         command=self._clear_custom_pads)
-        self._btn_pad_clear.pack(side="left", padx=2)
-        self._btn_pad_save = ttk.Button(ctrl, text="💾 Save Custom", state="disabled",
-                                        command=self._save_custom_pads)
-        self._btn_pad_save.pack(side="left", padx=2)
-        self._btn_pad_add_die = ttk.Button(ctrl, text="▭ Add Die", state="disabled",
-                                           command=self._add_custom_die)
-        self._btn_pad_add_die.pack(side="left", padx=2)
-        ttk.Label(ctrl, text="Custom Sketch",
-                 foreground="#6b7280", wraplength=420, justify="left").pack(side="left", padx=(10, 0))
-
         split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
-        split.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        split.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
 
         self.pin_wiring = ProbeCardWiringFrame(
             split,
@@ -1844,10 +1821,35 @@ class MainLayout(ttk.Frame):
         vsb.pack(side="right", fill="y")
         self._pad_tree.pack(fill="both", expand=True)
 
-        self.pad_panel = PadLayoutPanel(right_col, on_custom_change=self._refresh_pad_tree_from_custom,
+        pad_container = ttk.Frame(right_col)
+        right_col.add(pad_container, weight=1)
+        pad_container.rowconfigure(0, weight=1)
+        pad_container.columnconfigure(0, weight=1)
+
+        self.pad_panel = PadLayoutPanel(pad_container, on_custom_change=self._refresh_pad_tree_from_custom,
                                         get_pins=self.pin_wiring.get_wiring,
                                         rename_pad=self.pin_wiring.rename_pad)
-        right_col.add(self.pad_panel, weight=1)
+        self.pad_panel.grid(row=0, column=0, sticky="nsew")
+
+        pad_ctrl = ttk.Frame(pad_container)
+        pad_ctrl.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        ttk.Label(pad_ctrl, text="Layout:").pack(side="left")
+        self._pad_source_var = tk.StringVar(value="Custom")
+        pad_source_cb = ttk.Combobox(pad_ctrl, textvariable=self._pad_source_var,
+                                     values=["ATA", "Custom"], state="readonly", width=8)
+        pad_source_cb.pack(side="left", padx=(4, 8))
+        pad_source_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_pad_source_change())
+        self._btn_pad_clear = ttk.Button(pad_ctrl, text="🗑 Clear", state="disabled",
+                                         command=self._clear_custom_pads)
+        self._btn_pad_clear.pack(side="left", padx=2)
+        self._btn_pad_save = ttk.Button(pad_ctrl, text="💾 Save Custom", state="disabled",
+                                        command=self._save_custom_pads)
+        self._btn_pad_save.pack(side="left", padx=2)
+        self._btn_pad_add_die = ttk.Button(pad_ctrl, text="▭ Add Die", state="disabled",
+                                           command=self._add_custom_die)
+        self._btn_pad_add_die.pack(side="left", padx=2)
+        ttk.Label(pad_ctrl, text="Custom Sketch",
+                 foreground="#6b7280", wraplength=420, justify="left").pack(side="left", padx=(10, 0))
 
         self._on_pad_source_change()
 
@@ -1950,7 +1952,6 @@ class MainLayout(ttk.Frame):
             self.controller.check_system_ready()
 
     def load_pad_layout(self, folder_path):
-        self._pad_path_lbl.config(text=folder_path, foreground="black")
         pads = self.pad_panel.load_from_ata(folder_path)
         return self._populate_pad_tree_from_ata(pads)
 
