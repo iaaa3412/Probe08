@@ -46,7 +46,7 @@ ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "dmm", "relay1", "relay2", "relay3")
 class AtomicaDashboard(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Accretech Tester")
+        self.title("Electrical Prober")
         self.geometry("1400x800")
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -178,7 +178,7 @@ class AtomicaDashboard(tk.Tk):
         old_ui = self.ui
         carry_over_folder = old_ui._ata_folder
         self.active_system = system
-        self.title("Electroglas Tester" if system == "electroglas" else "Accretech Tester")
+        self.title("Electrical Prober")
         self._main_pane.forget(old_ui)
         if self._main_pane.panes():
             self._main_pane.insert(0, self.ui, weight=1)
@@ -273,10 +273,7 @@ class AtomicaDashboard(tk.Tk):
                 lbl_img.pack(side="left", padx=(10, 6), pady=4)
             except Exception:
                 pass
-        tk.Label(hdr, text="Test",
-                 bg="#374558", fg="white",
-                 font=("Arial", 13, "bold")).pack(side="left", padx=4)
-        tk.Label(hdr, text="Probe08 Automation",
+        tk.Label(hdr, text="Electrical Prober",
                  bg="#374558", fg="#f0a020",
                  font=("Arial", 13)).pack(side="left", padx=4)
 
@@ -621,11 +618,8 @@ class AtomicaDashboard(tk.Tk):
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
         if not (exec2_wm and exec2_wm._last_dies):
             missing.append("wafer map")
-        pin_wiring = getattr(self.ui, "pin_wiring", None)
-        if not (pin_wiring and pin_wiring.get_active_card() and pin_wiring.get_wiring()):
-            missing.append("probe card pinout")
         if not getattr(self.ui, "_exec2_steps", None):
-            missing.append("measurement recipe")
+            missing.append("recipe")
         required_instruments = (ACCRETECH_REQUIRED_DRIVERS if self.active_system == "accretech"
                                 else ELECTROGLAS_REQUIRED_DRIVERS)
         if not all(k in self.drivers for k in required_instruments):
@@ -666,6 +660,7 @@ class AtomicaDashboard(tk.Tk):
         style = ttk.Style()
         style.configure("Abort.TButton", foreground="red", font=("Arial", 9, "bold"))
         ttk.Button(toolbar, text="⏹ Abort", style="Abort.TButton", command=self.cmd_abort).pack(side="left", padx=6, pady=2)
+        ttk.Button(toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear).pack(side="left", padx=(0, 6), pady=2)
 
         ttk.Label(toolbar, text="ATA Folder:").pack(side="left", padx=(6, 2), pady=2)
         self._ata_picker_var = tk.StringVar()
@@ -677,10 +672,15 @@ class AtomicaDashboard(tk.Tk):
         self._ata_picker.bind("<<ComboboxSelected>>",
                               lambda _e: self._on_ata_picker_selected())
 
-        ttk.Button(toolbar, text="↻ Refresh", command=self.cmd_refresh_ata).pack(side="left", padx=2, pady=2)
+        # Moved to the Internal tab's own toolbar, next to Load/New ATA
+        # Folder.
+        # Not packed - the "ATA Folder:" picker above already names the
+        # loaded folder, so this text was a second copy of the same
+        # information. Left instantiated (just not shown) rather than
+        # removed outright, so nothing has to change everywhere else in
+        # this file that updates it via .config().
         self._ata_lbl = ttk.Label(toolbar, text="No ATA loaded", foreground="gray",
                                   font=("Segoe UI", 9))
-        self._ata_lbl.pack(side="left", padx=(2, 8), pady=2)
 
         # Which physical prober the active system is pointed at. The Electroglas
         # benches carry different instruments at different addresses, so this
@@ -701,7 +701,6 @@ class AtomicaDashboard(tk.Tk):
                                     font=("Segoe UI", 9))
         self._bench_lbl.pack(side="left", padx=(2, 8), pady=2)
         self._refresh_bench_picker()
-        ttk.Button(toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear).pack(side="left", padx=4, pady=2)
         self._routing_toggle_btn = ttk.Button(
             toolbar, text="▸ Show Routing", command=self.cmd_toggle_routing)
         self._refresh_routing_button()
@@ -775,7 +774,7 @@ class AtomicaDashboard(tk.Tk):
             except Exception:
                 self._bench_lbl.config(text="", foreground="gray")
         else:
-            self._bench_lbl.config(text="Accretech", foreground="gray")
+            self._bench_lbl.config(text="", foreground="gray")
         # A single-entry list is not a choice; make that visible rather than
         # letting someone click at it expecting something to happen.
         self._bench_picker.configure(
@@ -1059,7 +1058,7 @@ class AtomicaDashboard(tk.Tk):
 _SINGLE_INSTANCE_MUTEX_NAME = "Global\\AtomicaTesterSingleInstanceMutex"
 _ERROR_ALREADY_EXISTS = 183
 _SW_RESTORE = 9
-_APP_WINDOW_TITLES = ("Accretech Tester", "Electroglas Tester")
+_APP_WINDOW_TITLES = ("Electrical Prober",)
 
 
 def _find_other_instance_window() -> int:

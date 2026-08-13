@@ -353,6 +353,25 @@ def wired_channels(name: str) -> tuple:
     return tuple(sorted(set(out)))
 
 
+def wired_pin_labels(name: str) -> tuple:
+    """The physical probe-card pins actually landed on this bench's relay
+    card, e.g. probe02's ("A9","A11","A12","A13","A32","A33","A34","A36") -
+    see BENCH_WIRING["probe02"]["die_pins"] and SWITCHBOX_REPORT.txt 8C.
+
+    The card itself carries a B-side twin of each (B9, B32, ...) that the
+    operator confirmed are spare needles, NOT landed on the relay - so they
+    are deliberately excluded here rather than assumed usable. Only benches
+    with a recorded die_pins table (currently just probe02) return anything;
+    everywhere else this is empty, which callers should treat as "no
+    restriction known" rather than "nothing is wired".
+    """
+    wiring = bench_wiring(name)
+    pins = set()
+    for pair in (wiring.get("die_pins") or {}).values():
+        pins.update(str(p) for p in pair if p)
+    return tuple(sorted(pins))
+
+
 def die_of_channel_on(name: str, channel: int):
     for die, chans in bench_wiring(name)["die_sets"].items():
         if int(channel) in chans:

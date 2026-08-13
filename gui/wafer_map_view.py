@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 import csv
 import math
 import os
+from typing import Optional
 
 from recipe_panel import recipes_to_rows, rows_to_recipes, STEP_FIELDS
 import electroglas_pma
@@ -71,6 +72,12 @@ WAFER_MAP_SOURCES = {
     "GDS":       "ata_wafer_map_gds.csv",
     "Accretech": "ata_wafer_map_accretech.csv",
     "Electroglas": "ata_wafer_map_electroglas.csv",
+    # The single "published/active" map Wafer Builder writes (Shot x Shot
+    # Map x Die Map), shared by both systems - distinct from Accretech's own
+    # hardware-extracted map and from GDS. Many named map definitions can
+    # exist per ATA folder (see RecipeGenPanel's Map Name / Save Map /
+    # dropdown); this file is always whichever one was last published.
+    "Wafer Builder": "ata_wafer_map_builder.csv",
 }
 
 
@@ -91,8 +98,12 @@ class WaferMapPanel(ttk.LabelFrame):
         "CONTACT_FAIL": "#fb923c",
     }
 
-    def __init__(self, parent):
-        super().__init__(parent, text="Wafer Map")
+    def __init__(self, parent, show_title: bool = True):
+        # show_title=False for callers that already wrap this in their own
+        # titled LabelFrame (e.g. the Run tab's map_lf "Wafer Map") - two
+        # nested "Wafer Map" titles said the same thing twice.
+        self._show_title = show_title
+        super().__init__(parent, text="Wafer Map" if show_title else "")
         self.canvas = tk.Canvas(self, bg="white")
         self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
         self.dies = {}
@@ -313,7 +324,8 @@ class WaferMapPanel(ttk.LabelFrame):
                 150, 80, text=f"{filename} not found\nin selected folder.",
                 fill="red", justify="center"
             )
-            self.config(text="Wafer Map")
+            if self._show_title:
+                self.config(text="Wafer Map")
             self._run_on_redraw()
             return 0
 
@@ -329,7 +341,8 @@ class WaferMapPanel(ttk.LabelFrame):
         dies = self._parse_die_list(raw)
         self._last_dies = dies
         self._draw_from_die_list(dies)
-        self.config(text=f"Wafer Map — {len(self.dies)} dies")
+        if self._show_title:
+            self.config(text=f"Wafer Map — {len(self.dies)} dies")
         return len(self.dies)
 
     def _parse_die_list(self, raw):
@@ -496,13 +509,17 @@ def _safe_card_filename(name: str) -> str:
 class ProbeCardWiringFrame(ttk.LabelFrame):
 
     def __init__(self, parent, get_folder=None, log_fn=None, on_card_change=None,
-                 on_pins_change=None, system: str = "accretech"):
+                 on_pins_change=None, system: str = "accretech", on_save_all=None):
         self._system = system
         super().__init__(parent, text=self._title())
         self._get_folder = get_folder or (lambda: None)
         self._log = log_fn or (lambda _msg: None)
         self._on_card_change = on_card_change or (lambda _name: None)
         self._on_pins_change = on_pins_change or (lambda: None)
+        # Best-effort extra save fired at the end of Save All - lets the
+        # owning tab (Pad Layout's Custom sketch, currently) piggyback on
+        # the one save button instead of needing its own.
+        self._on_save_all = on_save_all or (lambda: None)
 
         self._cards: dict = {}
         self._current: str = ""
@@ -527,7 +544,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                                   height=7, selectmode="browse")
         for cid, text, width, anch in (("pin", "Pin", 45, "center"),
                                        ("pad", "Pad", 80, "w"),
-                                       ("net", "Net", 90, "w")):
+                                       ("net", "Notes", 90, "w")):
             self._tree.heading(cid, text=text)
             self._tree.column(cid, width=width, anchor=anch)
         self._tree.grid(row=1, column=0, sticky="nsew", padx=(4, 0), pady=(2, 0))
@@ -542,10 +559,19 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         self._pad_var = tk.StringVar()
         self._net_var = tk.StringVar()
         ttk.Label(ed, text="Pin").pack(side="left")
-        ttk.Entry(ed, textvariable=self._pin_var, width=4).pack(side="left", padx=(1, 4))
+        # Restricted to whatever pins/channels are actually wired on the
+        # active bench (see _valid_pins) - a free-typed pin here can't be
+        # closed on real hardware no matter what the recipe says, so it is
+        # not offered. postcommand re-derives the list on every dropdown
+        # open, so widening Switch Settings (Accretech) is picked up live
+        # with nothing to keep in sync by hand.
+        self._pin_cb = ttk.Combobox(ed, textvariable=self._pin_var, width=6,
+                                    postcommand=self._refresh_pin_choices)
+        self._pin_cb.pack(side="left", padx=(1, 4))
+        self._refresh_pin_choices()
         ttk.Label(ed, text="Pad").pack(side="left")
         ttk.Entry(ed, textvariable=self._pad_var, width=7).pack(side="left", padx=(1, 4))
-        ttk.Label(ed, text="Net").pack(side="left")
+        ttk.Label(ed, text="Notes").pack(side="left")
         ttk.Entry(ed, textvariable=self._net_var, width=8).pack(side="left", padx=(1, 4))
 
         btns = ttk.Frame(self)
@@ -554,7 +580,6 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         ttk.Button(btns, text="✎ Update", command=self._update_selected).pack(
             side="left", padx=2)
         ttk.Button(btns, text="🗑 Remove", command=self._remove).pack(side="left", padx=2)
-        ttk.Button(btns, text="💾 Save All", command=self._save).pack(side="right")
         ttk.Button(btns, text="📂 Load .csv…", command=self._load_clicked).pack(
             side="right", padx=(0, 2))
 
@@ -576,12 +601,87 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             side="left", padx=1)
         ttk.Button(bar, text="🗑 Delete", width=11, command=self._delete_card).pack(
             side="left", padx=1)
+        ttk.Button(bar, text="⭐ Set Default", width=12,
+                  command=self._set_default_card).pack(side="left", padx=(6, 1))
+        ttk.Button(bar, text="💾 Save All", command=self._save).pack(side="right", padx=1)
+
+    # ------------------------------------------------------------------
+    # DEFAULT CARD — probe cards live in one shared probe_cards\ folder per
+    # ATA folder, but Accretech and Electroglas need different cards active
+    # (different pin formats - see _valid_pins), so the marker is filed per
+    # system rather than one default for the whole folder.
+    # ------------------------------------------------------------------
+    def _default_marker_path(self) -> Optional[str]:
+        d = self._ata_probe_cards_dir or (
+            os.path.join(self._get_folder() or "", "probe_cards")
+            if self._get_folder() else None)
+        if not d:
+            return None
+        return os.path.join(d, f"_default_{self._system}.txt")
+
+    def _set_default_card(self):
+        if not self._current:
+            messagebox.showerror("No Probe Card", "Select a probe card first.")
+            return
+        path = self._default_marker_path()
+        if not path:
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._current)
+        except OSError as exc:
+            messagebox.showerror("Set Default Failed", str(exc))
+            return
+        self._log(f"[WIRING] '{self._current}' set as the default {self._system} "
+                 f"probe card for this ATA folder.")
+        messagebox.showinfo(
+            "Default Set", f"'{self._current}' will now auto-select whenever "
+            f"this ATA folder is opened on {self._system.capitalize()}.")
+
+    def _default_card_name(self) -> str:
+        path = self._default_marker_path()
+        if not path or not os.path.isfile(path):
+            return ""
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
 
     def get_active_card(self) -> str:
         return self._current
 
     def get_card_names(self) -> list:
         return list(self._cards.keys())
+
+    def get_card_names_for_system(self) -> list:
+        """Card names whose pins are ALL valid for the active bench right
+        now - Probe cards are shared between Accretech and Electroglas (one
+        probe_cards\\ folder per ATA folder), so nothing stops a card wired
+        for one system's pin format from also being listed for the other.
+        This is what the Recipe tab's card picker filters through, so a
+        mismatched card can't be selected there and have pins picked for a
+        recipe that cannot actually close them on this bench. get_card_names
+        (the Probe Card tab's own list) is NOT filtered - you still need to
+        be able to open a mismatched card to fix or delete it.
+
+        A card with no pins yet (brand new) passes - there is nothing on it
+        to conflict with. When _valid_pins doesn't know a restricted list
+        for this bench (e.g. probe03), nothing is filtered either.
+        """
+        valid = self._valid_pins()
+        if not valid:
+            return self.get_card_names()
+        valid_set = set(valid)
+        out = []
+        for name, rows in self._cards.items():
+            pins = {(r.get("pin") or "").strip() for r in rows
+                    if (r.get("pin") or "").strip()}
+            if pins <= valid_set:
+                out.append(name)
+        return out
 
     def _refresh_card_picker(self):
         names = list(self._cards.keys())
@@ -1047,7 +1147,9 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         self._card_die_pins.update(found_die_pins)
 
         if self._current not in self._cards:
-            self._current = next(iter(self._cards), "")
+            default = self._default_card_name()
+            self._current = default if default in self._cards else \
+                next(iter(self._cards), "")
         self._rows = self._cards.get(self._current, [])
         self._refresh()
         self._refresh_card_picker()
@@ -1088,6 +1190,11 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                 self._log(f"[WIRING] Save error for '{name}': {exc}")
         self._log(f"[WIRING] Saved {len(saved)} probe card(s) (wiring + recipes), "
                   "one file each")
+        try:
+            self._on_save_all()
+        except Exception as exc:
+            self._log(f"[WIRING] Save All: extra save failed: "
+                     f"{type(exc).__name__}: {exc}")
 
 
     def get_die_pins(self, card: str = None) -> dict:
@@ -1200,6 +1307,33 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             self._refresh()
             self._save()
         return len(hits)
+
+    def _valid_pins(self):
+        """Every real, wired pin/channel the active bench can actually
+        close, or None when no restricted list is known (leaves the field a
+        free-typed Entry rather than a dropdown, since a wrong restriction
+        would be worse than none - see hp_switchbox.wired_pin_labels)."""
+        if self._system == "accretech":
+            try:
+                import switch_topology
+                pins = switch_topology.pin_numbers()
+            except Exception:
+                return None
+            return pins or None
+        try:
+            from instruments import eg_profiles
+            from instruments.hp_switchbox import wired_pin_labels
+            pins = wired_pin_labels(eg_profiles.active_name())
+        except Exception:
+            return None
+        return list(pins) if pins else None
+
+    def _refresh_pin_choices(self):
+        pins = self._valid_pins()
+        if pins:
+            self._pin_cb.config(values=pins, state="readonly")
+        else:
+            self._pin_cb.config(values=[], state="normal")
 
     def get_pin_choices(self) -> list:
         choices = []

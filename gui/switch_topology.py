@@ -103,6 +103,14 @@ def total_pins() -> int:
     return sum(spec.get("cols", 0) for spec in slots())
 
 
+def pin_numbers() -> list:
+    """Every valid probe-card pin number on this bench, as strings ("1".."24"
+    by default) - always re-derived from the live topology (slots x cols),
+    so widening Switch Settings later widens this too with no separate list
+    to keep in sync."""
+    return [str(n) for n in range(1, total_pins() + 1)]
+
+
 def slot_and_col_for_pin(pin_no: int):
     remaining = pin_no
     for spec in slots():

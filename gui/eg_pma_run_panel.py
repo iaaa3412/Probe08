@@ -127,7 +127,6 @@ class EgPmaRunPanel(ttk.Frame):
         self.rowconfigure(5, weight=1)
 
         self._build_recipe_row()
-        self._build_info()
         self._build_anchor()
         self._build_controls()
         self._build_selection()
@@ -151,38 +150,24 @@ class EgPmaRunPanel(ttk.Frame):
     # -- layout -------------------------------------------------------------
 
     def _build_recipe_row(self):
-        row = ttk.Frame(self)
-        row.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        row.columnconfigure(1, weight=1)
-        ttk.Label(row, text="Recipe:").grid(row=0, column=0, sticky="w")
+        # No longer displayed - the Run tab's own Recipe dropdown/steps
+        # label (instrument_panel.py's ctrl bar) already shows what's
+        # loaded, and having both said it twice. self._recipe_var is kept
+        # alive since load_recipe()/forget_recipe() still .set() it.
         self._recipe_var = tk.StringVar(value="(none loaded)")
-        ttk.Label(row, textvariable=self._recipe_var, foreground="#0077cc",
-                  font=("Consolas", 9)).grid(row=0, column=1, sticky="w", padx=6)
-        # Nothing here loads a recipe. The PMA Process tab parses recipes and
-        # owns the source folder, and its LOAD ALL is the single entry point -
-        # it builds the recipe, adopts it here, and attaches the touchdown
-        # list in one go. A second way in from this side let the Run tab and
-        # the Recipe tab end up on different PMAs with nothing to say so.
-        # adopt_from_process() still runs by itself at startup.
-
-    def _build_info(self):
-        lf = ttk.LabelFrame(self, text="Recipe", padding=6)
-        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
-        self._info_var = tk.StringVar(value="Load a .PMA to begin.")
-        ttk.Label(lf, textvariable=self._info_var, font=("Consolas", 8),
-                  justify="left").pack(anchor="w")
 
     def _build_anchor(self):
-        lf = ttk.LabelFrame(self, text="Where is the chuck now?", padding=6)
+        # self._info_var still exists (set from _fill_info/_clear) even
+        # though nothing displays it anymore - the "Recipe" text-description
+        # section (die size/quad pitch/structure/measurement plan) was
+        # removed rather than left as dead-but-visible clutter; _fill_info
+        # itself is untouched since other code still calls it for its other
+        # side effects.
+        self._info_var = tk.StringVar(value="Load a .PMA to begin.")
+
+        lf = ttk.LabelFrame(self, text="Set Initial", padding=6)
         lf.grid(row=2, column=0, sticky="ew", padx=6, pady=2)
         lf.columnconfigure(1, weight=1)
-
-        ttk.Label(lf, font=("Arial", 8), foreground="#888", justify="left",
-                  wraplength=430, text=(
-                      "Align, then land the chuck on a die you can name. Nothing moves "
-                      "until you set this — the prober holds no map, so this is the only "
-                      "thing tying the recipe to the wafer.")
-                  ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 5))
 
         ttk.Label(lf, text="Chuck is on:").grid(row=1, column=0, sticky="w")
         self._anchor_var = tk.StringVar()
@@ -200,21 +185,19 @@ class EgPmaRunPanel(ttk.Frame):
                                              sticky="w", pady=(4, 0))
 
     def _build_controls(self):
+        # Run + Selected die combined into one LabelFrame - both are small
+        # once their grey explanatory text is gone, so two titled boxes was
+        # more chrome than content.
         lf = ttk.LabelFrame(self, text="Run", padding=6)
         lf.grid(row=3, column=0, sticky="ew", padx=6, pady=2)
 
+        # ⏮ Back / ⏭ Next moved to the Chuck Position section, ▶ Run / ⏹ Stop
+        # to the top bar (▶ Run next to Test Die; ⏹ Stop Run there now also
+        # stops this pane's run) - see instrument_panel._tab_execution2.
         btns = ttk.Frame(lf)
         btns.pack(fill="x")
-        self._back_btn = ttk.Button(btns, text="⏮ Back", command=self._step_back)
-        self._back_btn.pack(side="left")
-        self._step_btn = ttk.Button(btns, text="⏭ Next", command=self._step_once)
-        self._step_btn.pack(side="left", padx=(4, 0))
-        self._run_btn = ttk.Button(btns, text="▶ Run", command=self._run_all)
-        self._run_btn.pack(side="left", padx=(6, 0))
-        self._stop_btn = ttk.Button(btns, text="⏹ Stop", command=self._stop)
-        self._stop_btn.pack(side="left", padx=(6, 0))
         ttk.Button(btns, text="↻ Sync ?P", command=self._sync_position).pack(
-            side="left", padx=(6, 0))
+            side="left")
         ttk.Button(btns, text="🗺 Sync Run map", command=self._sync_run_map).pack(
             side="left", padx=(6, 0))
 
@@ -234,9 +217,6 @@ class EgPmaRunPanel(ttk.Frame):
             value=MOTION_UM, variable=self._motion_var,
             command=self._on_motion_mode)
         self._um_radio.pack(side="left", padx=(8, 0))
-        self._motion_note = ttk.Label(lf, font=("Arial", 8), foreground="#888",
-                                      justify="left", wraplength=430, text="")
-        self._motion_note.pack(anchor="w")
         self._on_motion_mode()
 
         self._status_var = tk.StringVar(value="idle")
@@ -250,9 +230,8 @@ class EgPmaRunPanel(ttk.Frame):
                   foreground="#2563eb", wraplength=430, justify="left").pack(
                   anchor="w", pady=(2, 0))
 
-    def _build_selection(self):
-        lf = ttk.LabelFrame(self, text="Selected die", padding=6)
-        lf.grid(row=4, column=0, sticky="ew", padx=6, pady=2)
+        ttk.Separator(lf, orient="horizontal").pack(fill="x", pady=(8, 6))
+        ttk.Label(lf, text="Selected die:", font=("Arial", 9, "bold")).pack(anchor="w")
         ttk.Label(lf, font=("Arial", 8), foreground="#888", justify="left",
                   wraplength=430, text=("Click a square on the Run tab's wafer map, or a "
                                         "row in the table below.")).pack(anchor="w")
@@ -263,6 +242,12 @@ class EgPmaRunPanel(ttk.Frame):
                                     command=self._goto_selected)
         self._goto_btn.pack(anchor="w")
         self._goto_btn.state(["disabled"])
+
+    def _build_selection(self):
+        # Folded into _build_controls's "Run" LabelFrame above - kept as a
+        # no-op so __init__'s build sequence and any external callers of
+        # _build_selection don't need to change.
+        pass
 
     def _build_table(self):
         lf = ttk.LabelFrame(self, text="Touchdowns", padding=4)
@@ -1567,17 +1552,10 @@ class EgPmaRunPanel(ttk.Frame):
         return True
 
     def _on_motion_mode(self):
-        um = self._motion_var.get() == MOTION_UM
-        self._motion_note.config(text=(
-            "Microns, converted to MM counts by the driver. The count size is "
-            "NOT 1 um — measured 2.5 um/count, most likely 0.1 mil (2.54). "
-            "Those two differ by 1.6%, so confirm over a long move before "
-            "trusting this on a wafer that matters."
-            if um else
-            "Relative die-index moves (MD). The PROBER applies the pitch, so "
-            "its SET PRMTR die size must match this recipe or every touchdown "
-            "lands between sites. ?P fully verifies each move, and the step is "
-            "bounds-checked."))
+        # Grey explanatory text (Microns/MD note) removed - _motion_var
+        # itself still drives which radio is selected and which move
+        # command _step_once/_run_all use.
+        pass
 
     # -- selection: pick a die on the map or in the table --------------------
 

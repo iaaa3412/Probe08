@@ -31,7 +31,14 @@ _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", 
                   # rather than inserted so existing card CSVs, which are read
                   # by column NAME, keep loading unchanged; a file without the
                   # column just yields "" and the meter autoranges as before.
-                  "mrange")
+                  "mrange",
+                  # Which die of the shot (Wafer Builder's Shot-tab order,
+                  # 1-based) this step's measurement belongs to. Replaces the
+                  # old "(Die N)" name-suffix convention as the source of
+                  # truth for per-die results attribution - see
+                  # instrument_panel._exec2_run_steps_once. Blank/unparsable
+                  # defaults to 1, so a single-die shot needs nothing set.
+                  "die")
 
 # The one step type that takes four pins: source HI/LO carry the test current,
 # sense HI/LO read the voltage right at the pad, so the probe/lead resistance
@@ -152,6 +159,14 @@ def _serialize_step(step: dict) -> str:
 
 def _normalize_step(step: dict) -> dict:
     t = step["type"]
+    # Blank/unparsable (old recipes, or a hand-edited CSV with no "die"
+    # column at all) defaults to 1 - the common single-die-per-shot case
+    # then needs nothing set. Applies to every step type, including
+    # passfail/delay/open, which the branches below return out of early.
+    try:
+        step["die"] = str(max(1, int(float(step.get("die") or "1"))))
+    except (TypeError, ValueError):
+        step["die"] = "1"
     # Enforced here rather than only in the editor, so a recipe hand-edited or
     # imported with sense pins on a 2-wire step cannot smuggle them through.
     if t != FOUR_WIRE_TYPE:
@@ -622,7 +637,7 @@ class RecipePanel(ttk.Frame):
     def __init__(self, parent, controller, get_pins=None, get_wiring=None,
                  get_active_card=None, save_recipes=None, system: str = "accretech",
                  switch_card=None, get_card_names=None, get_ata_folder=None,
-                 get_die_pins=None):
+                 get_die_pins=None, on_save=None):
         super().__init__(parent)
         self.controller = controller
         self._get_pins = get_pins or (lambda: [])
@@ -634,6 +649,9 @@ class RecipePanel(ttk.Frame):
         self._switch_card_cb = switch_card or (lambda _name: None)
         self._get_card_names = get_card_names or (lambda: [])
         self._get_ata_folder = get_ata_folder or (lambda: None)
+        # Save-also-loads-into-Run-tab redundancy for the ⟳-less Recipe
+        # dropdown on the Run tab - see _save() below.
+        self._on_save = on_save or (lambda _name: None)
         self._conn_viewer = None
         self._system = system
         if system == "electroglas":
@@ -790,11 +808,12 @@ class RecipePanel(ttk.Frame):
 
 
     def _build_body(self):
-        body = ttk.Frame(self)
+        # A PanedWindow (drag sash) rather than fixed grid-row weights, so the
+        # Steps/Touchdowns split is something the user can resize by hand -
+        # not just something that happens to grow proportionally when the
+        # window does.
+        body = ttk.PanedWindow(self, orient="vertical")
         body.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
-        body.rowconfigure(0, weight=3)
-        body.rowconfigure(1, weight=2)
-        body.columnconfigure(0, weight=1)
         self._build_steps(body)
         self._build_sites(body)
 
@@ -811,7 +830,7 @@ class RecipePanel(ttk.Frame):
     def _build_sites(self, parent):
         sf = ttk.LabelFrame(parent, text="Touchdowns (which dies this recipe probes)",
                             padding=6)
-        sf.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        parent.add(sf, weight=2)
         sf.rowconfigure(2, weight=1)
         sf.columnconfigure(0, weight=1)
 
@@ -976,23 +995,18 @@ class RecipePanel(ttk.Frame):
     def _build_steps(self, parent):
         sf = ttk.LabelFrame(parent, text="Measurement Steps (per shot)",
                             padding=6)
-        sf.grid(row=0, column=0, sticky="nsew")
-        sf.rowconfigure(1, weight=1)
+        parent.add(sf, weight=3)
+        sf.rowconfigure(0, weight=1)
         sf.columnconfigure(0, weight=1)
 
-        ttk.Label(sf,
-                  text="Don't edit",
-                  foreground="gray", font=("Arial", 8), justify="left", wraplength=760).grid(
-                  row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-
-        cols = ("n", "name", "type", "instrument", "mode", "chan", "target",
+        cols = ("n", "name", "type", "instrument", "mode", "chan", "target", "die",
                 "hi", "lo", "his", "los",
                 "level", "limit", "avg", "min", "max", "shape", "freq", "conn")
         self._step_tree = ttk.Treeview(sf, columns=cols, show="headings",
                                        height=5, selectmode="browse")
         heads = [("n", "#", 28), ("name", "Name", 90), ("type", "Type", 75),
                  ("instrument", "Instr", 50), ("mode", "Mode", 55), ("chan", "Chan", 40),
-                 ("target", "Target", 62),
+                 ("target", "Target", 62), ("die", "Die #", 40),
                  ("hi", "HI pin", 55), ("lo", "LO pin", 55),
                  ("his", "SnsHI", 52), ("los", "SnsLO", 52),
                  ("level", "Level", 52), ("limit", "Limit", 50),
@@ -1006,9 +1020,15 @@ class RecipePanel(ttk.Frame):
                 cid, width=width,
                 anchor="center" if cid in ("n", "type", "instrument", "mode", "chan",
                                            "shape") else "w")
-        self._step_tree.grid(row=1, column=0, sticky="nsew")
+        # All 20 fields stay in `columns`/get inserted (and saved) in full -
+        # `displaycolumns` just narrows what's shown so the table reads at a
+        # glance. Selecting a row still pulls every field into the editor
+        # below from self._steps, not from what's on screen.
+        self._step_tree["displaycolumns"] = (
+            "n", "name", "type", "die", "hi", "lo", "level")
+        self._step_tree.grid(row=0, column=0, sticky="nsew")
         ssb = ttk.Scrollbar(sf, orient="vertical", command=self._step_tree.yview)
-        ssb.grid(row=1, column=1, sticky="ns")
+        ssb.grid(row=0, column=1, sticky="ns")
         self._step_tree.configure(yscrollcommand=ssb.set)
         self._step_tree.bind("<<TreeviewSelect>>", lambda _e: self._step_to_editor())
 
@@ -1017,13 +1037,14 @@ class RecipePanel(ttk.Frame):
         # needing to widen the window, now that the per-field hint labels
         # (which used to force the old rows wide) are gone.
         editor = ttk.Frame(sf)
-        editor.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        editor.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         for c in range(8):
             editor.columnconfigure(c, weight=0)
 
         self._ed_vars = {k: tk.StringVar() for k in _STEP_FIELDS}
         self._ed_vars["type"].set("resistance")
         self._ed_vars["mode"].set("measure")
+        self._ed_vars["die"].set("1")
 
         def _lbl(r, c, text):
             ttk.Label(editor, text=text).grid(row=r, column=c, sticky="e", padx=(6, 2), pady=2)
@@ -1057,11 +1078,17 @@ class RecipePanel(ttk.Frame):
                                        postcommand=self._refresh_target_values)
         self._target_cb.grid(row=1, column=3, sticky="w")
         _lbl(1, 4, "HI:")
+        # readonly - a step can only pick a pin actually on the active probe
+        # card, which itself can now only carry pins the active bench really
+        # has wired (see ProbeCardWiringFrame._valid_pins). A free-typed pin
+        # here would look plausible but close nothing on real hardware.
         self._hi_cb = ttk.Combobox(editor, textvariable=self._ed_vars["hi"], width=8,
+                                   state="readonly",
                                    postcommand=lambda: self._refresh_pin_values(self._hi_cb))
         self._hi_cb.grid(row=1, column=5, sticky="w")
         _lbl(1, 6, "LO:")
         self._lo_cb = ttk.Combobox(editor, textvariable=self._ed_vars["lo"], width=8,
+                                   state="readonly",
                                    postcommand=lambda: self._refresh_pin_values(self._lo_cb))
         self._lo_cb.grid(row=1, column=7, sticky="w")
         self._pin_widgets = [self._hi_cb, self._lo_cb]
@@ -1070,10 +1097,12 @@ class RecipePanel(ttk.Frame):
         # only ever enabled for "ohmf" - see _on_type_change.
         _lbl(5, 0, "Sense HI:")
         self._his_cb = ttk.Combobox(editor, textvariable=self._ed_vars["his"], width=8,
+                                    state="readonly",
                                     postcommand=lambda: self._refresh_pin_values(self._his_cb))
         self._his_cb.grid(row=5, column=1, sticky="w")
         _lbl(5, 2, "Sense LO:")
         self._los_cb = ttk.Combobox(editor, textvariable=self._ed_vars["los"], width=8,
+                                    state="readonly",
                                     postcommand=lambda: self._refresh_pin_values(self._los_cb))
         self._los_cb.grid(row=5, column=3, sticky="w")
         self._sense_widgets = [self._his_cb, self._los_cb]
@@ -1114,10 +1143,18 @@ class RecipePanel(ttk.Frame):
         self._nplc_ent.grid(row=4, column=1, sticky="w")
         _lbl(4, 2, "Conn:")
         conn_ent = ttk.Entry(editor, textvariable=self._ed_vars["conn"], width=16)
-        conn_ent.grid(row=4, column=3, columnspan=2, sticky="w")
-        conn_btn = ttk.Button(editor, text="⚙", width=3, command=self._conn_from_editor)
-        conn_btn.grid(row=4, column=5, sticky="w")
-        self._conn_widgets = [conn_ent, conn_btn]
+        conn_ent.grid(row=4, column=3, columnspan=3, sticky="w")
+        # ⚙ button used to sit right here, unlabeled - moved down to the
+        # button bar, next to ✓ Validate, as "Compute Connection".
+        self._conn_widgets = [conn_ent]
+        _lbl(4, 6, "Die #:")
+        # Which die of the shot this measurement belongs to (Wafer Builder
+        # Shot tab's die order, 1-based) - what the Results tab uses to
+        # paint the right square. "1" covers the common single-die-per-shot
+        # case with nothing to set.
+        self._die_ent = ttk.Spinbox(editor, textvariable=self._ed_vars["die"],
+                                    from_=1, to=64, width=4)
+        self._die_ent.grid(row=4, column=7, sticky="w")
 
         self._on_type_change()
 
@@ -1136,11 +1173,14 @@ class RecipePanel(ttk.Frame):
         self._btn_move_down = ttk.Button(btns, text="▼", width=3,
                                          command=lambda: self._step_move(+1))
         self._btn_move_down.pack(side="left", padx=2)
+        self._btn_conn = ttk.Button(btns, text="⚙ Compute Connection",
+                                    command=self._conn_from_editor)
+        self._btn_conn.pack(side="left", padx=(10, 2))
+        self._btn_recompute = ttk.Button(btns, text="↻ Compute All",
+                                         command=self._recompute_all)
+        self._btn_recompute.pack(side="left", padx=2)
         ttk.Button(btns, text="✓ Validate",
                    command=self._validate_clicked).pack(side="left", padx=(10, 2))
-        self._btn_recompute = ttk.Button(btns, text="↻ Recompute connections",
-                                         command=self._recompute_all)
-        self._btn_recompute.pack(side="right", padx=2)
 
     def _refresh_pin_values(self, cb):
         tokens = []
@@ -1357,6 +1397,9 @@ class RecipePanel(ttk.Frame):
                 detail.append(f"reset SMU {ref.get('chan') or 'A'} output")
             return channels, detail, []
 
+        if self._system == "electroglas":
+            return self._step_connections_eg(step)
+
         by_field = switch_topology.rows_for_fields(t, step.get("chan") or "",
                                                    step.get("instrument") or "")
         roles = switch_topology.row_roles()
@@ -1382,6 +1425,37 @@ class RecipePanel(ttk.Frame):
                         f"{ch} = {switch_topology.role_label(roles.get(row))} × pin {pin} "
                         f"(slot {slot} col {col:02d})")
         return channels, detail, unresolved
+
+    def _step_connections_eg(self, step: dict):
+        """Electroglas equivalent of the block above.
+
+        There is no per-pin crosspoint here - the relay card selects a whole
+        die of the 2x2 shot at once (see hp_switchbox.BENCH_WIRING), so the
+        step's `die` field is what decides the channel(s), not its HI/LO pin
+        names. HI/LO are still checked against the card's wiring below (in
+        validate_recipe), just not used to compute the connection.
+        """
+        try:
+            from instruments import eg_profiles
+            from instruments.hp_switchbox import bench_wiring
+        except Exception as e:
+            return [], [], [f"(hp_switchbox unavailable: {e})"]
+        bench = eg_profiles.active_name()
+        wiring = bench_wiring(bench)
+        die_sets = wiring.get("die_sets") or {}
+        if not die_sets:
+            return [], [], [f"no relay wiring recorded for bench '{bench}'"]
+        try:
+            die = int(step.get("die") or "1")
+        except ValueError:
+            die = 1
+        chans = die_sets.get(die)
+        if not chans:
+            return [], [], [f"die {die} (bench '{bench}' has no channel mapped "
+                            f"for it — known dies: {sorted(die_sets)})"]
+        channels = [f"{int(c):02d}" for c in chans]
+        detail = [f"bench '{bench}': die {die} -> CH" + "/".join(channels)]
+        return channels, detail, []
 
     def _update_connections(self):
         lines = []
@@ -1422,6 +1496,10 @@ class RecipePanel(ttk.Frame):
 
 
     _CHAN_RE = re.compile(r"^[24][A-H](0[1-9]|1[0-2])$")
+    # Electroglas conn strings are relay channel numbers ("00".."15"), zero
+    # padded by die_channels_for_bench/_step_connections_eg - a different
+    # shape entirely from Accretech's crosspoint channel spec above.
+    _CHAN_RE_EG = re.compile(r"^(0[0-9]|1[0-5])$")
 
     def validate_recipe(self) -> list:
         issues = []
@@ -1528,18 +1606,31 @@ class RecipePanel(ttk.Frame):
                         issues.append(f"ERROR {tag}: {' and '.join(names)} are the "
                                       f"same pin ({val}) — 4-wire needs four "
                                       f"separate pins")
-                rows = switch_topology.rows_for_fields(t, s.get("chan") or "", instrument)
-                for field, role in (("his", "SHI"), ("los", "SLO")):
-                    if s.get(field, "").strip() and not rows.get(field):
-                        issues.append(f"ERROR {tag}: no switch row is assigned "
-                                      f"DMM {role} — add one in Switch Settings "
-                                      f"or the sense leg will not be connected")
+                if self._system != "electroglas":
+                    # Accretech's crosspoint needs a row explicitly assigned
+                    # to SHI/SLO in Switch Settings - Electroglas's relay
+                    # wiring has no such per-role assignment to check.
+                    rows = switch_topology.rows_for_fields(t, s.get("chan") or "", instrument)
+                    for field, role in (("his", "SHI"), ("los", "SLO")):
+                        if s.get(field, "").strip() and not rows.get(field):
+                            issues.append(f"ERROR {tag}: no switch row is assigned "
+                                          f"DMM {role} — add one in Switch Settings "
+                                          f"or the sense leg will not be connected")
             _ch, _det, unresolved = self.step_connections(s)
             if unresolved:
                 issues.append(f"ERROR {tag}: pins not resolvable / out of range: "
                               + ", ".join(unresolved))
             for token in pin_tokens:
-                pin = self._resolve_pin(token) if token else None
+                if not token:
+                    continue
+                if self._system == "electroglas":
+                    # Electroglas HI/LO already store the physical pin label
+                    # (e.g. "A32"), not something to resolve first.
+                    if wiring_pins and token not in wiring_pins:
+                        issues.append(f"WARN {tag}: pin '{token}' is not defined "
+                                      "in the probe card wiring")
+                    continue
+                pin = self._resolve_pin(token)
                 if pin is not None and wiring_pins and str(pin) not in wiring_pins:
                     issues.append(f"WARN {tag}: pin {pin} ('{token}') is not defined "
                                   "in the probe card wiring")
@@ -1592,21 +1683,29 @@ class RecipePanel(ttk.Frame):
             if not conn:
                 issues.append(f"ERROR {tag}: no switch closures stored")
                 continue
-            bad = [c for c in conn.split(",") if not self._CHAN_RE.match(c)]
+            chan_re = self._CHAN_RE_EG if self._system == "electroglas" else self._CHAN_RE
+            bad = [c for c in conn.split(",") if not chan_re.match(c)]
             if bad:
                 issues.append(f"ERROR {tag}: invalid channel(s): {', '.join(bad)}")
                 continue
-            _HI_ROWS = set("ACFGH")
-            for ch in conn.split(","):
-                pin_key = (ch[0], ch[2:])
-                for other, other_tag in closed.items():
-                    if ((other[0], other[2:]) == pin_key and other[1] != ch[1]
-                            and ch[1] in _HI_ROWS and other[1] in _HI_ROWS):
-                        issues.append(
-                            f"WARN {tag}: {ch} puts a second instrument HI row on "
-                            f"the same pin as {other} (closed by {other_tag}) — "
-                            "intended bias, or missing open step?")
-                closed[ch] = tag
+            if self._system == "electroglas":
+                # No row/role concept on the relay card to check for a
+                # second-HI-on-the-same-pin conflict - just track what is
+                # closed, for the "still closed at the end" check below.
+                for ch in conn.split(","):
+                    closed[ch] = tag
+            else:
+                _HI_ROWS = set("ACFGH")
+                for ch in conn.split(","):
+                    pin_key = (ch[0], ch[2:])
+                    for other, other_tag in closed.items():
+                        if ((other[0], other[2:]) == pin_key and other[1] != ch[1]
+                                and ch[1] in _HI_ROWS and other[1] in _HI_ROWS):
+                            issues.append(
+                                f"WARN {tag}: {ch} puts a second instrument HI row on "
+                                f"the same pin as {other} (closed by {other_tag}) — "
+                                "intended bias, or missing open step?")
+                    closed[ch] = tag
 
         for idx in sorted(outputs_on):
             s = outputs_on[idx]
@@ -1865,7 +1964,7 @@ class RecipePanel(ttk.Frame):
             self._step_tree.insert("", "end", values=(
                 i, step.get("name", ""), step.get("type", ""),
                 step.get("instrument", ""), step.get("mode", ""),
-                step.get("chan", ""), step.get("target", ""),
+                step.get("chan", ""), step.get("target", ""), step.get("die", "1"),
                 step.get("hi", ""), step.get("lo", ""),
                 step.get("his", ""), step.get("los", ""),
                 step.get("level", ""), step.get("limit", ""),
@@ -2295,6 +2394,7 @@ class RecipePanel(ttk.Frame):
                 fg="#374151")
             self.controller.log(
                 f"[RECIPE] Saved {len(self._recipes)} recipe(s) to probe card '{card}'")
+            self._on_save(self._current)
         else:
             self.controller.log(f"[RECIPE] Save failed for probe card '{card}'")
 

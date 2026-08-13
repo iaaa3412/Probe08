@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
+from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from typing import Any, Dict, List, Optional, Tuple
 
-from electroglas_pma import fmt_num
-from pma_wafer_panel import ATA_CSV_MAP_FILENAME
+from electroglas_pma import fmt_num, shot_geometry, slot_names, slot_grid, \
+    parse_pma_file, load_touchdowns
+from pma_wafer_panel import ATA_CSV_MAP_FILENAME, read_moves_grid
+from wafer_map_view import WAFER_MAP_SOURCES
+
+try:
+    import xlrd
+    _XLRD = True
+    _XLRD_ERR = ""
+except ImportError as _e:
+    _XLRD = False
+    _XLRD_ERR = f"{type(_e).__name__}: {_e}"
 
 try:
     import matplotlib
@@ -26,8 +38,8 @@ except ImportError:
 
 _COLOR_BLANK = "#93c5fd"     # present, no die ID yet
 _COLOR_HAS_ID = "#22c55e"    # present, has a die ID
-_COLOR_SKIP = "#ef4444"      # marked skip
-_COLOR_ALIGN = "#f5c518"     # marked alignment
+_COLOR_SKIP = "#9ca3af"      # marked skip (grey)
+_COLOR_ALIGN = "#ef4444"     # marked alignment die (red)
 _COLOR_ABSENT = "#e2e8f0"    # not present (blank slot in the shot / no shot here)
 _COLOR_SELECTED = "#f59e0b"
 
@@ -47,20 +59,35 @@ def _to_int(text, default: int = 0) -> int:
 
 
 def present_slots(cells: Dict[tuple, dict], rows: int, cols: int) -> Dict[tuple, int]:
-    """(row, col) -> 1-based slot number, column-major over PRESENT cells only.
+    """(row, col) -> 1-based slot number ("which die is 1, 2, 3... in this
+    shot") for PRESENT cells only.
 
-    Column-major so a slot list still reads top-to-bottom-then-left-to-right,
-    the same convention electroglas_pma's quad/slot helpers already use - a
-    saved die-pin map keeps meaning what it meant if the shot shape changes
-    without changing which physical position is slot 1.
+    Honors each cell's own explicit "order" (set by clicking a die in the
+    Shot tab - see _set_shot_order) where one is set, since the physical
+    relay/channel order a shot's dies are wired in does not have to match
+    any particular reading direction across the grid. Any cell with no
+    explicit order yet - a freshly added one, or an old saved map from
+    before "order" existed - falls back to column-major (top-to-bottom then
+    left-to-right), the same convention electroglas_pma's quad/slot helpers
+    use, so nothing already relying on the old numbering changes.
     """
-    out = {}
+    present = [(r, c) for c in range(cols) for r in range(rows)
+              if cells.get((r, c), {}).get("present")]
+    out, used = {}, set()
+    for rc in present:
+        o = cells.get(rc, {}).get("order")
+        if isinstance(o, int) and o >= 1 and o not in used:
+            out[rc] = o
+            used.add(o)
     n = 0
-    for c in range(cols):
-        for r in range(rows):
-            if cells.get((r, c), {}).get("present"):
-                n += 1
-                out[(r, c)] = n
+    for rc in present:
+        if rc in out:
+            continue
+        n += 1
+        while n in used:
+            n += 1
+        out[rc] = n
+        used.add(n)
     return out
 
 
@@ -70,7 +97,7 @@ def sniff_csv_kind(rows: List[List[str]]) -> Optional[str]:
 
     - A header row naming pin_hi/pin_lo -> Shot (the only format with pins).
     - Every non-blank cell is 0/1/X -> Shot Map (pure presence grid).
-    - Anything else with real content -> Die Map (die IDs / SKIP / ALIGN).
+    - Anything else with real content -> Die Map (die IDs / SKIP).
     - All blank -> None, so the caller falls back to whatever tab is open.
     """
     if not rows:
@@ -97,28 +124,44 @@ def _resize_cells(cells: Dict[tuple, dict], new_rows: int, new_cols: int,
 
 
 class RecipeGenPanel(ttk.Frame):
-    """Wafer Builder (Electroglas): three independent pages that together
-    describe a wafer with no .PMA/.xls needed at all.
+    """Wafer Builder: three independent pages that together describe a
+    wafer with no .PMA/.xls needed at all.
 
     Shot - what one touchdown covers: a rows x cols block where each slot is
-    either present (assign it a HI/LO pin pair) or blank (nothing there -
-    e.g. a corner of an otherwise-2x2 shot). Shot Map - how many touchdowns
-    the wafer has and how they're arranged: a plain presence grid, one square
-    per touchdown. Die Map - the wafer at die resolution (Shot x Shot Map
-    expanded), where every real die gets an ID, and any die can be marked
-    skip or alignment instead.
+    either present (numbered - which die is 1, 2, 3... in the shot, i.e. the
+    physical/relay order the Recipe tab's Die # field and the Results tab go
+    by) or blank (nothing there - e.g. a corner of an otherwise-2x2 shot).
+    Pins are NOT assigned here - they're picked per measurement step on the
+    Recipe tab, restricted to whatever the active bench actually has wired.
+    Shot Map - how many touchdowns the wafer has and how they're arranged: a
+    plain presence grid, one square per touchdown. Die Map - the wafer at
+    die resolution (Shot x Shot Map expanded), where every real die gets an
+    ID, and any die can be marked skip or align instead.
 
     A CSV can be imported on any tab; _import_csv sniffs its shape to route
     it, falling back to whichever tab is currently open if the shape alone
-    doesn't say.
+    doesn't say. On Accretech, a legacy .PMA or Recipe Generator .xls can
+    also be loaded - same idea as Import CSV, just autofilling all three
+    pages from an older file instead of a plain grid (see
+    _autofill_from_major_grid). Electroglas doesn't get those two buttons:
+    its Wafer Builder was rebuilt CSV-only by design.
+
+    system picks which system's wafer map file Save Wafer Map writes to
+    (ata_wafer_map_accretech.csv vs _electroglas.csv) and whether the
+    Electroglas-only EgPmaRunPanel bridge (_push_to_pma_wafer) applies -
+    Accretech has no such pane.
     """
 
-    def __init__(self, parent, controller, main_layout):
+    def __init__(self, parent, controller, main_layout, system: str = "electroglas"):
         super().__init__(parent)
         self.controller = controller
         self._main_layout = main_layout
+        self._system = system
 
-        self.recipe_name_var = tk.StringVar(value="NewRecipe")
+        # The current map's name AND the picker's display value - one var,
+        # since there is no free-typed name to diverge from the picker
+        # anymore (see _build_toolbar).
+        self.map_name_var = tk.StringVar(value="")
 
         # -- Shot --
         self._shot_rows_var = tk.StringVar(value="2")
@@ -129,9 +172,7 @@ class RecipeGenPanel(ttk.Frame):
         self._shot_pitch_y_var = tk.StringVar(value="")
         self._shot_cells: Dict[tuple, dict] = {
             (r, c): {"present": True} for r in range(2) for c in range(2)}
-        self._shot_pins: Dict[int, tuple] = {}
         self._shot_selected: Optional[tuple] = None
-        self._shot_card_var = tk.StringVar(value="No probe card selected")
         self._shot_status_var = tk.StringVar(value="")
 
         # -- Shot Map --
@@ -143,7 +184,7 @@ class RecipeGenPanel(ttk.Frame):
 
         # -- Die Map --
         # (shot_r, shot_c, slot_r, slot_c) -> {"die_id": str, "status":
-        # "normal"/"skip"/"align"}. Keyed by position, not by a flat index,
+        # "normal"/"skip"}. Keyed by position, not by a flat index,
         # so it survives Shot/Shot Map edits that don't touch that slot.
         self._die_status: Dict[tuple, dict] = {}
         self._diemap_mode_var = tk.StringVar(value="id")
@@ -151,6 +192,7 @@ class RecipeGenPanel(ttk.Frame):
         self._die_editor: Optional[tk.Entry] = None
         self._die_editor_key: Optional[tuple] = None
         self._die_boxes: List[dict] = []
+        self._die_id_labels: list = []
         self._selected_die_patch = None
 
         self.rowconfigure(1, weight=1)
@@ -172,6 +214,14 @@ class RecipeGenPanel(ttk.Frame):
         self._sub_nb.add(diemap_tab, text="Die Map")
         self._build_diemap_tab(diemap_tab)
 
+        # Identified by widget, not position - Accretech inserts an "Accr
+        # Wafer" sub-tab in front of these from instrument_panel.py after
+        # this constructor returns, which would otherwise shift every fixed
+        # index (0/1/2) this class assumes for Shot/Shot Map/Die Map.
+        self._shot_tab_widget = shot_tab
+        self._shotmap_tab_widget = shotmap_tab
+        self._diemap_tab_widget = diemap_tab
+
         # Die Map is computed from Shot x Shot Map, but nothing about editing
         # either of those pages touched Die Map's cached _die_boxes/canvas -
         # so switching to Die Map after resizing Shot, or after just toggling
@@ -187,26 +237,43 @@ class RecipeGenPanel(ttk.Frame):
         # it, but other code still reads self.pma_wafer defensively.
         self._hidden_pma_wafer_parent = ttk.Frame(self)
 
-        self.after(300, self._load_die_pins)
-
     def _log(self, msg: str):
         try:
             self.controller.log(msg)
         except Exception:
             pass
 
-    def _wiring_panel(self):
-        return getattr(self._main_layout, "pin_wiring", None)
-
     # ------------------------------------------------------------------
     def _build_toolbar(self):
+        # Same shape as the Probe Card tab's card bar: a readonly picker plus
+        # New/Rename/Delete/Set Default, instead of a free-typed name field -
+        # a map is either one of the saved ones or a brand new one, never an
+        # unsaved name that has drifted from what's on disk.
         bar = ttk.Frame(self, padding=6)
         bar.grid(row=0, column=0, sticky="ew")
-        ttk.Label(bar, text="Recipe Name:").pack(side="left")
-        ttk.Entry(bar, textvariable=self.recipe_name_var, width=22).pack(
-            side="left", padx=(4, 12))
+        ttk.Label(bar, text="Map:").pack(side="left")
+        self._map_picker_cb = ttk.Combobox(
+            bar, textvariable=self.map_name_var, state="readonly", width=16,
+            postcommand=self._refresh_map_picker)
+        self._map_picker_cb.pack(side="left", padx=(4, 8))
+        self._map_picker_cb.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._load_named_map(self.map_name_var.get()))
+        ttk.Button(bar, text="＋ New", command=self._new_named_map).pack(
+            side="left", padx=1)
+        ttk.Button(bar, text="✎ Rename", command=self._rename_named_map).pack(
+            side="left", padx=1)
+        ttk.Button(bar, text="🗑 Delete", command=self._delete_named_map).pack(
+            side="left", padx=1)
+        ttk.Button(bar, text="⭐ Set Default", command=self._set_default_map).pack(
+            side="left", padx=(6, 12))
         ttk.Button(bar, text="📥 Import CSV…", command=self._import_csv).pack(
             side="left", padx=(0, 6))
+        if self._system == "accretech":
+            ttk.Button(bar, text="📥 Load PMA…", command=self._import_pma).pack(
+                side="left", padx=(0, 6))
+            ttk.Button(bar, text="📥 Load Recipe Gen (.xls)…",
+                      command=self._import_recipe_gen_xls).pack(side="left", padx=(0, 6))
 
     # ==================================================================
     # SHOT — what one touchdown covers
@@ -254,16 +321,18 @@ class RecipeGenPanel(ttk.Frame):
 
         side = ttk.Frame(body, padding=(8, 0, 0, 0))
         side.grid(row=0, column=1, sticky="ns")
-        ttk.Label(side, textvariable=self._shot_card_var,
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        ttk.Label(side, text="Die order in the shot", font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w")
         ttk.Label(side, text="Click a blank square to add a die there; click "
-                            "a die to set its pins. Right-click removes a "
-                            "die (makes it blank).", foreground="#6b7280",
+                            "a die to renumber it (which die it is - 1, 2, "
+                            "3...  in this shot). Right-click removes a die "
+                            "(makes it blank).\n\nPins are assigned per "
+                            "measurement step on the Recipe tab, not here - "
+                            "this only records die order, which is what "
+                            "the Recipe tab's Die # field and the Results "
+                            "tab use to know which square a measurement "
+                            "belongs to.", foreground="#6b7280",
                  wraplength=220, justify="left").pack(anchor="w", pady=(2, 6))
-        ttk.Button(side, text="💾 Save pins to probe card",
-                  command=self._save_die_pins).pack(anchor="w")
-        ttk.Button(side, text="↻ Reload from probe card",
-                  command=self._load_die_pins).pack(anchor="w", pady=(4, 0))
         ttk.Label(side, textvariable=self._shot_status_var, foreground="#374151",
                  wraplength=220, justify="left").pack(anchor="w", pady=(6, 0))
 
@@ -283,9 +352,13 @@ class RecipeGenPanel(ttk.Frame):
         rows, cols = self._shot_dims()
         w = int(self._shot_canvas.winfo_width() or 1)
         h = int(self._shot_canvas.winfo_height() or 1)
-        cell = min(self._CELL,
-                  max(28, (w - 20 - self._GAP * cols) // max(1, cols)),
-                  max(28, (h - 20 - self._GAP * rows) // max(1, rows)))
+        # Cell size is capped by available space, not floored above it - a
+        # floor here (as this used to have) forces cells bigger than the
+        # canvas actually has room for whenever the window is smaller than
+        # rows*cols*28px, cutting the grid off instead of shrinking to fit.
+        avail_w = (w - 20 - self._GAP * cols) // max(1, cols)
+        avail_h = (h - 20 - self._GAP * rows) // max(1, rows)
+        cell = max(4, min(self._CELL, avail_w, avail_h))
         span_w = cols * cell + (cols - 1) * self._GAP
         span_h = rows * cell + (rows - 1) * self._GAP
         x0 = max(8, (w - span_w) // 2)
@@ -308,31 +381,18 @@ class RecipeGenPanel(ttk.Frame):
         for (r, c), (x0, y0, x1, y1) in self._shot_cell_rects().items():
             present = self._shot_cells.get((r, c), {}).get("present")
             slot = slots.get((r, c))
-            pins = self._shot_pins.get(slot) if slot else None
-            if not present:
-                fill, outline = _COLOR_ABSENT, "#94a3b8"
-            elif pins:
-                fill, outline = "#bbf7d0", "#15803d"
-            else:
-                fill, outline = _COLOR_BLANK, "#1d4ed8"
+            fill, outline = (_COLOR_BLANK, "#1d4ed8") if present else (_COLOR_ABSENT, "#94a3b8")
             width = 1.5
             if (r, c) == self._shot_selected:
                 outline, width = "#b45309", 3
             cv.create_rectangle(x0, y0, x1, y1, fill=fill, outline=outline,
                                width=width)
             if present:
-                cv.create_text((x0 + x1) / 2, y0 + 13,
-                              text=f"die {slot}", font=("Segoe UI", 8, "bold"),
+                cv.create_text((x0 + x1) / 2, (y0 + y1) / 2,
+                              text=f"die {slot}", font=("Segoe UI", 9, "bold"),
                               fill="#0f172a")
-                cv.create_text((x0 + x1) / 2, (y0 + y1) / 2 + 6,
-                              text=(f"HI {pins[0]}\nLO {pins[1]}" if pins
-                                    else "click to\nset pins"),
-                              font=("Consolas", 8),
-                              fill="#14532d" if pins else "#64748b",
-                              justify="center")
         n_dies = len(slots)
-        n_set = sum(1 for s in slots.values() if s in self._shot_pins)
-        self._shot_status_var.set(f"{n_dies} die(s) in this shot, {n_set} wired.")
+        self._shot_status_var.set(f"{n_dies} die(s) in this shot.")
 
     def _on_shot_click(self, event):
         for (r, c), (x0, y0, x1, y1) in self._shot_cell_rects().items():
@@ -343,7 +403,7 @@ class RecipeGenPanel(ttk.Frame):
                     self._draw_shot()
                     return
                 self._draw_shot()
-                self._assign_pins_dialog(r, c)
+                self._set_shot_order_dialog(r, c)
                 return
 
     def _on_shot_right_click(self, event):
@@ -355,105 +415,39 @@ class RecipeGenPanel(ttk.Frame):
                 self._draw_shot()
                 return
 
-    def _assign_pins_dialog(self, row: int, col: int):
+    def _set_shot_order_dialog(self, row: int, col: int):
+        """Which die this square is - 1, 2, 3... - within the shot.
+
+        Not a pin assignment: pins are picked per measurement step on the
+        Recipe tab now, restricted to whatever is actually wired there. This
+        only records physical/relay ORDER, which the Recipe tab's Die #
+        field and the Results tab use to know which square a step's
+        measurement belongs to.
+        """
         rows, cols = self._shot_dims()
         slots = present_slots(self._shot_cells, rows, cols)
-        slot = slots.get((row, col))
-        if slot is None:
+        cur = slots.get((row, col))
+        if cur is None:
             return
-        wiring = self._wiring_panel()
-        choices = wiring.get_pin_choices() if wiring else []
-        if not choices:
-            messagebox.showinfo(
-                "No Pins", "The active probe card has no pins listed. Add "
-                "them on the Probe Card tab first.")
+        new = simpledialog.askinteger(
+            "Die Order", f"Which die is this (row {row}, col {col}) in the "
+            f"shot?\n\nCurrently die {cur} of {len(slots)}.",
+            initialvalue=cur, minvalue=1, maxvalue=len(slots), parent=self)
+        if new is None or new == cur:
             return
-        by_pin = {v.split(":")[0]: lab for v, lab in choices}
-        labels = list(by_pin.values())
-        pin_of_label = {lab: pin for pin, lab in by_pin.items()}
-        cur = self._shot_pins.get(slot, ("", ""))
-
-        dlg = tk.Toplevel(self)
-        dlg.title(f"Die {slot} — pins")
-        dlg.transient(self.winfo_toplevel())
-        dlg.resizable(False, False)
-        dlg.grab_set()
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text=f"Die {slot} (row {row}, col {col})",
-                 font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        vars_ = {}
-        for i, (key, text) in enumerate((("hi", "HI (source):"),
-                                        ("lo", "LO (return):"))):
-            ttk.Label(frm, text=text).grid(row=i + 1, column=0, sticky="e", pady=3)
-            v = tk.StringVar(value=by_pin.get(cur[i], ""))
-            ttk.Combobox(frm, textvariable=v, values=labels, width=32,
-                        state="readonly").grid(row=i + 1, column=1, sticky="w",
-                                               padx=(6, 0), pady=3)
-            vars_[key] = v
-
-        def on_ok():
-            hi = pin_of_label.get(vars_["hi"].get(), "")
-            lo = pin_of_label.get(vars_["lo"].get(), "")
-            if hi and lo and hi == lo:
-                messagebox.showerror("Same Pin", "HI and LO cannot be the "
-                                     "same pin.", parent=dlg)
-                return
-            if hi and lo:
-                self._shot_pins[slot] = (hi, lo)
-            else:
-                self._shot_pins.pop(slot, None)
-            dlg.destroy()
-            self._draw_shot()
-
-        def on_clear():
-            vars_["hi"].set("")
-            vars_["lo"].set("")
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=2, pady=(10, 0))
-        ttk.Button(btns, text="OK", command=on_ok).pack(side="left", padx=4)
-        ttk.Button(btns, text="Clear", command=on_clear).pack(side="left", padx=4)
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="left", padx=4)
-        dlg.update_idletasks()
-        pw = self.winfo_toplevel()
-        dlg.geometry(f"+{pw.winfo_x() + (pw.winfo_width() - dlg.winfo_width()) // 2}"
-                    f"+{pw.winfo_y() + (pw.winfo_height() - dlg.winfo_height()) // 2}")
-        dlg.wait_window()
-
-    def _load_die_pins(self):
-        wiring = self._wiring_panel()
-        card = wiring.get_active_card() if wiring else ""
-        self._shot_card_var.set(f"Probe card: {card}" if card
-                                else "No probe card selected")
-        self._shot_pins = dict(wiring.get_die_pins()) if wiring else {}
+        self._set_shot_order(row, col, new)
         self._draw_shot()
 
-    def _save_die_pins(self):
-        wiring = self._wiring_panel()
-        card = wiring.get_active_card() if wiring else ""
-        if not card:
-            messagebox.showerror("No Probe Card",
-                                 "Select a probe card on the Probe Card tab "
-                                 "first — the die-to-pin map is stored with "
-                                 "the card, not with the wafer.")
-            return
+    def _set_shot_order(self, row: int, col: int, new_order: int):
         rows, cols = self._shot_dims()
         slots = present_slots(self._shot_cells, rows, cols)
-        missing = [s for s in slots.values() if s not in self._shot_pins]
-        if missing and not messagebox.askokcancel(
-                "Incomplete Map",
-                f"Die {', '.join(str(m) for m in missing)} have no pins "
-                "yet.\n\nA recipe can only wire the dies that do. Save "
-                "anyway?"):
-            return
-        if wiring.set_die_pins(card, self._shot_pins):
-            self._shot_status_var.set(f"Saved {len(self._shot_pins)} die(s) "
-                                      f"to '{card}'.")
-        else:
-            messagebox.showerror("Save Failed",
-                                 f"Could not write the die-pin map to '{card}'.")
+        # Swap with whichever die currently holds that number, so every
+        # present cell keeps a unique order rather than colliding.
+        for rc, n in slots.items():
+            if n == new_order and rc != (row, col):
+                self._shot_cells[rc]["order"] = slots[(row, col)]
+                break
+        self._shot_cells[(row, col)]["order"] = new_order
 
     def _die_pitch(self) -> tuple:
         return (_to_float(self._die_pitch_x_var.get(), 1.0) or 1.0,
@@ -482,22 +476,16 @@ class RecipeGenPanel(ttk.Frame):
         ttk.Label(top, text="touchdowns").pack(side="left", padx=(2, 8))
         ttk.Button(top, text="Apply", width=7, command=self._shotmap_apply_size).pack(
             side="left", padx=(0, 16))
-        ttk.Button(top, text="☑ Fill All",
-                  command=lambda: self._shotmap_set_all(True)).pack(side="left")
-        ttk.Button(top, text="☐ Clear All",
-                  command=lambda: self._shotmap_set_all(False)).pack(
-            side="left", padx=(6, 0))
+        self._shotmap_fill_btn = ttk.Button(top, text="☑ Fill All",
+                                            command=self._shotmap_toggle_all)
+        self._shotmap_fill_btn.pack(side="left")
         ttk.Label(top, textvariable=self._shotmap_status_var,
                  foreground="#374151").pack(side="left", padx=12)
-        ttk.Label(tab, text="Click a square to toggle whether a touchdown "
-                           "lands there.", foreground="#6b7280").grid(
-            row=1, column=0, sticky="w", padx=6)
 
         body = ttk.Frame(tab)
-        body.grid(row=2, column=0, sticky="nsew", padx=6, pady=6)
+        body.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        tab.rowconfigure(2, weight=1)
 
         self._shotmap_canvas = tk.Canvas(body, background="#f8fafc",
                                          highlightthickness=1,
@@ -526,6 +514,10 @@ class RecipeGenPanel(ttk.Frame):
             self._shotmap_cells[k] = present
         self._draw_shotmap()
 
+    def _shotmap_toggle_all(self):
+        all_filled = bool(self._shotmap_cells) and all(self._shotmap_cells.values())
+        self._shotmap_set_all(not all_filled)
+
     _SM_CELL = 26
     _SM_GAP = 3
 
@@ -533,9 +525,9 @@ class RecipeGenPanel(ttk.Frame):
         rows, cols = self._shotmap_dims()
         w = int(self._shotmap_canvas.winfo_width() or 1)
         h = int(self._shotmap_canvas.winfo_height() or 1)
-        cell = min(self._SM_CELL,
-                  max(6, (w - 20 - self._SM_GAP * cols) // max(1, cols)),
-                  max(6, (h - 20 - self._SM_GAP * rows) // max(1, rows)))
+        avail_w = (w - 20 - self._SM_GAP * cols) // max(1, cols)
+        avail_h = (h - 20 - self._SM_GAP * rows) // max(1, rows)
+        cell = max(2, min(self._SM_CELL, avail_w, avail_h))
         span_w = cols * cell + (cols - 1) * self._SM_GAP
         span_h = rows * cell + (rows - 1) * self._SM_GAP
         x0 = max(8, (w - span_w) // 2)
@@ -562,6 +554,9 @@ class RecipeGenPanel(ttk.Frame):
             outline = "#1d4ed8" if present else "#cbd5e1"
             cv.create_rectangle(x0, y0, x1, y1, fill=fill, outline=outline)
         self._shotmap_status_var.set(f"{n} touchdown(s) on the wafer.")
+        if hasattr(self, "_shotmap_fill_btn"):
+            all_filled = bool(self._shotmap_cells) and all(self._shotmap_cells.values())
+            self._shotmap_fill_btn.config(text="☐ Clear All" if all_filled else "☑ Fill All")
 
     def _on_shotmap_click(self, event):
         for (r, c), (x0, y0, x1, y1) in self._shotmap_cell_rects().items():
@@ -581,22 +576,22 @@ class RecipeGenPanel(ttk.Frame):
         top.grid(row=0, column=0, sticky="ew")
         ttk.Label(top, text="Click mode:").pack(side="left")
         for value, text in (("id", "✏ Set Die ID"), ("skip", "⛔ Mark Skip"),
-                           ("align", "🎯 Mark Alignment")):
+                           ("align", "📍 Mark Align")):
             ttk.Radiobutton(top, text=text, value=value,
                            variable=self._diemap_mode_var).pack(side="left", padx=(6, 0))
         ttk.Label(top, text="(right-click clears a die back to normal)",
                  foreground="#6b7280").pack(side="left", padx=(10, 0))
-        ttk.Button(top, text="🔄 Refresh from Shot / Shot Map",
-                  command=self._redraw_diemap).pack(side="left", padx=(16, 0))
         ttk.Button(top, text="🗺 Save Wafer Map",
-                  command=self._save_wafer_map).pack(side="left", padx=(6, 0))
+                  command=self._save_wafer_map).pack(side="left", padx=(16, 0))
+        ttk.Button(top, text="📤 Export CSV",
+                  command=self._export_diemap_csv).pack(side="left", padx=(6, 0))
         ttk.Label(top, textvariable=self._diemap_status_var,
                  foreground="#374151").pack(side="left", padx=10)
 
         legend = ttk.Frame(tab)
         legend.grid(row=1, column=0, sticky="ew", padx=6)
         for color, text in [(_COLOR_HAS_ID, "has ID"), (_COLOR_BLANK, "blank"),
-                           (_COLOR_SKIP, "skip"), (_COLOR_ALIGN, "alignment")]:
+                           (_COLOR_SKIP, "skip"), (_COLOR_ALIGN, "align")]:
             sw = tk.Canvas(legend, width=12, height=12, highlightthickness=0)
             sw.create_rectangle(0, 0, 12, 12, fill=color, outline="")
             sw.pack(side="left", padx=(0, 3))
@@ -617,6 +612,15 @@ class RecipeGenPanel(ttk.Frame):
             self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
             self.canvas.mpl_connect("button_press_event", self._on_diemap_click)
             self.canvas.mpl_connect("scroll_event", self._on_diemap_scroll_zoom)
+            # xlim_changed fires on ANY axes limit change - scroll-zoom,
+            # the navigation toolbar's zoom/pan tools, everything - so die
+            # ID label visibility stays correct regardless of how the view
+            # changed, not just the one zoom path this tab wires by hand.
+            # Connected fresh in _redraw_diemap (not just here) because
+            # Axes.clear() silently drops every callback connection along
+            # with the artists - reconnecting only once here left it dead
+            # after the very first redraw.
+            self._diemap_xlim_cid = None
         else:
             ttk.Label(body, text="matplotlib not installed — install it to "
                                 "view/edit the die map.", foreground="red").grid(
@@ -650,11 +654,10 @@ class RecipeGenPanel(ttk.Frame):
         return out
 
     def _die_color(self, box: dict) -> str:
-        status = box["status"]
-        if status == "skip":
-            return _COLOR_SKIP
-        if status == "align":
+        if box["status"] == "align":
             return _COLOR_ALIGN
+        if box["status"] == "skip":
+            return _COLOR_SKIP
         return _COLOR_HAS_ID if box["die_id"] else _COLOR_BLANK
 
     def _redraw_diemap(self):
@@ -665,14 +668,32 @@ class RecipeGenPanel(ttk.Frame):
             return
         self._close_die_editor(commit=True)
         self.ax.clear()
+        if self._diemap_xlim_cid is not None:
+            try:
+                self.ax.callbacks.disconnect(self._diemap_xlim_cid)
+            except Exception:
+                pass
+        self._diemap_xlim_cid = self.ax.callbacks.connect(
+            "xlim_changed", lambda _ax: self._diemap_label_visibility())
         self._selected_die_patch = None
         self._die_boxes = self._die_positions()
+        self._die_id_labels = []
         if self._die_boxes:
             patches = [Rectangle((b["x"], b["y"]), b["w"], b["h"])
                       for b in self._die_boxes]
             coll = PatchCollection(patches, edgecolor="#0f172a", linewidths=0.3)
             coll.set_facecolor([self._die_color(b) for b in self._die_boxes])
             self.ax.add_collection(coll)
+            # Zoomed-out, one letter per die is unreadable clutter - hidden
+            # until _diemap_label_visibility finds them big enough on screen.
+            for b in self._die_boxes:
+                if not b["die_id"]:
+                    continue
+                txt = self.ax.text(
+                    b["x"] + b["w"] / 2, b["y"] + b["h"] / 2, b["die_id"],
+                    ha="center", va="center", fontsize=6, color="#0f172a",
+                    zorder=6, clip_on=True)
+                self._die_id_labels.append(txt)
             xs = [b["x"] for b in self._die_boxes]
             ys = [b["y"] for b in self._die_boxes]
             dpx, dpy = self._die_pitch()
@@ -682,12 +703,25 @@ class RecipeGenPanel(ttk.Frame):
         n_id = sum(1 for b in self._die_boxes if b["die_id"] and b["status"] == "normal")
         n_skip = sum(1 for b in self._die_boxes if b["status"] == "skip")
         n_align = sum(1 for b in self._die_boxes if b["status"] == "align")
-        self.ax.set_title(f"{self.recipe_name_var.get()} — {len(self._die_boxes)} die(s), "
-                          f"{n_id} with ID, {n_skip} skip, {n_align} alignment")
+        self.ax.set_title(f"{self.map_name_var.get()} — {len(self._die_boxes)} die(s), "
+                          f"{n_id} with ID, {n_skip} skip, {n_align} align")
         self.ax.set_aspect("equal")
         self.ax.set_axis_off()
+        self._diemap_label_visibility()
         self.canvas.draw_idle()
         self._diemap_status_var.set(f"{len(self._die_boxes)} die(s) on the wafer.")
+
+    _DIEMAP_LABEL_MIN_PX = 22  # below this on-screen die width, an ID is unreadable clutter
+
+    def _diemap_label_visibility(self):
+        if not getattr(self, "_die_id_labels", None):
+            return
+        dpx, _dpy = self._die_pitch()
+        (x0, _), (x1, _) = self.ax.transData.transform([(0, 0), (dpx, 0)])
+        visible = abs(x1 - x0) >= self._DIEMAP_LABEL_MIN_PX
+        for txt in self._die_id_labels:
+            txt.set_visible(visible)
+        self.canvas.draw_idle()
 
     def _on_diemap_scroll_zoom(self, event):
         if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
@@ -783,11 +817,376 @@ class RecipeGenPanel(ttk.Frame):
         if commit:
             self._redraw_diemap()
 
+    # ==================================================================
+    # NAMED MAPS — many Shot/Shot Map/Die Map definitions can live in one
+    # ATA folder (under wafer_builder_maps/<name>.json), picked from the
+    # Load dropdown. Save Wafer Map ALSO auto-saves under the current Map
+    # Name when it publishes, so the dropdown always has an accurate copy
+    # of whatever was last made active; Save Map alone just saves work in
+    # progress without publishing it as the Run tab's active map.
+    # ==================================================================
+    def _maps_dir(self, create: bool = False) -> Optional[str]:
+        folder = getattr(self._main_layout, "_exec2_map_folder", None) or \
+            getattr(self._main_layout, "_ata_folder", None)
+        if not folder:
+            return None
+        d = os.path.join(folder, "wafer_builder_maps")
+        if create:
+            os.makedirs(d, exist_ok=True)
+        return d
+
+    def _refresh_map_picker(self):
+        d = self._maps_dir()
+        names = []
+        if d and os.path.isdir(d):
+            names = sorted(os.path.splitext(f)[0] for f in os.listdir(d)
+                           if f.endswith(".json"))
+        self._map_picker_cb.config(values=names)
+
+    @staticmethod
+    def _safe_map_filename(name: str) -> str:
+        return "".join(c for c in name.strip() if c.isalnum() or c in " _-").strip() or "map"
+
+    def _state_to_dict(self) -> dict:
+        def kstr(k):
+            return f"{k[0]},{k[1]}"
+        return {
+            "shot_rows": self._shot_rows_var.get(), "shot_cols": self._shot_cols_var.get(),
+            "die_pitch_x": self._die_pitch_x_var.get(), "die_pitch_y": self._die_pitch_y_var.get(),
+            "shot_pitch_x": self._shot_pitch_x_var.get(), "shot_pitch_y": self._shot_pitch_y_var.get(),
+            "shot_cells": {kstr(k): v for k, v in self._shot_cells.items()},
+            "shotmap_rows": self._shotmap_rows_var.get(),
+            "shotmap_cols": self._shotmap_cols_var.get(),
+            "shotmap_cells": {kstr(k): v for k, v in self._shotmap_cells.items()},
+            "die_status": {",".join(str(x) for x in k): v
+                          for k, v in self._die_status.items()},
+        }
+
+    def _state_from_dict(self, data: dict):
+        def pk2(s):
+            a, b = s.split(",")
+            return int(a), int(b)
+
+        def pk4(s):
+            a, b, c, d = s.split(",")
+            return int(a), int(b), int(c), int(d)
+
+        self._close_die_editor(commit=False)
+        self._shot_rows_var.set(data.get("shot_rows", "2"))
+        self._shot_cols_var.set(data.get("shot_cols", "2"))
+        self._die_pitch_x_var.set(data.get("die_pitch_x", "1000"))
+        self._die_pitch_y_var.set(data.get("die_pitch_y", "1000"))
+        self._shot_pitch_x_var.set(data.get("shot_pitch_x", ""))
+        self._shot_pitch_y_var.set(data.get("shot_pitch_y", ""))
+        self._shot_cells = {pk2(k): v for k, v in data.get("shot_cells", {}).items()}
+        self._shotmap_rows_var.set(data.get("shotmap_rows", "4"))
+        self._shotmap_cols_var.set(data.get("shotmap_cols", "4"))
+        self._shotmap_cells = {pk2(k): v for k, v in data.get("shotmap_cells", {}).items()}
+        self._die_status = {pk4(k): v for k, v in data.get("die_status", {}).items()}
+        self._shot_selected = None
+        self._draw_shot()
+        self._draw_shotmap()
+        self._redraw_diemap()
+
+    def _current_folder(self) -> Optional[str]:
+        return getattr(self._main_layout, "_exec2_map_folder", None) or \
+            getattr(self._main_layout, "_ata_folder", None)
+
+    def _new_named_map(self):
+        """Starts a brand new map: blank Shot/Shot Map/Die Map state, saved
+        immediately under a name the user picks - mirrors the Probe Card
+        tab's ＋ New (which also writes an empty file right away so the new
+        item shows up in its own picker with nothing further to do)."""
+        folder = self._current_folder()
+        d = self._maps_dir(create=True)
+        if not d or not folder:
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+        name = simpledialog.askstring("New Map", "Map name:", parent=self)
+        if not name:
+            return
+        name = self._safe_map_filename(name)
+        if not name:
+            messagebox.showerror("Invalid Name", "Use letters, digits, space, - or _.")
+            return
+        path = os.path.join(d, name + ".json")
+        if os.path.isfile(path):
+            messagebox.showerror("Duplicate", f"A map named '{name}' already exists.")
+            return
+        self._close_die_editor(commit=True)
+        self._shot_rows_var.set("2"); self._shot_cols_var.set("2")
+        self._die_pitch_x_var.set("1000"); self._die_pitch_y_var.set("1000")
+        self._shot_pitch_x_var.set(""); self._shot_pitch_y_var.set("")
+        self._shot_cells = {(r, c): {"present": True} for r in range(2) for c in range(2)}
+        self._shotmap_rows_var.set("4"); self._shotmap_cols_var.set("4")
+        self._shotmap_cells = {(r, c): True for r in range(4) for c in range(4)}
+        self._die_status = {}
+        self.map_name_var.set(name)
+        self._draw_shot()
+        self._draw_shotmap()
+        self._redraw_diemap()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._state_to_dict(), f, indent=2)
+        except OSError as exc:
+            messagebox.showerror("Create Failed", str(exc))
+            return
+        self._log(f"[WAFER BUILDER] Created new map '{name}'")
+        self._refresh_map_picker()
+        self._sync_partner_after_change(folder, name)
+
+    def _rename_named_map(self):
+        old_name = self.map_name_var.get().strip()
+        d = self._maps_dir()
+        if not old_name or not d:
+            messagebox.showerror("No Map", "No map is currently loaded.")
+            return
+        old_path = os.path.join(d, self._safe_map_filename(old_name) + ".json")
+        if not os.path.isfile(old_path):
+            messagebox.showerror("Not Found", f"'{old_name}' hasn't been saved "
+                                 "yet - use ＋ New instead.")
+            return
+        new_name = simpledialog.askstring("Rename Map", "New name:",
+                                          initialvalue=old_name, parent=self)
+        if not new_name:
+            return
+        new_name = self._safe_map_filename(new_name)
+        if not new_name or new_name == old_name:
+            return
+        new_path = os.path.join(d, new_name + ".json")
+        if os.path.isfile(new_path):
+            messagebox.showerror("Duplicate", f"A map named '{new_name}' already exists.")
+            return
+        try:
+            os.replace(old_path, new_path)
+        except OSError as exc:
+            messagebox.showerror("Rename Failed", str(exc))
+            return
+        marker = os.path.join(d, self._DEFAULT_MARKER)
+        if os.path.isfile(marker):
+            try:
+                with open(marker, encoding="utf-8") as f:
+                    was_default = f.read().strip() == old_name
+                if was_default:
+                    with open(marker, "w", encoding="utf-8") as f:
+                        f.write(new_name)
+            except OSError:
+                pass
+        self.map_name_var.set(new_name)
+        self._redraw_diemap()  # title reads map_name_var live
+        self._log(f"[WAFER BUILDER] Renamed map '{old_name}' → '{new_name}'")
+        self._refresh_map_picker()
+        folder = self._current_folder()
+        if folder:
+            self._sync_partner_after_change(folder, new_name)
+
+    def _load_named_map(self, name: str):
+        name = (name or "").strip()
+        if not name:
+            return
+        d = self._maps_dir()
+        path = os.path.join(d, self._safe_map_filename(name) + ".json") if d else ""
+        if not d or not os.path.isfile(path):
+            messagebox.showerror("Not Found", f"No saved map named '{name}'.")
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Load Failed", str(exc))
+            return
+        # Set the name BEFORE the redraw _state_from_dict triggers - the die
+        # map title reads map_name_var live, so setting it after left the
+        # title showing the previous map's name until the next unrelated
+        # redraw.
+        self.map_name_var.set(name)
+        self._state_from_dict(data)
+        self._log(f"[WAFER BUILDER] Loaded map '{name}' from {path}")
+
+    def _delete_named_map(self):
+        name = self.map_name_var.get().strip()
+        if not name:
+            messagebox.showerror("No Map Name", "Type/select a saved map name first.")
+            return
+        d = self._maps_dir()
+        path = os.path.join(d, self._safe_map_filename(name) + ".json") if d else ""
+        if not d or not os.path.isfile(path):
+            messagebox.showerror("Not Found", f"No saved map named '{name}'.")
+            return
+        if not messagebox.askyesno(
+                "Delete Map", f"Delete the saved map '{name}'?\n\n"
+                "This only removes the saved definition - it does not "
+                "touch whatever is currently on the Run tab's wafer map "
+                "unless you Save Wafer Map again afterward."):
+            return
+        try:
+            os.remove(path)
+        except OSError as exc:
+            messagebox.showerror("Delete Failed", str(exc))
+            return
+        marker = os.path.join(d, self._DEFAULT_MARKER)
+        if os.path.isfile(marker):
+            try:
+                with open(marker, encoding="utf-8") as f:
+                    was_default = f.read().strip() == name
+                if was_default:
+                    os.remove(marker)
+            except OSError:
+                pass
+        self._log(f"[WAFER BUILDER] Deleted map '{name}' ({path})")
+        self.map_name_var.set("")
+        self._refresh_map_picker()
+
+    _DEFAULT_MARKER = "_default.txt"
+
+    def _set_default_map(self):
+        """Marks the current Map Name as this ATA folder's default Wafer
+        Builder map, so it is the one autoload_map_for_folder picks - both
+        on the next folder load AND, right now, on the other system's tab
+        if it has this same folder open (see _sync_partner_after_change).
+        Saves the map first if it hasn't been saved yet, so "Set Default"
+        works directly off unsaved work in progress too."""
+        name = self.map_name_var.get().strip()
+        if not name:
+            messagebox.showerror("No Map Name", "Type/select a map name first.")
+            return
+        d = self._maps_dir(create=True)
+        folder = self._current_folder()
+        if not d or not folder:
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+        self._close_die_editor(commit=True)
+        path = os.path.join(d, self._safe_map_filename(name) + ".json")
+        if not os.path.isfile(path):
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(self._state_to_dict(), f, indent=2)
+            except OSError as exc:
+                messagebox.showerror("Save Failed", str(exc))
+                return
+            self._refresh_map_picker()
+        marker = os.path.join(d, self._DEFAULT_MARKER)
+        try:
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write(name)
+        except OSError as exc:
+            messagebox.showerror("Set Default Failed", str(exc))
+            return
+        self._log(f"[WAFER BUILDER] '{name}' set as the default map for this "
+                 f"ATA folder — it will auto-load whenever this folder opens.")
+        messagebox.showinfo("Default Set", f"'{name}' will now auto-load "
+                           f"whenever this ATA folder is opened.")
+        self._sync_partner_after_change(folder, None)
+
+    def autoload_map_for_folder(self, folder: str):
+        """Called when the ATA folder loads/changes. Prefers the folder's
+        explicit default (set via the Set Default button); falls back to a
+        map named "Autoload", or the single map present if there is only
+        one, so older folders that predate Set Default keep working. Silent
+        no-op for zero or multiple ambiguous candidates with no default set
+        - left to the Load dropdown in that case."""
+        d = os.path.join(folder, "wafer_builder_maps")
+        if not os.path.isdir(d):
+            return
+        names = sorted(os.path.splitext(f)[0] for f in os.listdir(d)
+                       if f.endswith(".json"))
+        if not names:
+            return
+        target = None
+        marker = os.path.join(d, self._DEFAULT_MARKER)
+        if os.path.isfile(marker):
+            try:
+                with open(marker, encoding="utf-8") as f:
+                    marked = f.read().strip()
+                if marked in names:
+                    target = marked
+            except OSError:
+                pass
+        if target is None:
+            target = "Autoload" if "Autoload" in names else (
+                names[0] if len(names) == 1 else None)
+        if not target:
+            return
+        path = os.path.join(d, self._safe_map_filename(target) + ".json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as exc:
+            self._log(f"[WAFER BUILDER] Could not auto-load map '{target}': "
+                     f"{type(exc).__name__}: {exc}")
+            return
+        self.map_name_var.set(target)
+        self._state_from_dict(data)
+        self._log(f"[WAFER BUILDER] Auto-loaded map '{target}' from {path}")
+
+    def _autosave_named_map_quiet(self, folder: str):
+        name = self.map_name_var.get().strip() or "NewMap"
+        self.map_name_var.set(name)
+        d = os.path.join(folder, "wafer_builder_maps")
+        try:
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, self._safe_map_filename(name) + ".json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._state_to_dict(), f, indent=2)
+        except OSError as exc:
+            self._log(f"[WAFER BUILDER] Could not auto-save map definition "
+                     f"'{name}': {exc}")
+            return
+        self._sync_partner_after_change(folder, name)
+
     # ------------------------------------------------------------------
+    # CROSS-SYSTEM SYNC — Accretech and Electroglas each have their own
+    # RecipeGenPanel instance, but a saved/default map is just a file under
+    # the ATA folder both can see. Whenever this panel changes what's on
+    # disk, push a refresh to the other system's tab IF it currently has
+    # the same ATA folder open, so both keep showing the same map without
+    # a manual reload. Never touches a map the partner is mid-editing under
+    # a different name - only a save/default change to the exact map it's
+    # already showing (or, for Set Default, a general re-check).
+    # ------------------------------------------------------------------
+    def _sibling_recipe_gen(self) -> Optional["RecipeGenPanel"]:
+        by_system = getattr(self.controller, "_by_system", None)
+        if not by_system or self._system not in ("accretech", "electroglas"):
+            return None
+        other = "electroglas" if self._system == "accretech" else "accretech"
+        other_ui = by_system.get(other, {}).get("ui")
+        return getattr(other_ui, "recipe_gen", None) if other_ui is not None else None
+
+    def _sync_partner_after_change(self, folder: str, name: Optional[str]):
+        sib = self._sibling_recipe_gen()
+        if sib is None or sib is self:
+            return
+        sib_folder = sib._current_folder()
+        if sib_folder != folder:
+            return
+        if name is None:
+            sib.autoload_map_for_folder(folder)
+        elif sib.map_name_var.get().strip() == name:
+            sib._reload_named_map_quiet(folder, name)
+
+    def _reload_named_map_quiet(self, folder: str, name: str):
+        d = os.path.join(folder, "wafer_builder_maps")
+        path = os.path.join(d, self._safe_map_filename(name) + ".json")
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        self._state_from_dict(data)
+        self.map_name_var.set(name)
+        self._log(f"[WAFER BUILDER] Synced map '{name}' — updated on the "
+                 f"other system's tab.")
+
+    # ------------------------------------------------------------------
+    def _wafer_map_filename(self) -> str:
+        return WAFER_MAP_SOURCES["Wafer Builder"]
+
     def _save_wafer_map(self):
-        """Write the Run tab's Electroglas wafer map directly from the Die
-        Map, one row per real die - no touchdown-text encoding involved,
-        since this tab already knows each die's exact position and status."""
+        """Write the Run tab's wafer map directly from the Die Map, one row
+        per real die - no touchdown-text encoding involved, since this tab
+        already knows each die's exact position and status."""
         self._close_die_editor(commit=True)
         folder = getattr(self._main_layout, "_exec2_map_folder", None) or \
             getattr(self._main_layout, "_ata_folder", None)
@@ -801,11 +1200,13 @@ class RecipeGenPanel(ttk.Frame):
             return
         n_id = sum(1 for d in dies if d["status"] == "normal" and d["die_id"])
         n_skip = sum(1 for d in dies if d["status"] == "skip")
+        n_align = sum(1 for d in dies if d["status"] == "align")
+        filename = self._wafer_map_filename()
         if not messagebox.askokcancel(
                 "Save Wafer Map",
-                f"Write {len(dies)} die(s) ({n_id} with an ID, {n_skip} skip) "
-                f"to ata_wafer_map_electroglas.csv in\n{folder}?\n\n"
-                "This replaces the Run tab's Electroglas wafer map."):
+                f"Write {len(dies)} die(s) ({n_id} with an ID, {n_skip} skip, "
+                f"{n_align} align) to {filename} in\n{folder}?\n\n"
+                "This replaces the Run tab's wafer map."):
             return
 
         shot_rows, shot_cols = self._shot_dims()
@@ -813,7 +1214,7 @@ class RecipeGenPanel(ttk.Frame):
         # - only used as a label (the "seq" column), not for geometry.
         shot_order = {(sr, sc): i + 1 for i, (sr, sc) in
                      enumerate(sorted(k for k, v in self._shotmap_cells.items() if v))}
-        path = os.path.join(folder, "ata_wafer_map_electroglas.csv")
+        path = os.path.join(folder, filename)
         fields = ("row", "col", "seq", "quad_pos", "device_id",
                  "x_um", "y_um", "map_x", "map_y", "shot_x", "shot_y", "enabled")
         try:
@@ -821,7 +1222,7 @@ class RecipeGenPanel(ttk.Frame):
                 wr = csv.DictWriter(f, fieldnames=fields)
                 wr.writeheader()
                 for d in dies:
-                    device_id = d["die_id"] or ("ALIGN" if d["status"] == "align" else "")
+                    device_id = d["die_id"]
                     ox, oy = d["shot_c"] * self._shot_pitch()[0], d["shot_r"] * self._shot_pitch()[1]
                     wr.writerow({
                         "row": d["shot_r"] * shot_rows + d["slot_r"],
@@ -840,13 +1241,67 @@ class RecipeGenPanel(ttk.Frame):
         self._diemap_status_var.set(f"Wrote {len(dies)} die(s) to the Run tab's wafer map.")
         self._log(f"[WAFER MAP] Wrote {path} — {len(dies)} die(s), {n_id} with an "
                  f"ID, {n_skip} skip.")
+        self._autosave_named_map_quiet(folder)
+        self._refresh_map_picker()
         self._sync_views(folder)
+
+    def _export_diemap_csv(self):
+        """A standalone CSV of the Die Map as it looks right now - die ID
+        and status/color per die, row/col in both the flat die grid and the
+        shot/slot form - to the user's Downloads folder. Independent of
+        Save Wafer Map: this is just a snapshot to look at or hand off, not
+        something the Run tab or anything else in the app reads back."""
+        self._close_die_editor(commit=True)
+        dies = self._die_positions()
+        if not dies:
+            messagebox.showerror("Empty Map", "No dies to export — set up "
+                                 "Shot and Shot Map first.")
+            return
+        shot_rows, shot_cols = self._shot_dims()
+        downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+        try:
+            os.makedirs(downloads, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror("Export Failed", str(exc))
+            return
+        name = self._safe_map_filename(
+            self.map_name_var.get().strip() or "wafer_builder_die_map")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(downloads, f"{name}_die_map_{ts}.csv")
+        fields = ("row", "col", "shot_r", "shot_c", "slot_r", "slot_c",
+                  "die_id", "status", "color")
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                wr = csv.DictWriter(f, fieldnames=fields)
+                wr.writeheader()
+                for d in dies:
+                    wr.writerow({
+                        "row": d["shot_r"] * shot_rows + d["slot_r"],
+                        "col": d["shot_c"] * shot_cols + d["slot_c"],
+                        "shot_r": d["shot_r"], "shot_c": d["shot_c"],
+                        "slot_r": d["slot_r"], "slot_c": d["slot_c"],
+                        "die_id": d["die_id"], "status": d["status"],
+                        "color": self._die_color(d),
+                    })
+        except OSError as exc:
+            messagebox.showerror("Export Failed", str(exc))
+            return
+        self._log(f"[WAFER BUILDER] Exported {len(dies)} die(s) to {path}")
+        messagebox.showinfo("Exported", f"Wrote {len(dies)} die(s) to:\n{path}")
 
     def _sync_views(self, folder: str):
         layout = self._main_layout
         try:
             layout._exec2_map_folder = folder
-            layout._exec2_map_source_var.set("Electroglas")
+            # Accretech's Run tab map stays on its own hardware-extracted
+            # source (Accr Wafer's "Accretech") - Wafer Builder's die IDs
+            # get OVERLAID onto that map (Overlay... button), not swapped in
+            # as the primary map, since the Accretech extraction is the
+            # physically-real geometry. Electroglas has no such hardware
+            # extraction of its own; Wafer Builder IS the wafer there, so
+            # publishing makes it the active source directly.
+            if self._system != "accretech":
+                layout._exec2_map_source_var.set("Wafer Builder")
             layout._exec2_draw_wafer_map()
         except Exception as exc:
             self._log(f"[WAFER MAP] Map written, but the Run tab did not "
@@ -857,15 +1312,19 @@ class RecipeGenPanel(ttk.Frame):
                 proc.refresh_align_site()
             except Exception:
                 pass
-        self._push_to_pma_wafer(folder)
+        # EgPmaRunPanel (the .PMA-recipe-stepping pane) only exists for
+        # Electroglas - nothing on Accretech reads pma_wafer._csv_shot_data,
+        # so there is nothing to bridge there.
+        if self._system != "accretech":
+            self._push_to_pma_wafer(folder)
 
     def _plain_csv_rows(self) -> List[List[str]]:
         """This wafer as the 'plain CSV wafer map' shape PmaWaferPanel
         already understands: one cell per touchdown, holding that shot's
-        dies slash-joined in Shot's own column-major slot order (skip/align
-        dies written as the literal SKIP/ALIGN, matching the Die Map CSV
-        import convention) - because Shot only ever includes PRESENT slots,
-        every joined entry is a real die; there is no blank-corner case to
+        dies slash-joined in Shot's own column-major slot order (skip dies
+        written as the literal SKIP, matching the Die Map CSV import
+        convention) - because Shot only ever includes PRESENT slots, every
+        joined entry is a real die; there is no blank-corner case to
         represent here."""
         shot_rows, shot_cols = self._shot_dims()
         ordered = sorted(present_slots(self._shot_cells, shot_rows, shot_cols).items(),
@@ -928,11 +1387,33 @@ class RecipeGenPanel(ttk.Frame):
     # CSV IMPORT — one button, all three tabs
     # ==================================================================
     def _current_tab_kind(self) -> str:
-        idx = self._sub_nb.index(self._sub_nb.select())
-        return ("shot", "shotmap", "die")[idx] if 0 <= idx < 3 else "die"
+        cur = self._sub_nb.select()
+        if cur == str(self._shot_tab_widget):
+            return "shot"
+        if cur == str(self._shotmap_tab_widget):
+            return "shotmap"
+        if cur == str(self._diemap_tab_widget):
+            return "die"
+        # Some other sub-tab (e.g. Accretech's inserted Accr Wafer) is
+        # showing - CSV import falls back to "die", same as before this
+        # became identity-based, and the tab-change redraw hook below just
+        # does nothing for it, which is correct: nothing here to redraw.
+        return "die"
 
     def _on_subtab_changed(self, _event=None):
-        if self._current_tab_kind() == "die":
+        # A hidden Notebook tab's canvas can still be reporting a stale (or
+        # never-laid-out) size the first time it's shown, which drew a
+        # cramped grid surrounded by grey space until something else
+        # happened to trigger another redraw. Forcing one here, right after
+        # Tk has actually mapped the tab and given it real geometry, means
+        # every arrival at a tab draws against its true current size.
+        self.update_idletasks()
+        kind = self._current_tab_kind()
+        if kind == "shot":
+            self._draw_shot()
+        elif kind == "shotmap":
+            self._draw_shotmap()
+        elif kind == "die":
             self._redraw_diemap()
 
     def _import_csv(self):
@@ -967,15 +1448,16 @@ class RecipeGenPanel(ttk.Frame):
 
     def _import_shot_csv(self, rows: List[List[str]], name: str):
         header = [(c or "").strip().lower() for c in rows[0]]
+        # pin_hi/pin_lo are still recognized in the header (that's what
+        # sniff_csv_kind routes on) but no longer read - pins live on Recipe
+        # tab steps now, not the Shot tab.
         try:
-            idx = {h: header.index(h) for h in ("row", "col", "present",
-                                                "pin_hi", "pin_lo")}
+            idx = {h: header.index(h) for h in ("row", "col", "present")}
         except ValueError:
             messagebox.showerror("Import Failed",
-                                 "Shot CSV needs row,col,present,pin_hi,pin_lo columns.")
+                                 "Shot CSV needs row,col,present columns.")
             return
         cells: Dict[tuple, dict] = {}
-        pins_by_rc: Dict[tuple, tuple] = {}
         max_r = max_c = 0
         for r in rows[1:]:
             if len(r) <= max(idx.values()):
@@ -984,21 +1466,16 @@ class RecipeGenPanel(ttk.Frame):
             present = (r[idx["present"]] or "").strip() not in ("", "0")
             max_r, max_c = max(max_r, rr), max(max_c, cc)
             cells[(rr, cc)] = {"present": present}
-            hi, lo = (r[idx["pin_hi"]] or "").strip(), (r[idx["pin_lo"]] or "").strip()
-            if present and hi and lo:
-                pins_by_rc[(rr, cc)] = (hi, lo)
         rows_n, cols_n = max_r + 1, max_c + 1
         cells = _resize_cells(cells, rows_n, cols_n, {"present": False})
         slots = present_slots(cells, rows_n, cols_n)
-        pins = {slots[rc]: pair for rc, pair in pins_by_rc.items() if rc in slots}
 
         self._shot_rows_var.set(str(rows_n))
         self._shot_cols_var.set(str(cols_n))
         self._shot_cells = cells
-        self._shot_pins = pins
         self._draw_shot()
         self._log(f"[WAFER BUILDER] Imported Shot from '{name}': {rows_n}x{cols_n}, "
-                 f"{len(slots)} die(s), {len(pins)} wired.")
+                 f"{len(slots)} die(s).")
         self._sub_nb.select(0)
 
     def _import_shotmap_csv(self, rows: List[List[str]], name: str):
@@ -1055,4 +1532,118 @@ class RecipeGenPanel(ttk.Frame):
         self._redraw_diemap()
         self._log(f"[WAFER BUILDER] Imported Die Map from '{name}': {n} die(s) "
                  f"placed on a {shot_rows}x{shot_cols} shot grid.")
+        self._sub_nb.select(2)
+
+    # ==================================================================
+    # LEGACY IMPORT (Accretech only) — .PMA / Recipe Generator .xls
+    #
+    # Same idea as Import CSV, just autofilling all three pages from an
+    # older file instead of a plain grid: dies-per-shot is only ever
+    # inferred from an actual slash/comma-separated die list in a cell (see
+    # _autofill_from_major_grid) - never guessed from the file format, since
+    # nothing about a .PMA or .xls otherwise says how many dies share a
+    # touchdown.
+    # ==================================================================
+    def _import_pma(self):
+        path = filedialog.askopenfilename(
+            title="Load a .PMA recipe",
+            filetypes=[("PMA recipe", "*.PMA"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            fields = parse_pma_file(path)
+            touchdowns = load_touchdowns(path, fields)
+        except Exception as exc:
+            messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
+            return
+        if not touchdowns:
+            messagebox.showerror("Empty Recipe", "No touchdowns found — are "
+                                 "the .PMV and .PMS siblings next to the .PMA?")
+            return
+        xs = sorted({t["x"] for t in touchdowns})
+        ys = sorted({t["y"] for t in touchdowns})
+        x_idx = {x: i for i, x in enumerate(xs)}
+        y_idx = {y: i for i, y in enumerate(ys)}
+        cells = {(y_idx[t["y"]], x_idx[t["x"]]): t["device_id"] for t in touchdowns}
+        # A .PMA only lists the touchdowns its recipe actually visits, not
+        # the whole wafer - so the Shot Map this produces is that sampled
+        # subset, same spirit as "autofill", not a claim of completeness.
+        self._autofill_from_major_grid(cells, os.path.basename(path), "PMA recipe")
+
+    def _import_recipe_gen_xls(self):
+        if not _XLRD:
+            messagebox.showerror("xlrd Not Installed",
+                                 f"xlrd is not installed ({_XLRD_ERR}) — run:\n"
+                                 "    .venv\\Scripts\\pip install xlrd")
+            return
+        path = filedialog.askopenfilename(
+            title="Load a Recipe Generator (.xls)",
+            filetypes=[("Excel 97-2003 Workbook", "*.xls"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            book = xlrd.open_workbook(path, formatting_info=True)
+            major_grid = read_moves_grid(book, "MajorMoves")
+        except Exception as exc:
+            messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
+            return
+        cells = {(s["row"], s["col"]): s["raw_text"] for s in major_grid["shots"]
+                 if s["included"] and (s["raw_text"] or "").strip()}
+        self._autofill_from_major_grid(cells, os.path.basename(path),
+                                       "Recipe Generator workbook")
+
+    def _autofill_from_major_grid(self, cells: Dict[tuple, str], name: str,
+                                  source_label: str):
+        """cells: {(row, col): device_id_text} for touchdowns that are ON
+        the wafer - blank/absent positions are simply not keys here. Infers
+        Shot's size from the widest slash/comma-separated die list (default
+        1 - a single id with no separator is one die, never guessed
+        otherwise), Shot Map's presence from which positions have a cell,
+        and Die Map's ids from each cell's own die list in Shot's
+        column-major slot order."""
+        if not cells:
+            messagebox.showerror("Nothing to Import",
+                                 f"{source_label} had no touchdowns.")
+            return
+        widest = 1
+        die_lists = {}
+        for rc, text in cells.items():
+            parts = [d.strip() for d in text.replace(",", "/").split("/") if d.strip()]
+            die_lists[rc] = parts or [text.strip()]
+            widest = max(widest, len(die_lists[rc]))
+        shot_rows, shot_cols = shot_geometry(widest, 0, 0)
+        names = slot_names(shot_rows, shot_cols)
+        grid = slot_grid(shot_rows, shot_cols)
+
+        max_r = max(r for r, _ in cells)
+        max_c = max(c for _, c in cells)
+        shot_cells = {(r, c): {"present": True}
+                      for r in range(shot_rows) for c in range(shot_cols)}
+        shotmap_cells = {(r, c): (r, c) in cells
+                         for r in range(max_r + 1) for c in range(max_c + 1)}
+        n = 0
+        for (r, c), dies in die_lists.items():
+            for i, die in enumerate(dies):
+                if i >= len(names):
+                    break
+                slot_c, slot_r = grid[names[i]]
+                is_real = die.strip().upper() not in ("NA", "TARGET", "")
+                die_id = die.strip() if is_real else ""
+                if is_real:
+                    n += 1
+                self._die_status[(r, c, slot_r, slot_c)] = {
+                    "die_id": die_id, "status": "normal"}
+
+        self._shot_rows_var.set(str(shot_rows))
+        self._shot_cols_var.set(str(shot_cols))
+        self._shot_cells = shot_cells
+        self._shotmap_rows_var.set(str(max_r + 1))
+        self._shotmap_cols_var.set(str(max_c + 1))
+        self._shotmap_cells = shotmap_cells
+        self._draw_shot()
+        self._draw_shotmap()
+        self._redraw_diemap()
+        self._log(f"[WAFER BUILDER] Imported '{name}' ({source_label}): "
+                 f"{len(cells)} touchdown(s), {shot_rows}x{shot_cols} dies per "
+                 f"touchdown, {n} die(s) with an ID.")
         self._sub_nb.select(2)

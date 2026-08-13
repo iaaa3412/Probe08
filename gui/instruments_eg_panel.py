@@ -5,6 +5,7 @@ from tkinter import ttk
 
 from instrument_connection_panel import build_address_panel
 from instruments import eg_profiles
+from hp3458a_debug_panel import HP3458ADebugPanel
 
 # The roster of Electroglas instruments is per-bench and lives in
 # instruments/eg_probers.yaml, not here. The benches are genuinely different -
@@ -41,17 +42,17 @@ class InstrumentsEgPanel(ttk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self._dmm_cont = False
         self._addr_panel = None
 
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
+        self.rowconfigure(3, weight=1)
 
         self._build_bench_selector()
         self._build_addresses()
         self._build_smu()
-        self._build_dmm()
         self._build_ps()
+        self._build_dmm()
 
     def _log(self, msg: str):
         self.controller.log(msg)
@@ -213,57 +214,15 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_dmm(self):
         lf = ttk.LabelFrame(self, text="DMM — HP 3458A", padding=8)
-        lf.grid(row=2, column=1, sticky="new", padx=8, pady=8)
-
-        btn_row = ttk.Frame(lf)
-        btn_row.pack(fill="x")
-        ttk.Button(btn_row, text="Measure DCV",
-                  command=lambda: self._dmm_measure("v")).pack(side="left")
-        ttk.Button(btn_row, text="Measure DCI",
-                  command=lambda: self._dmm_measure("i")).pack(side="left", padx=(6, 0))
-        self._dmm_cont_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(btn_row, text="Continuous", variable=self._dmm_cont_var,
-                       command=self._toggle_dmm_cont).pack(side="left", padx=(10, 0))
-
-        self._dmm_reading_var = tk.StringVar(value="—")
-        ttk.Label(lf, textvariable=self._dmm_reading_var, font=("Consolas", 9)).pack(
-            anchor="w", pady=(6, 0))
-
-    def _dmm_measure(self, kind: str):
-        drv = self._drv("dmm")
-        if not drv:
-            self._log("[DMM] Not connected")
-            return
-        try:
-            if kind == "v":
-                val = drv.measure_voltage_dc()
-                self._dmm_reading_var.set(f"{val:.6g} V")
-            else:
-                val = drv.measure_current_dc()
-                self._dmm_reading_var.set(f"{val:.6g} A")
-            self._log(f"[DMM] {kind.upper()} = {val:.6g}")
-        except Exception as e:
-            self._log(f"[DMM] Error: {e}")
-
-    def _toggle_dmm_cont(self):
-        self._dmm_cont = self._dmm_cont_var.get()
-        if self._dmm_cont:
-            threading.Thread(target=self._dmm_cont_thread, daemon=True).start()
-
-    def _dmm_cont_thread(self):
-        while self._dmm_cont:
-            drv = self._drv("dmm")
-            if drv:
-                try:
-                    val = drv.measure_voltage_dc()
-                    self.after(0, lambda v=val: self._dmm_reading_var.set(f"{v:.6g} V"))
-                except Exception:
-                    pass
-            time.sleep(0.5)
+        lf.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+        lf.rowconfigure(0, weight=1)
+        lf.columnconfigure(0, weight=1)
+        self.dmm_debug = HP3458ADebugPanel(lf, controller=self.controller)
+        self.dmm_debug.grid(row=0, column=0, sticky="nsew")
 
     def _build_ps(self):
         lf = ttk.LabelFrame(self, text="Power Supply — Agilent 6634B", padding=8)
-        lf.grid(row=3, column=0, columnspan=2, sticky="new", padx=8, pady=(0, 8))
+        lf.grid(row=2, column=1, sticky="new", padx=8, pady=8)
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)
