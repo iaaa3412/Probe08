@@ -515,6 +515,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         self._ata_card_names: set = set()
         self._ata_probe_cards_dir: str = ""
         self._rows: list = []
+        self._editor_row_idx = None
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -549,8 +550,9 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
 
         btns = ttk.Frame(self)
         btns.grid(row=3, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 4))
-        ttk.Button(btns, text="＋ Add / Update", command=self._add_update).pack(
-            side="left", padx=(0, 2))
+        ttk.Button(btns, text="＋ Add", command=self._add).pack(side="left", padx=(0, 2))
+        ttk.Button(btns, text="✎ Update", command=self._update_selected).pack(
+            side="left", padx=2)
         ttk.Button(btns, text="🗑 Remove", command=self._remove).pack(side="left", padx=2)
         ttk.Button(btns, text="💾 Save All", command=self._save).pack(side="right")
         ttk.Button(btns, text="📂 Load .csv…", command=self._load_clicked).pack(
@@ -761,6 +763,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
     def _row_to_editor(self):
         sel = self._tree.selection()
         if not sel:
+            self._editor_row_idx = None
             return
         idx = self._tree.index(sel[0])
         if 0 <= idx < len(self._rows):
@@ -768,24 +771,51 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
             self._pin_var.set(r["pin"])
             self._pad_var.set(r["pad"])
             self._net_var.set(r["net"])
+            # Tracked by index, not by re-matching the Pin text on Update -
+            # otherwise editing the Pin field itself (not just Pad/Net) for a
+            # selected row stopped matching its old pin and added a new row
+            # instead of changing the one that was selected.
+            self._editor_row_idx = idx
 
-    def _add_update(self):
+    def _add(self):
         if not self._current:
             messagebox.showerror("No Probe Card", "Create a probe card first (＋New).")
             return
         pin = self._pin_var.get().strip()
         if not pin:
             return
-        row = {"pin": pin,
-               "pad": self._pad_var.get().strip(),
-               "net": self._net_var.get().strip()}
-        for i, r in enumerate(self._rows):
-            if r["pin"] == pin:
-                self._rows[i] = row
-                break
-        else:
-            self._rows.append(row)
+        if any(r["pin"] == pin for r in self._rows):
+            messagebox.showerror("Pin Already Exists",
+                                 f"Pin {pin} is already on this card — select "
+                                 "it and use Update instead.")
+            return
+        self._rows.append({"pin": pin, "pad": self._pad_var.get().strip(),
+                           "net": self._net_var.get().strip()})
         self._rows.sort(key=lambda r: (len(r["pin"]), r["pin"]))
+        self._editor_row_idx = None
+        self._refresh()
+
+    def _update_selected(self):
+        if not self._current:
+            messagebox.showerror("No Probe Card", "Create a probe card first (＋New).")
+            return
+        idx = self._editor_row_idx
+        if idx is None or not (0 <= idx < len(self._rows)):
+            messagebox.showerror("No Row Selected",
+                                 "Select a row in the table first, then Update.")
+            return
+        pin = self._pin_var.get().strip()
+        if not pin:
+            return
+        if any(i != idx and r["pin"] == pin for i, r in enumerate(self._rows)):
+            messagebox.showerror("Pin Already Exists",
+                                 f"Pin {pin} is already used by another row on "
+                                 "this card.")
+            return
+        self._rows[idx] = {"pin": pin, "pad": self._pad_var.get().strip(),
+                           "net": self._net_var.get().strip()}
+        self._rows.sort(key=lambda r: (len(r["pin"]), r["pin"]))
+        self._editor_row_idx = None
         self._refresh()
 
     def _remove(self):
@@ -795,6 +825,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         idx = self._tree.index(sel[0])
         if 0 <= idx < len(self._rows):
             del self._rows[idx]
+            self._editor_row_idx = None
             self._refresh()
 
     def _refresh(self):
