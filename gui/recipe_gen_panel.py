@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox, filedialog
 from typing import Any, Dict, List, Optional, Tuple
 
 from electroglas_pma import fmt_num
+from pma_wafer_panel import ATA_CSV_MAP_FILENAME
 
 try:
     import matplotlib
@@ -170,6 +171,16 @@ class RecipeGenPanel(ttk.Frame):
         diemap_tab = ttk.Frame(self._sub_nb)
         self._sub_nb.add(diemap_tab, text="Die Map")
         self._build_diemap_tab(diemap_tab)
+
+        # Die Map is computed from Shot x Shot Map, but nothing about editing
+        # either of those pages touched Die Map's cached _die_boxes/canvas -
+        # so switching to Die Map after resizing Shot, or after just toggling
+        # a Shot Map square, showed (and let you click into) stale die
+        # positions from before the edit. Redrawing on every arrival at Die
+        # Map, rather than chasing down every individual mutation call site,
+        # guarantees it is always freshly recomputed from current Shot/Shot
+        # Map state by the time it is visible or clickable.
+        self._sub_nb.bind("<<NotebookTabChanged>>", self._on_subtab_changed)
 
         # Keeps PmaWaferPanel (Overlay dialog / Run tab centroid-match) alive
         # without a visible tab - Wafer Builder no longer round-trips through
@@ -647,7 +658,10 @@ class RecipeGenPanel(ttk.Frame):
         return _COLOR_HAS_ID if box["die_id"] else _COLOR_BLANK
 
     def _redraw_diemap(self):
-        if not _MPL:
+        # Guards construction-order calls too, not just missing matplotlib -
+        # Shot/Shot Map's own initial _draw_shot()/_draw_shotmap() run during
+        # __init__ before _build_diemap_tab has created self.ax/self.canvas.
+        if not _MPL or not hasattr(self, "ax"):
             return
         self._close_die_editor(commit=True)
         self.ax.clear()
@@ -843,6 +857,72 @@ class RecipeGenPanel(ttk.Frame):
                 proc.refresh_align_site()
             except Exception:
                 pass
+        self._push_to_pma_wafer(folder)
+
+    def _plain_csv_rows(self) -> List[List[str]]:
+        """This wafer as the 'plain CSV wafer map' shape PmaWaferPanel
+        already understands: one cell per touchdown, holding that shot's
+        dies slash-joined in Shot's own column-major slot order (skip/align
+        dies written as the literal SKIP/ALIGN, matching the Die Map CSV
+        import convention) - because Shot only ever includes PRESENT slots,
+        every joined entry is a real die; there is no blank-corner case to
+        represent here."""
+        shot_rows, shot_cols = self._shot_dims()
+        ordered = sorted(present_slots(self._shot_cells, shot_rows, shot_cols).items(),
+                         key=lambda kv: kv[1])
+        present_shots = [rc for rc, v in self._shotmap_cells.items() if v]
+        max_sr = max((r for r, _ in present_shots), default=-1)
+        max_sc = max((c for _, c in present_shots), default=-1)
+        rows = []
+        for sr in range(max_sr + 1):
+            row = []
+            for sc in range(max_sc + 1):
+                if not self._shotmap_cells.get((sr, sc)):
+                    row.append("")
+                    continue
+                texts = []
+                for (slr, slc), _slot_no in ordered:
+                    info = self._die_status.get((sr, sc, slr, slc), {})
+                    status = info.get("status", "normal")
+                    if status == "skip":
+                        texts.append("SKIP")
+                    elif status == "align":
+                        texts.append("ALIGN")
+                    else:
+                        texts.append(info.get("die_id") or "UNNAMED")
+                row.append("/".join(texts))
+            rows.append(row)
+        return rows
+
+    def _push_to_pma_wafer(self, folder: str):
+        """Feeds PmaWaferPanel's in-memory CSV source from this page's own
+        state, best-effort. Nothing here reads ata_wafer_map_electroglas.csv
+        (the file _save_wafer_map just wrote) - PmaWaferPanel is legacy
+        machinery of its own, read directly by EgPmaRunPanel (the .PMA
+        recipe-stepping pane's own embedded map, its shot-window sizing, and
+        its per-die row/col lookup for multi-die shots) via
+        self.pma_wafer._csv_shot_data/_xls_shot_data. With the old Wafer
+        View tab (and its Import .xls/Load CSV buttons) gone, that data
+        would otherwise never get populated again once this tab replaces
+        it - silently blanking EgPmaRunPanel's own map/shot-window for
+        anyone still driving a run from a loaded .PMA recipe."""
+        wafer = getattr(self._main_layout, "pma_wafer", None)
+        if wafer is None:
+            return
+        rows = self._plain_csv_rows()
+        if not any(c for r in rows for c in r):
+            return
+        shot_rows, shot_cols = self._shot_dims()
+        try:
+            wafer._shot_rows_var.set(str(shot_rows))
+            wafer._shot_cols_var.set(str(shot_cols))
+            path = os.path.join(folder, ATA_CSV_MAP_FILENAME)
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerows(rows)
+            wafer.load_csv_path(path)
+        except Exception as exc:
+            self._log(f"[WAFER MAP] Could not sync the legacy .PMA-recipe "
+                     f"wafer view: {type(exc).__name__}: {exc}")
 
     # ==================================================================
     # CSV IMPORT — one button, all three tabs
@@ -850,6 +930,10 @@ class RecipeGenPanel(ttk.Frame):
     def _current_tab_kind(self) -> str:
         idx = self._sub_nb.index(self._sub_nb.select())
         return ("shot", "shotmap", "die")[idx] if 0 <= idx < 3 else "die"
+
+    def _on_subtab_changed(self, _event=None):
+        if self._current_tab_kind() == "die":
+            self._redraw_diemap()
 
     def _import_csv(self):
         path = filedialog.askopenfilename(
