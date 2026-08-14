@@ -733,7 +733,7 @@ class RecipeGenPanel(ttk.Frame):
             except Exception:
                 pass
         self._diemap_xlim_cid = self.ax.callbacks.connect(
-            "xlim_changed", lambda _ax: self._diemap_label_visibility())
+            "xlim_changed", lambda _ax: self._diemap_debounced_label_visibility())
         self._selected_die_patch = None
         self._die_boxes = self._die_positions()
         self._die_id_labels = []
@@ -747,17 +747,14 @@ class RecipeGenPanel(ttk.Frame):
             coll.set_facecolor([self._die_color(b) for b in self._die_boxes])
             self.ax.add_collection(coll)
             self._diemap_coll = coll
-            # Zoomed-out, one letter per die is unreadable clutter - hidden
-            # until _diemap_label_visibility finds them big enough on screen.
-            for b in self._die_boxes:
-                if not b["die_id"]:
-                    continue
-                txt = self.ax.text(
-                    b["x"] + b["w"] / 2, b["y"] + b["h"] / 2, b["die_id"],
-                    ha="center", va="center", fontsize=6, color="#0f172a",
-                    zorder=6, clip_on=True)
-                self._die_id_labels.append(txt)
-                self._diemap_label_by_key[b["key"]] = txt
+            # Labels are NOT created for every die with an ID here anymore -
+            # see _diemap_sync_visible_labels, called below once the view is
+            # final. A real wafer can carry thousands of die IDs, and every
+            # one of them being a live matplotlib Text artist at all times
+            # (regardless of whether it was ever on screen) made a single
+            # repaint take SECONDS - matplotlib has no batched way to draw
+            # text the way PatchCollection batches the rectangles above, so
+            # every Text costs real per-object overhead on every draw().
             if reset_view:
                 xs = [b["x"] for b in self._die_boxes]
                 ys = [b["y"] for b in self._die_boxes]
@@ -776,6 +773,69 @@ class RecipeGenPanel(ttk.Frame):
                           f"{n_id} with ID, {n_skip} skip, {n_align} align")
         self.ax.set_aspect("equal")
         self.ax.set_axis_off()
+        self._diemap_sync_visible_labels()
+        self.canvas.draw_idle()
+
+    # Extra viewport-widths of margin kept "live" (real Text artists)
+    # around the visible area, so a small pan does not immediately need a
+    # label add/remove pass. Bigger = fewer resyncs but more per-frame cost;
+    # 0.4 keeps a real LAMPATA-scale wafer (~2400 die IDs) down to a few
+    # dozen live labels at a readable zoom instead of all of them.
+    _DIEMAP_LABEL_VIEW_MARGIN = 0.4
+
+    def _diemap_visible_keys(self) -> set:
+        """Die keys within the current view (+ margin) that should have a
+        label - has an ID, status normal (skip/align dies never got one)."""
+        if not getattr(self, "_die_boxes", None):
+            return set()
+        try:
+            xlim, ylim = self.ax.get_xlim(), self.ax.get_ylim()
+        except Exception:
+            return set()
+        x0, x1 = sorted(xlim)
+        y0, y1 = sorted(ylim)
+        pad_x = (x1 - x0) * self._DIEMAP_LABEL_VIEW_MARGIN
+        pad_y = (y1 - y0) * self._DIEMAP_LABEL_VIEW_MARGIN
+        x0, x1 = x0 - pad_x, x1 + pad_x
+        y0, y1 = y0 - pad_y, y1 + pad_y
+        # die_id alone, no status filter - matches _diemap_update_one's own
+        # "if box['die_id']:" check: a die marked skip/align after already
+        # carrying an ID keeps showing it (status only changes its color),
+        # same as before this culling existed.
+        return {b["key"] for b in self._die_boxes
+               if b["die_id"]
+               and x0 <= b["x"] <= x1 and y0 <= b["y"] <= y1}
+
+    def _diemap_sync_visible_labels(self):
+        """Add/remove Text artists so only dies within the current view
+        (+ margin, _DIEMAP_LABEL_VIEW_MARGIN) have one - see that
+        attribute's comment for why this exists. Called after every real
+        redraw and (debounced) after every pan/zoom settles.
+        """
+        if not getattr(self, "_die_boxes", None) or not hasattr(self, "ax"):
+            return
+        want = self._diemap_visible_keys()
+        have = set(self._diemap_label_by_key)
+        for key in have - want:
+            txt = self._diemap_label_by_key.pop(key)
+            try:
+                txt.remove()
+            except Exception:
+                pass
+            if txt in self._die_id_labels:
+                self._die_id_labels.remove(txt)
+        if want - have:
+            box_by_key = {b["key"]: b for b in self._die_boxes}
+            for key in want - have:
+                b = box_by_key.get(key)
+                if b is None:
+                    continue
+                txt = self.ax.text(
+                    b["x"] + b["w"] / 2, b["y"] + b["h"] / 2, b["die_id"],
+                    ha="center", va="center", fontsize=6, color="#0f172a",
+                    zorder=6, clip_on=True)
+                self._die_id_labels.append(txt)
+                self._diemap_label_by_key[key] = txt
         self._diemap_label_visibility()
         self.canvas.draw_idle()
 
@@ -837,6 +897,25 @@ class RecipeGenPanel(ttk.Frame):
 
     _DIEMAP_LABEL_MIN_PX = 22  # below this on-screen die width, an ID is unreadable clutter
 
+    def _diemap_debounced_label_visibility(self, delay_ms: int = 60):
+        """xlim_changed fires on every pixel of a middle-drag pan or a
+        toolbar zoom-drag, not just once per gesture - coalesce those into
+        a single _diemap_sync_visible_labels() call ~delay_ms after the
+        last one, instead of running it on every single motion event.
+        Panning moves which dies are near the view, not just whether the
+        current ones are big enough to read, so this has to resync the
+        live label set (add/remove), not just toggle visibility - see
+        _diemap_sync_visible_labels.
+        """
+        pending = getattr(self, "_diemap_visibility_after_id", None)
+        if pending is not None:
+            try:
+                self.after_cancel(pending)
+            except Exception:
+                pass
+        self._diemap_visibility_after_id = self.after(
+            delay_ms, self._diemap_sync_visible_labels)
+
     def _diemap_label_visibility(self):
         if not getattr(self, "_die_id_labels", None):
             return
@@ -868,6 +947,12 @@ class RecipeGenPanel(ttk.Frame):
         return None
 
     def _on_diemap_click(self, event):
+        if event.button == 2:
+            # Middle button is map_nav's pan gesture, not a die click -
+            # without this, pressing it to START a pan fell through to the
+            # "id" mode branch below and popped the die-ID text editor
+            # open at that spot every time.
+            return
         if event.xdata is None or event.ydata is None:
             return
         die = self._hit_die(event.xdata, event.ydata)

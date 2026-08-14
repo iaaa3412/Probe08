@@ -2414,7 +2414,15 @@ class MainLayout(ttk.Frame):
         # bindings decide whether they should be VISIBLE at this zoom level.
         # Keeping only the visibility half would leave wrongly-sized labels;
         # keeping only the rebuild would show them when too small to read.
-        self._exec2_wafer_map.on_zoom = self._exec2_redraw_overlay_on_run_map
+        # Debounced (_exec2_debounced) rather than called directly - a fast
+        # scroll or a middle-drag pan (which reuses this same on_zoom, see
+        # wafer_map_view._bind_zoom_only) fires this many times a second,
+        # and each call rebuilds every die-ID label - so a burst of events
+        # now collapses into one rebuild shortly after the burst ends,
+        # instead of rebuilding on every single one of them. What gets
+        # redrawn, and when the data itself changes, is unchanged.
+        self._exec2_wafer_map.on_zoom = self._exec2_debounced(
+            "_exec2_zoom_debounce_id", self._exec2_redraw_overlay_on_run_map)
         # Bound with add="+" so the map's own pan/zoom/reset bindings (set up
         # inside WaferMapPanel.__init__) still run first.
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<Double-Button-1>"):
@@ -3160,6 +3168,33 @@ class MainLayout(ttk.Frame):
                 wm.canvas.itemconfigure(it, state=state)
             except tk.TclError:
                 pass
+
+    def _exec2_debounced(self, pending_attr: str, fn, delay_ms: int = 60):
+        """Wrap fn so a burst of calls (a fast mouse-wheel scroll, or a
+        middle-drag pan - both fire many events a second) collapses into
+        one call ~delay_ms after the last one in the burst, rather than
+        running fn on every single event. Used for the overlay label
+        rebuild, which is what made zoom/pan noticeably laggy on a wafer
+        map with many die-ID labels showing - this changes how OFTEN that
+        rebuild runs, not what it does or when the underlying data changes.
+
+        pending_attr names a per-caller instance attribute that holds the
+        pending after() id, so two different debounced callbacks (e.g. the
+        Run tab map and the Results tab map) do not cancel each other.
+        """
+        def _schedule():
+            existing = getattr(self, pending_attr, None)
+            if existing is not None:
+                try:
+                    self.after_cancel(existing)
+                except Exception:
+                    pass
+
+            def _fire():
+                setattr(self, pending_attr, None)
+                fn()
+            setattr(self, pending_attr, self.after(delay_ms, _fire))
+        return _schedule
 
     def _exec2_redraw_overlay_on_run_map(self):
         # Explicitly clear first: a full redraw has already wiped the canvas,
@@ -4562,7 +4597,8 @@ class MainLayout(ttk.Frame):
         self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
         self._results_wafer_map.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
         self._results_wafer_map.on_redraw = self._exec2_redraw_overlay_on_results_map
-        self._results_wafer_map.on_zoom = self._exec2_redraw_overlay_on_results_map
+        self._results_wafer_map.on_zoom = self._exec2_debounced(
+            "_exec2_results_zoom_debounce_id", self._exec2_redraw_overlay_on_results_map)
 
         detail_lf = ttk.LabelFrame(map_frame, text="Selected Die")
         detail_lf.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
