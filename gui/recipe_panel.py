@@ -476,6 +476,16 @@ def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None,
                 s2["name"] = s2["name"] + suffix
             if s2.get("target") in names_in_block:
                 s2["target"] = s2["target"] + suffix
+            # Every step in this block belongs to die i, whether or not it
+            # touches the wafer itself (delay/open/passfail included) - this
+            # is what _exec2_slot_identity reads to file a measurement
+            # against the right square. Previously left unset here, so
+            # every step kept whatever "die" the single-die source steps
+            # had (normalized to "1"), and a whole multi-die shot's worth
+            # of results all filed against die 1 - see the reference
+            # HPLaMP_WHOLE_WAFER recipe in LaMP_HP.csv, which sets this
+            # correctly per block.
+            s2["die"] = str(i)
             # Route only the steps that actually touch the wafer. A delay has
             # no connection, and giving one a channel would close a relay at
             # a point the original sequence had it open.
