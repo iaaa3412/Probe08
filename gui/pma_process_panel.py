@@ -612,10 +612,24 @@ class PmaProcessPanel(ttk.Frame):
             self._log("[PMA] LOAD ALL: the Run tab is not available — recipe "
                       "built, but nothing to run it with.")
             return
-        if getattr(run, "_anchored", False):
-            self._log("[PMA] LOAD ALL: the Run tab is anchored to a die, so it "
-                      "was left alone — re-adopting would lose where the chuck "
-                      "is. Finish or reset the run, then LOAD ALL again.")
+        if getattr(run, "_running", False):
+            self._log("[PMA] LOAD ALL: a run is in progress on the Run tab, "
+                      "so it was left alone. Stop or let it finish, then "
+                      "LOAD ALL again.")
+            return
+        # _anchored alone is not enough to block on anymore - it now stays
+        # True after a run finishes or is stopped too (the chuck's real
+        # position is kept, see eg_pma_run_panel._start), not just while
+        # genuinely paused mid-run. _needs_restart is what actually means
+        # "that position still matters for resuming" - see _run_all/
+        # _move_next. A finished/stopped run's stale anchor used to block
+        # every later LOAD ALL here, silently leaving both the Run tab and
+        # the Recipe tab's touchdown list on the PREVIOUS recipe.
+        if getattr(run, "_anchored", False) and not getattr(run, "_needs_restart", False):
+            self._log("[PMA] LOAD ALL: the Run tab is anchored to a die "
+                      "(paused mid-run), so it was left alone — re-adopting "
+                      "would lose where the chuck is. Resume or stop the "
+                      "run, then LOAD ALL again.")
             return
         try:
             run.adopt_from_process(quiet=True)
@@ -699,9 +713,14 @@ class PmaProcessPanel(ttk.Frame):
             # these same shots - not just redrawing the Run tab from
             # whatever Wafer Builder already had (which _sync_views below
             # does, and which is stale/empty the first time LOAD ALL runs).
+            # save_as names it after the .PMA itself and saves it as its
+            # own map (warning first if that name already exists) instead
+            # of overwriting whatever map the operator had open - a second
+            # LOAD ALL for a different recipe used to clobber it silently.
             try:
                 gen.load_touchdowns_as_map(
-                    shots, os.path.basename(self._pma_path), source)
+                    shots, os.path.basename(self._pma_path), source,
+                    save_as=os.path.splitext(os.path.basename(self._pma_path))[0])
             except Exception as exc:
                 self._log(f"[PMA] LOAD ALL: could not build a Wafer Builder "
                           f"map from these shots — {type(exc).__name__}: {exc}")
@@ -766,16 +785,26 @@ class PmaProcessPanel(ttk.Frame):
         loader - the default recipe auto-loads here at startup and the Run tab
         picks it up with no clicks.
 
-        NOT while a run is anchored: re-adopting resets the anchor, and losing
-        where the chuck is mid-wafer is far worse than picking the file again.
-        Run LOAD ALL once the run is finished or reset.
+        NOT while a run is actually in progress, or genuinely paused
+        mid-run (_anchored True but _needs_restart False - see
+        eg_pma_run_panel._start/_run_all): re-adopting resets the anchor,
+        and losing where the chuck is mid-wafer is far worse than picking
+        the file again. A finished/stopped run's anchor does not block
+        this - the chuck's position is kept for display, but the next
+        Run/Full Die/Test Selected already restarts from scratch either
+        way (_needs_restart), so there is nothing left to lose here.
         """
         run = getattr(self._main_layout, "eg_pma_run", None)
         if run is None or not hasattr(run, "adopt_from_process"):
             return
-        if getattr(run, "_anchored", False):
-            self._log("[PMA] Run tab left alone — it is anchored to a die. "
-                      "Finish or reset the run, then press LOAD ALL.")
+        if getattr(run, "_running", False):
+            self._log("[PMA] Run tab left alone — a run is in progress. "
+                      "Stop or let it finish, then press LOAD ALL.")
+            return
+        if getattr(run, "_anchored", False) and not getattr(run, "_needs_restart", False):
+            self._log("[PMA] Run tab left alone — it is anchored to a die "
+                      "(paused mid-run). Resume or stop the run, then "
+                      "press LOAD ALL.")
             return
         try:
             run.adopt_from_process(quiet=True)

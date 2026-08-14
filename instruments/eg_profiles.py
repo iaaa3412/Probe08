@@ -141,6 +141,70 @@ def apply_to_instruments_yaml(name: str = None) -> list:
     return changed
 
 
+def add_profile(new_name: str, based_on: str = None) -> None:
+    """Create a new bench profile, starting as a full copy of `based_on`
+    (or the active one) - the Setup tab's "+ Add Prober". Copies every
+    field, including notes/scanned/id_queries, so the new bench starts as
+    a real duplicate rather than an empty shell; the label is reset to
+    the new name since the old one describes the SOURCE bench.
+    """
+    import copy
+    new_name = (new_name or "").strip()
+    if not new_name:
+        raise ValueError("prober name cannot be blank")
+    data = load()
+    probers = data.setdefault("probers", {})
+    if new_name in probers:
+        raise ValueError(f"a profile named {new_name!r} already exists")
+    source = based_on or active_name()
+    if source not in probers:
+        raise KeyError(f"no Electroglas profile named {source!r}")
+    probers[new_name] = copy.deepcopy(probers[source])
+    probers[new_name]["label"] = new_name
+    _save(data)
+
+
+def set_instrument(bench: str, key: str, *, name: str = None,
+                   address: str = None, timeout_ms: int = None,
+                   fitted: bool = None) -> None:
+    """Add or update one instrument entry on `bench` - the Setup tab's
+    per-instrument editor. Only the given (non-None) fields change; on an
+    EXISTING entry, notes/scanned/id_queries/write_probe are left exactly
+    as they were - Setup does not expose or touch those. A brand new
+    entry gets id_queries=[] (no probe-specific ID query known yet).
+    """
+    if key not in EG_KEYS:
+        raise ValueError(f"{key!r} is not a known instrument key "
+                         f"(expected one of {EG_KEYS})")
+    data = load()
+    probers = data.get("probers") or {}
+    if bench not in probers:
+        raise KeyError(f"no Electroglas profile named {bench!r}")
+    inst = probers[bench].setdefault("instruments", {})
+    entry = inst.setdefault(key, {"id_queries": []})
+    if name is not None:
+        entry["name"] = name
+    if address is not None:
+        entry["address"] = address
+    if timeout_ms is not None:
+        entry["timeout_ms"] = int(timeout_ms)
+    if fitted is not None:
+        entry["fitted"] = bool(fitted)
+    _save(data)
+
+
+def remove_instrument(bench: str, key: str) -> None:
+    """Drop one instrument entry from `bench` entirely - not just marking
+    it unfitted, actually removing the row, for "this bench never had
+    one of these" rather than "has one but it's not connected"."""
+    data = load()
+    probers = data.get("probers") or {}
+    if bench not in probers:
+        raise KeyError(f"no Electroglas profile named {bench!r}")
+    (probers[bench].get("instruments") or {}).pop(key, None)
+    _save(data)
+
+
 def set_active(name: str) -> list:
     """Make `name` the active bench and push its addresses into instruments.yaml."""
     data = load()

@@ -11,7 +11,7 @@ import electroglas_pma
 
 DIE_PIN_KIND = "DIEPIN"
 
-CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq"] + list(STEP_FIELDS)
+CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq", "bench"] + list(STEP_FIELDS)
 
 
 def _bind_zoom_only(canvas, on_zoom=None):

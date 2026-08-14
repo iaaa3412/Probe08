@@ -989,6 +989,13 @@ class EgPmaRunPanel(ttk.Frame):
         self._die_results[key] = "PASS" if passed else "FAIL"
         self._paint_cells([rc], self._die_results[key], also_results=True)
         self._tally(was, self._die_results[key])
+        # Persisted the same way instrument_panel._exec2_update_die_color
+        # does, so cmd_save_csv/cmd_import_results_csv see LaMP's per-die
+        # verdicts too, not just the Accretech/generic Run tab's.
+        try:
+            self.controller.die_status[rc] = self._die_results[key]
+        except Exception:
+            pass
 
     def mark_result(self, seq, passed: bool):
         """Record and paint a whole touchdown's verdict.
@@ -1000,6 +1007,11 @@ class EgPmaRunPanel(ttk.Frame):
         self._results[seq] = "PASS" if passed else "FAIL"
         self._paint(seq, self._results[seq], also_results=True)
         self._tally(was, self._results[seq])
+        try:
+            for rc in self._cells.get(seq) or []:
+                self.controller.die_status[rc] = self._results[seq]
+        except Exception:
+            pass
 
     def _tally(self, was: str, now: str):
         """Move one result between the PASS/FAIL columns.
@@ -1259,28 +1271,53 @@ class EgPmaRunPanel(ttk.Frame):
         if not self._guard():
             return
         enabled = self._enabled_indices()
-        # Position in RUN order, not index order - the run follows the .PMA's
-        # route over a wafer-wide position list, so "ahead" is not "> index".
-        try:
-            ahead = enabled[enabled.index(self._index) + 1:]
-        except ValueError:
-            ahead = enabled
-        remaining = len(ahead)
-        if remaining <= 0:
-            self._log("[PMA] Already at the last touchdown of this run")
+        if not enabled:
+            self._log("[PMA] Run: this recipe has no touchdowns to probe.")
             return
         total = len(self._touchdowns)
         subset = (f"\n\nThe loaded recipe restricts this run to {len(enabled)} "
                   f"of the PMA's {total} touchdown(s); the rest are skipped."
                   if len(enabled) != total else "")
+
+        # Position in RUN order, not index order - the run follows the .PMA's
+        # route over a wafer-wide position list, so "ahead" is not "> index".
+        # _needs_restart (set by _start's _settle, after a stop/finish/error
+        # - never a pause) means the LAST run reached the end of its list or
+        # was cut short - either way the next Run/Full Die/Test Selected
+        # press should start the whole list over from its first touchdown,
+        # not refuse with "already at the last touchdown" and not silently
+        # resume mid-wafer either.
+        restart = getattr(self, "_needs_restart", False)
+        if not restart:
+            try:
+                ahead = enabled[enabled.index(self._index) + 1:]
+            except ValueError:
+                ahead = enabled
+            restart = not ahead
+
+        if restart:
+            remaining = len(enabled)
+            first = enabled[0]
+            move_note = ("" if self._index == first else
+                         "\n\nThe chuck is not on the first touchdown of "
+                         "this run - it will move back there before "
+                         "probing starts.")
+            prompt = (f"Probe {remaining} touchdown(s), starting over from "
+                      f"the first touchdown of this run?{move_note}{subset}")
+        else:
+            remaining = len(ahead)
+            prompt = f"Probe {remaining} more touchdown(s)?{subset}"
+
         if not messagebox.askokcancel(
-                "Run", f"Probe {remaining} more touchdown(s)?{subset}\n\n"
+                "Run", f"{prompt}\n\n"
                        "THIS MEASURES. The wafer contacts the probe card and "
                        "the recipe runs on all four dies of each shot.\n\n"
                        "Z is verified against ?S before each measurement — if "
                        "the chuck is not in contact the run stops rather than "
                        "measuring open air. The chuck is separated at the end."):
             return
+        if restart:
+            self._needs_restart = True  # consumed by _move_next's first hop
         self._start(remaining)
 
     def _pause(self):
@@ -1436,14 +1473,18 @@ class EgPmaRunPanel(ttk.Frame):
 
             def _settle():
                 self._status_var.set(f"{word} — {done} touchdown(s)")
-                # A stop is a full reset: the recipe starts again from its
-                # first touchdown next time. Pause deliberately does not -
-                # that is the whole difference between the two buttons.
-                if stopped:
-                    self.reset_run_position()
-                else:
-                    self._mark_current()
-                    self._refresh_position()
+                # Stopped, finished, or errored - the chuck KEEPS its real
+                # physical position/anchor (only Z separated, via
+                # _make_safe above) so the GUI still knows where it is, but
+                # _needs_restart means the next Run/Full Die/Test Selected
+                # press starts the whole list over from its first
+                # touchdown instead of resuming from here - see _run_all/
+                # _move_next. Pause deliberately does neither: position is
+                # kept AND the next Run resumes from it, no restart flag.
+                if not paused:
+                    self._needs_restart = True
+                self._mark_current()
+                self._refresh_position()
             self._ui(_settle)
 
         threading.Thread(target=_work, daemon=True).start()
@@ -1576,7 +1617,17 @@ class EgPmaRunPanel(ttk.Frame):
             return None
 
     def _move_next(self, drv, cap: int) -> bool:
-        nxt = self._next_enabled_index(self._index)
+        if getattr(self, "_needs_restart", False):
+            # Consumed on this first hop only - _move_to_index below still
+            # computes the move FROM self._index (the chuck's real, kept
+            # position), just TO the first touchdown instead of "next after
+            # current". Every hop after this one goes back to the normal
+            # _next_enabled_index(self._index) path.
+            self._needs_restart = False
+            order = self._enabled_indices()
+            nxt = order[0] if order else None
+        else:
+            nxt = self._next_enabled_index(self._index)
         if nxt is None:
             self._ui(lambda: self._log(
                 "[PMA] No further touchdowns in this recipe's list."))

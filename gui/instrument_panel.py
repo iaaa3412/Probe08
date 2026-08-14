@@ -15,6 +15,8 @@ from switch_debug_panel import SwitchDebugPanel
 from switch_settings_panel import SwitchSettingsPanel
 from switchbox_test_panel import SwitchboxTestPanel
 from instruments_eg_panel import InstrumentsEgPanel
+from eg_setup_panel import EgSetupPanel
+from accretech_setup_panel import AccretechSetupPanel
 from instrument_connection_panel import build_address_panel
 from probe_routing_panel import scrollable_routing
 from prober_debug_panel import ProberDebugPanel
@@ -432,6 +434,7 @@ class MainLayout(ttk.Frame):
             self._tab_probe_routing(debug_nb)
         else:
             self._tab_instruments_eg(debug_nb)
+        self._tab_setup(debug_nb)
         self._tab_gds_parser(debug_nb)
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
@@ -2037,6 +2040,24 @@ class MainLayout(ttk.Frame):
         self.instruments_eg = InstrumentsEgPanel(tab, controller=self.controller)
         self.instruments_eg.grid(row=0, column=0, sticky="nsew")
 
+    def _tab_setup(self, nb):
+        """Add/edit prober benches and their instrument fitment - separate
+        implementations per system (see eg_setup_panel.py/
+        accretech_setup_panel.py's module docstrings for why: Electroglas
+        already has real per-bench profiles to edit, Accretech has one
+        fixed bench with no such infrastructure yet)."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Setup")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        if self._system == "accretech":
+            self.setup_panel = AccretechSetupPanel(
+                tab, controller=self.controller, main_layout=self)
+        else:
+            self.setup_panel = EgSetupPanel(
+                tab, controller=self.controller, main_layout=self)
+        self.setup_panel.grid(row=0, column=0, sticky="nsew")
+
     def _tab_probe_routing(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Switch Routing")
@@ -2698,6 +2719,13 @@ class MainLayout(ttk.Frame):
 
     def _exec2_update_die_color(self, row: int, col: int, ok: bool):
         status = "PASS" if ok else "FAIL"
+        # The only persistent record of this verdict - the map widgets only
+        # hold it as canvas item colour. cmd_save_csv reads this to write
+        # per-die PASS/FAIL, and cmd_import_results_csv repaints from it.
+        try:
+            self.controller.die_status[(row, col)] = status
+        except Exception:
+            pass
         try:
             if (row, col) in self._exec2_wafer_map.dies:
                 self._exec2_wafer_map.update_die(row, col, status)
@@ -4378,6 +4406,10 @@ class MainLayout(ttk.Frame):
         ttk.Button(
             path_row, text="Save to CSV", command=self.controller.cmd_save_csv
         ).pack(side="left", padx=10)
+        ttk.Button(
+            path_row, text="📂 Import CSV",
+            command=self.controller.cmd_import_results_csv
+        ).pack(side="left", padx=(0, 4))
 
         sql_row = ttk.Frame(export_frame)
         sql_row.pack(fill="x", padx=10, pady=(0, 12))
