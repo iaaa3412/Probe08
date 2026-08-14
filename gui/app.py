@@ -493,9 +493,15 @@ class AtomicaDashboard(tk.Tk):
         if txt is None:
             print(message)
             return
+        # Only auto-scroll if the view was already at (or effectively at)
+        # the bottom before this line arrived - otherwise every new log
+        # line yanked the user back down to "live", making it impossible
+        # to scroll up and read past output during a run.
+        at_bottom = txt.yview()[1] >= 0.999
         txt.configure(state="normal")
         txt.insert(tk.END, message + "\n")
-        txt.see(tk.END)
+        if at_bottom:
+            txt.see(tk.END)
         txt.configure(state="disabled")
 
     def _set_status(self, ui, name, mark, colour):
