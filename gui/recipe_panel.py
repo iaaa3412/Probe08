@@ -469,7 +469,12 @@ def repeat_steps_per_die(steps: list, dies_per_shot: int, channels=None,
         # hold the previous die closed as well, putting two in parallel.
         if chan:
             out.append({"kind": "STEP", "name": f"Isolate{suffix}",
-                        "type": "open", "target": "all", "conn": "all"})
+                        "type": "open", "target": "all", "conn": "all",
+                        # Left unset until now, which _normalize_step then
+                        # defaulted to "1" on load/display - so "Isolate
+                        # (Die 3)"/"Isolate (Die 4)" showed Die # = 1 in the
+                        # Recipe tab, contradicting their own name.
+                        "die": str(i)})
         for s in steps:
             s2 = dict(s)
             if s2.get("name"):
@@ -1068,7 +1073,7 @@ class RecipePanel(ttk.Frame):
         # glance. Selecting a row still pulls every field into the editor
         # below from self._steps, not from what's on screen.
         self._step_tree["displaycolumns"] = (
-            "n", "name", "type", "die", "route", "hi", "lo", "level")
+            "n", "name", "type", "die", "hi", "lo", "level")
         self._step_tree.grid(row=0, column=0, sticky="nsew")
         ssb = ttk.Scrollbar(sf, orient="vertical", command=self._step_tree.yview)
         ssb.grid(row=0, column=1, sticky="ns")
