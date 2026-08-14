@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
+from tkinter import filedialog, messagebox
 import os
 import re
 import threading
@@ -27,6 +28,7 @@ from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
 from recipe_gen_panel import RecipeGenPanel
 import export_formats as xfmt
+import mdb_export
 import app_settings
 from engineering_units import parse_engineering, format_engineering
 
@@ -1957,16 +1959,10 @@ class MainLayout(ttk.Frame):
         if hasattr(self, "_exec2_card_var"):
             self._exec2_card_cb.config(values=[""] + sorted(self.pin_wiring.get_card_names()))
             self._exec2_card_var.set(card_name)
-        # The Wafer Builder's shot map shows THIS card's die-to-pin table, so
-        # it has to follow a card change or it would offer to save one card's
-        # pins onto another.
-        gen = getattr(self, "recipe_gen", None)
-        if gen is not None:
-            try:
-                gen._load_die_pins()
-            except Exception as exc:
-                self.controller.log(f"[SHOT] Shot map did not follow the card "
-                                    f"change: {type(exc).__name__}: {exc}")
+        # Nothing to tell Wafer Builder here any more: the Shot tab used to
+        # hold the card's die-to-pin table and had to follow a card change,
+        # but pins are picked per measurement step on the Recipe tab now, so
+        # a shot is the same shot whichever card is loaded.
         if not hasattr(self, "recipe_panel"):
             return
         self.recipe_panel.load_recipes(card_name, self.pin_wiring.get_recipes())
@@ -3678,8 +3674,13 @@ class MainLayout(ttk.Frame):
             name = s.get("name") or f"step {i}"
             lvl  = s.get("level") or ""
             conn = (s.get("conn") or "").replace(" ", "")
-            chans = [c for c in conn.split(",") if c and c.lower() != "all"]
-            conn_str = "_".join(chans)
+            # A step marked direct is cabled instrument-to-probe-card by
+            # hand, so it closes nothing even if a stale conn string is still
+            # sitting on it from before it was switched over.
+            direct = s.get("route") == "direct"
+            chans = ([] if direct else
+                     [c for c in conn.split(",") if c and c.lower() != "all"])
+            conn_str = "DIRECT" if direct else "_".join(chans)
             try:
                 if t == "delay":
                     ms = float(lvl or 0)
@@ -3756,7 +3757,9 @@ class MainLayout(ttk.Frame):
                 instrument = s.get("instrument") or ""
                 label = f"{i}. {name} [{t}{('/' + mode) if mode else ''} " \
                         f"via {instrument}]"
-                self._exec2_log(f"[MEASURE] {label}: close {conn or '—'}")
+                self._exec2_log(f"[MEASURE] {label}: "
+                                + ("direct wiring — no switchbox" if direct
+                                   else f"close {conn or '—'}"))
                 if not sim:
                     for ch in chans:
                         switch.close_channel(ch)
@@ -3960,22 +3963,28 @@ class MainLayout(ttk.Frame):
         so this no longer depends on how the step happens to be named.
 
         The Electroglas run publishes the shot's die IDs and map cells in
-        QUAD_ORDER before each touchdown, so a per-die step (die_no > 1) can
-        be filed against the die it actually measured rather than against
-        the shot's anchor cell. die_no of 1 or blank (the default - most
-        shots are single-die) returns the shot-level values unchanged and a
-        blank switch, exactly like a step that never had a "(Die N)" suffix
-        did before - so single-die shots and Accretech are unaffected.
+        QUAD_ORDER before each touchdown, so a per-die step can be filed
+        against the die it actually measured rather than against the shot's
+        anchor cell.
+
+        The test is whether that publication EXISTS, not whether die_no is
+        greater than 1. Blank normalizes to "1", so "die 1" and "no die set"
+        look identical here - short-circuiting on die_no <= 1 therefore filed
+        die 1 of a quad under the whole shot's ID with a blank fldSwitch,
+        while dies 2..4 got their own. One shot exported three individual
+        dies and one shot-shaped row, and LaMP's fldSwitch 1..4 became
+        0,2,3,4. With no publication (Accretech, or a single-die shot) there
+        are no slots to file against and the shot-level fallback is right.
         """
         try:
             switch = int(float(die_no))
         except (TypeError, ValueError):
             switch = 1
-        if switch <= 1:
-            return fallback_die, fallback_rc[0], fallback_rc[1], None
-        slot = switch - 1
         ids = getattr(self, "_exec2_die_ids_by_slot", None) or []
         rcs = getattr(self, "_exec2_die_rc_by_slot", None) or []
+        slot = switch - 1
+        if switch < 1 or not (slot < len(ids) or slot < len(rcs)):
+            return fallback_die, fallback_rc[0], fallback_rc[1], None
         die = ids[slot] if 0 <= slot < len(ids) and ids[slot] else fallback_die
         rc = rcs[slot] if 0 <= slot < len(rcs) and rcs[slot] else fallback_rc
         return die, rc[0], rc[1], switch
@@ -4271,6 +4280,12 @@ class MainLayout(ttk.Frame):
         ttk.Button(
             sql_row, text="🗑 Delete", command=self._delete_export_format
         ).pack(side="left", padx=(6, 0))
+        # Push straight into an Access database instead of writing a .sql
+        # file for someone to run later. Electroglas only for now: LaMP's
+        # tblLampElectricalMeasurements is the database this exists for.
+        if self._system == "electroglas":
+            self._build_mdb_row(export_frame)
+
         self._export_formats: list = []
         self._export_default_lbl_var = tk.StringVar(value="")
         ttk.Label(export_frame, textvariable=self._export_default_lbl_var,
@@ -4300,6 +4315,139 @@ class MainLayout(ttk.Frame):
 
         ttk.Button(results_lf, text="Clear Results", command=self.clear_results).grid(
             row=1, column=0, columnspan=2, sticky="e", padx=6, pady=(0, 6))
+
+    # ------------------------------------------------------------------
+    # ACCESS DATABASE PUSH
+    #
+    # An .mdb is a FILE, not a server - pushing writes rows into that file
+    # and nothing else. Point this at the shared copy on the network and
+    # everyone reading it sees the rows; point it at a local copy and the
+    # rows go nowhere but that copy. See mdb_export's module docstring.
+    # ------------------------------------------------------------------
+    def _build_mdb_row(self, parent):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(row, text="Access DB (.mdb):").pack(side="left")
+        self.mdb_path_var = tk.StringVar(
+            value=app_settings.load_settings().get("mdb_path", ""))
+        ttk.Entry(row, textvariable=self.mdb_path_var, width=38).pack(
+            side="left", padx=6)
+        ttk.Button(row, text="Browse…", command=self._mdb_browse).pack(
+            side="left", padx=2)
+        ttk.Button(row, text="🔎 Check", command=self._mdb_check).pack(
+            side="left", padx=(8, 2))
+        ttk.Button(row, text="⬆ Push to DB", command=self._mdb_push).pack(
+            side="left", padx=2)
+        self._mdb_status_var = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self._mdb_status_var, foreground="#6b7280",
+                 font=("Segoe UI", 8), wraplength=620, justify="left").pack(
+                 anchor="w", padx=10, pady=(0, 8))
+
+    def _mdb_say(self, text: str):
+        """Status line, or nothing on a system that never built the row.
+
+        The push methods live on MainLayout for both systems but only
+        Electroglas draws the controls, so on Accretech the status var does
+        not exist. Nothing can reach them there through the UI - this just
+        keeps that an inert fact rather than an AttributeError waiting for
+        the first caller who does not know it.
+        """
+        var = getattr(self, "_mdb_status_var", None)
+        if var is not None:
+            var.set(text)
+
+    def _mdb_browse(self):
+        path = filedialog.askopenfilename(
+            title="Select the Access database to push results into",
+            filetypes=[("Access database", "*.mdb *.accdb"), ("All files", "*.*")])
+        if not path:
+            return
+        self.mdb_path_var.set(path)
+        # Remembered globally, not per ATA folder: it is one shared database
+        # for the line, and re-picking it for every lot would be busywork.
+        settings = app_settings.load_settings()
+        settings["mdb_path"] = path
+        app_settings.save_settings(settings)
+        self._mdb_check()
+
+    def _mdb_format(self):
+        fmt = self.get_selected_export_format()
+        if not fmt:
+            self._mdb_say(
+                "Pick an Export Format first — it says which table and columns "
+                "to write.")
+            return None
+        if fmt.get("type") == "csv":
+            self._mdb_say(
+                f"'{fmt['name']}' is a CSV format — a database push needs a SQL "
+                "format (one with a table and columns), such as the LaMP one.")
+            return None
+        return fmt
+
+    def _mdb_check(self):
+        fmt = self._mdb_format()
+        if not fmt:
+            return None
+        info = mdb_export.preflight(getattr(self, "mdb_path_var", tk.StringVar()).get().strip(), fmt["table"])
+        if not info["ok"]:
+            self._mdb_say("✖  " + "  ".join(info["problems"]))
+            self.controller.log("[MDB] Check failed — " + "; ".join(info["problems"]))
+            return None
+        missing = [c["field"] for c in fmt["columns"]
+                   if c["field"].lower() not in {x.lower() for x in info["columns"]}]
+        if missing:
+            msg = (f"✖  '{fmt['table']}' exists but has no column(s): "
+                  f"{', '.join(missing)} — the format and the table disagree.")
+            self._mdb_say(msg)
+            self.controller.log("[MDB] " + msg)
+            return None
+        n = info["row_count"]
+        self._mdb_say(
+            f"✔  {os.path.basename(getattr(self, "mdb_path_var", tk.StringVar()).get())} — table "
+            f"'{fmt['table']}' found"
+            + (f", {n} row(s) already in it" if n is not None else "")
+            + f".  Driver: {info['driver']}.")
+        return info
+
+    def _mdb_push(self):
+        fmt = self._mdb_format()
+        if not fmt:
+            return
+        if not self._mdb_check():
+            return
+        lot = self.lot_id.get().strip()
+        if not lot:
+            self._mdb_say("✖  Enter a Lot ID first — it is what "
+                                     "fldTestSerial is computed from.")
+            return
+        wafer = self.wafer_id_var.get().strip()
+        # The last run only, matching what "💾 Export" writes - so the file
+        # and the database always describe the same run.
+        results = self.get_last_run_results()
+        fields, rows = mdb_export.build_rows(fmt, results, lot, wafer)
+        if not rows:
+            self._mdb_say(
+                "✖  No rows from the last run match this format "
+                "(it needs readings that carry a device ID).")
+            return
+        path = getattr(self, "mdb_path_var", tk.StringVar()).get().strip()
+        if not messagebox.askokcancel(
+                "Push to Database",
+                f"Insert {len(rows)} row(s) into [{fmt['table']}]\nin "
+                f"{path}?\n\nThis writes directly into that file. If it is the "
+                "shared copy on the network, everyone reading it sees these "
+                "rows straight away — there is no undo."):
+            return
+        res = mdb_export.push(path, fmt, results, lot, wafer)
+        if res["ok"]:
+            msg = (f"✔  Pushed {res['inserted']} row(s) into "
+                  f"[{res['table']}] — lot {lot}"
+                  + (f", wafer {wafer}" if wafer else "") + ".")
+            self._mdb_say(msg)
+            self.controller.log("[MDB] " + msg)
+        else:
+            self._mdb_say("✖  " + res["error"])
+            self.controller.log("[MDB] Push failed — " + res["error"])
 
     def _build_results_wafer_map(self, tab):
         map_frame = ttk.LabelFrame(tab, text="Wafer Map — Pass / Fail")
