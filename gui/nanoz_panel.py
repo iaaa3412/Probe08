@@ -1,4 +1,5 @@
 from __future__ import annotations
+from map_nav import bind_middle_pan_mpl
 
 import bisect
 import collections
@@ -898,6 +899,7 @@ class NanoZPanel(ttk.Frame):
             toolbar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
             self._nzmap_canvas.mpl_connect("button_press_event", self._on_nzmap_click)
             self._nzmap_canvas.mpl_connect("scroll_event", self._on_nzmap_scroll_zoom)
+            bind_middle_pan_mpl(self._nzmap_canvas, lambda: self._nzmap_ax)
 
             info_lf = ttk.LabelFrame(tab, text="Selected Die")
             info_lf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -1807,6 +1809,8 @@ class NanoZPanel(ttk.Frame):
             # default autoscale, never overridden), so only X needs a manual
             # zoom control here.
             self._chart_canvas.mpl_connect("scroll_event", self._on_chart_scroll_zoom)
+            # No get_ax: three stacked subplots, pan whichever is under the cursor.
+            bind_middle_pan_mpl(self._chart_canvas)
             self._draw_empty_charts()
         else:
             ttk.Label(tab, text="matplotlib not installed — install it to view live charts.",

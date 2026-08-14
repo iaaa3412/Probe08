@@ -6,6 +6,7 @@ import os
 from typing import Optional
 
 from recipe_panel import recipes_to_rows, rows_to_recipes, STEP_FIELDS
+from map_nav import bind_middle_pan_tk
 import electroglas_pma
 
 DIE_PIN_KIND = "DIEPIN"
@@ -35,6 +36,10 @@ def _bind_zoom_only(canvas, on_zoom=None):
     canvas.bind("<MouseWheel>", lambda e: _zoom(e.x, e.y, 1.15 if e.delta > 0 else 1 / 1.15))
     canvas.bind("<Button-4>",   lambda e: _zoom(e.x, e.y, 1.15))
     canvas.bind("<Button-5>",   lambda e: _zoom(e.x, e.y, 1 / 1.15))
+    # Bound here rather than only in _pz_bind so the click-to-select maps -
+    # which deliberately leave the left button to picking dies and so had no
+    # way to pan at all - get the same middle-drag gesture as everything else.
+    bind_middle_pan_tk(canvas, on_zoom)
 
 
 def _pz_bind(canvas, on_reset, on_zoom=None):

@@ -2242,6 +2242,10 @@ class MainLayout(ttk.Frame):
 
         for label, cmd in [
             ("⏏  Unload (U)",  self._exec2_manual_unload),
+            # Pause is what ⏹ Stop Run used to do: finish what is in
+            # progress and hold, keeping the position so Run resumes. Stop
+            # is now a real stop - see _exec2_abort.
+            ("⏸  Pause",       self._exec2_pause),
             ("⏹  Stop Run",       self._exec2_abort),
         ]:
             ttk.Button(ctrl, text=label, command=cmd).pack(side="left", padx=3, pady=5)
@@ -2508,12 +2512,67 @@ class MainLayout(ttk.Frame):
     def _exec2_set_state(self, text: str, color: str):
         self._exec2_state_lbl.config(text=text, fg=color)
 
+    def _exec2_open_all_channels(self):
+        """Open every switch channel, whichever matrix this bench has.
+
+        Called on a stop, so the bench is never left with a source still
+        strapped to a pad after the operator has told it to stop.
+        """
+        switch = self.controller.drivers.get("switch")
+        if switch is None or not getattr(switch, "inst", None):
+            return
+        try:
+            if hasattr(switch, "open_all"):
+                switch.open_all()
+            elif hasattr(switch, "open_crosspoint"):
+                switch.open_channel("allslots")
+            else:
+                switch.open_channel("allslots")
+            self._exec2_log("[RUN] All switch channels opened.")
+        except Exception as e:
+            self._exec2_log(f"[RUN] ⚠ Could not open all channels: "
+                            f"{type(e).__name__}: {e}")
+
+    def _exec2_pause(self):
+        """Stop after the work in progress, keeping the position.
+
+        What ⏹ Stop Run used to do. Nothing is reset and the bench is left
+        as it is, so ▶ Run picks up from the next touchdown.
+        """
+        eg_run = getattr(self, "eg_pma_run", None)
+        if eg_run is not None and getattr(eg_run, "_running", False):
+            try:
+                eg_run._pause()
+                self._exec2_log("[RUN] ⏸ Pause — stopping after this touchdown; "
+                                "position kept, press ▶ Run to carry on.")
+                return
+            except Exception as e:
+                self._exec2_log(f"[RUN] Could not pause the .PMA run: {e}")
+        if not self._exec2_running:
+            self._exec2_log("[RUN] Nothing is running to pause.")
+            return
+        # The Accretech-style loops check _exec2_running between dies, so
+        # clearing it stops them the same graceful way - without the abort
+        # flag, which is what triggers the emergency stop and the reset.
+        self._exec2_running = False
+        self._exec2_set_state("PAUSED", "#b45309")
+        self._exec2_log("[RUN] ⏸ Paused after the current die — position kept.")
+
     def _exec2_abort(self):
         # One Stop Run button covers both run engines now - the normal Full
         # Die/Test Selected/Test Die loop below, AND (Electroglas only)
         # EgPmaRunPanel's own .PMA step-through, which used to need its own
         # separate ⏹ Stop button to halt.
+        #
+        # A real stop, not "wind down when convenient": the run thread bails
+        # at the next step boundary rather than finishing the touchdown, the
+        # switch is opened, the chuck is separated, and the position is
+        # forgotten so ▶ Run starts the recipe over. ⏸ Pause is the gentle
+        # one. What cannot be interrupted is a reading already in flight -
+        # that is a single blocking GPIB call, and abandoning it mid-transfer
+        # would leave the bus out of step for everything after it.
         eg_run = getattr(self, "eg_pma_run", None)
+        eg_was_running = bool(getattr(eg_run, "_running", False))
         if eg_run is not None:
             try:
                 eg_run._stop()
@@ -2521,14 +2580,29 @@ class MainLayout(ttk.Frame):
                 self._exec2_log(f"[RUN] Could not stop the .PMA step-through: {e}")
         self._exec2_running = False
         self._exec2_aborted = True
+        # The .PMA run thread opens the channels and drops Z itself on the
+        # way out (see EgPmaRunPanel._make_safe), so doing it here as well
+        # would race it. Anything else, this is the only chance.
+        if not eg_was_running:
+            self._exec2_open_all_channels()
+            prober_z = self.controller.drivers.get("prober")
+            if prober_z is not None and getattr(prober_z, "inst", None):
+                try:
+                    prober_z.z_down()
+                    self._exec2_log("[RUN] Chuck separated (Z down).")
+                except Exception as e:
+                    self._exec2_log(f"[RUN] ⚠ Could not separate the chuck: "
+                                    f"{type(e).__name__}: {e}")
         self._exec2_run_token += 1
         self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
         self.after(0, lambda: self._exec2_test_btn.config(state="normal"))
         self.after(0, lambda: self.recipe_panel.set_locked(False))
         self.after(0, lambda: self._exec2_wafer_map.enable_picking(
             on_change=self._exec2_on_sites_changed))
-        self.after(0, lambda: self._exec2_set_state("ABORTED", "#dc2626"))
-        self._exec2_log("[RUN] Aborted.")
+        self.after(0, lambda: self._exec2_set_state(
+            "STOPPING…" if eg_was_running else "STOPPED", "#dc2626"))
+        self._exec2_log("[RUN] ⏹ Stop — channels opened, chuck separated, "
+                        "run position reset; ▶ Run will start from the beginning.")
         prober = self.controller.drivers.get("prober")
         if prober and prober.inst:
             def _stop_and_clear():
@@ -2791,7 +2865,7 @@ class MainLayout(ttk.Frame):
             if error_msg:
                 self._exec2_finish_run(my_token, f"ERROR: {error_msg[:60]}", "#dc2626")
             else:
-                self._exec2_finish_run(my_token, "DONE (Full Die)", "#16a34a")
+                self._exec2_finish_run(my_token, "FINISHED (Full Die)", "#16a34a")
 
 
     def _exec2_on_sites_changed(self, picks):
@@ -3380,7 +3454,7 @@ class MainLayout(ttk.Frame):
             if error_msg:
                 self._exec2_finish_run(my_token, f"ERROR: {error_msg[:60]}", "#dc2626")
             else:
-                self._exec2_finish_run(my_token, "DONE (Test Die)", "#16a34a")
+                self._exec2_finish_run(my_token, "FINISHED (Test Die)", "#16a34a")
 
 
     def _exec2_autoload_default_recipe(self, folder_path):
@@ -3670,6 +3744,18 @@ class MainLayout(ttk.Frame):
         self._exec2_log(f"[MEASURE] One iteration — {len(self._exec2_steps)} step(s)"
                         + ("  [SIM — no switch matrix connected]" if sim else ""))
         for i, s in enumerate(self._exec2_steps, 1):
+            # Checked per STEP, not per touchdown: ⏹ Stop means stop, and a
+            # shot's recipe is a dozen steps across four dies - finishing it
+            # would keep sourcing into the wafer for seconds after the
+            # button. The reading already in flight still completes (one
+            # blocking GPIB call; abandoning it mid-transfer desyncs the bus
+            # for everything after), but nothing new is started.
+            if self._exec2_aborted:
+                self._exec2_log(f"[MEASURE] ⏹ stopped before step {i} "
+                                f"({s.get('name') or 'unnamed'}) — "
+                                "remaining steps skipped.")
+                self._exec2_mark_all_open()
+                return False
             t    = s.get("type")
             name = s.get("name") or f"step {i}"
             lvl  = s.get("level") or ""

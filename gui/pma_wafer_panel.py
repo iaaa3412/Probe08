@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Dict, List, Optional
 
 import electroglas_pma as egpma
+from map_nav import bind_middle_pan_mpl
 from electroglas_pma import shot_geometry, slot_names
 
 try:
@@ -613,6 +614,7 @@ class PmaWaferPanel(ttk.Frame):
             self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
             self.canvas.mpl_connect("button_press_event", self._on_map_click)
             self.canvas.mpl_connect("scroll_event", self._on_scroll_zoom)
+            bind_middle_pan_mpl(self.canvas, lambda: self.ax)
             self._draw_empty()
         else:
             ttk.Label(left, text="matplotlib not installed — install it to view "

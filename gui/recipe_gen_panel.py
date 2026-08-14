@@ -1,4 +1,5 @@
 from __future__ import annotations
+from map_nav import bind_middle_pan_mpl
 
 import csv
 import json
@@ -660,6 +661,7 @@ class RecipeGenPanel(ttk.Frame):
             self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
             self.canvas.mpl_connect("button_press_event", self._on_diemap_click)
             self.canvas.mpl_connect("scroll_event", self._on_diemap_scroll_zoom)
+            bind_middle_pan_mpl(self.canvas, lambda: getattr(self, "ax", None))
             # xlim_changed fires on ANY axes limit change - scroll-zoom,
             # the navigation toolbar's zoom/pan tools, everything - so die
             # ID label visibility stays correct regardless of how the view

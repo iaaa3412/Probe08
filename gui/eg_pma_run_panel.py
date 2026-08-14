@@ -106,6 +106,9 @@ class EgPmaRunPanel(ttk.Frame):
         self._size_confirmed = False
         self._running = False
         self._abort = False
+        # Distinct from _abort: pause stops the loop but keeps the position,
+        # so Run resumes; abort resets it. See _pause / _stop.
+        self._paused = False
         self._rc = {}               # touchdown seq -> one representative (row, col)
         self._cells = {}            # touchdown seq -> every map cell it covers
         self._results = {}          # touchdown seq -> "PASS" / "FAIL"
@@ -250,25 +253,46 @@ class EgPmaRunPanel(ttk.Frame):
         pass
 
     def _build_table(self):
-        lf = ttk.LabelFrame(self, text="Touchdowns", padding=4)
+        # "Die list", not "Touchdowns": it lists every position on the wafer,
+        # the same set the Set Initial Chuck dropdown offers, with the ones
+        # this recipe actually probes marked. It used to show only the
+        # recipe's own touchdowns, which made it disagree with that dropdown
+        # for no reason a user could see - you could pick a die there that
+        # this table said did not exist.
+        lf = ttk.LabelFrame(self, text="Die list", padding=4)
         lf.grid(row=5, column=0, sticky="nsew", padx=6, pady=(2, 6))
-        lf.rowconfigure(0, weight=1)
+        lf.rowconfigure(1, weight=1)
         lf.columnconfigure(0, weight=1)
 
-        cols = ("seq", "quad", "step", "devices")
+        bar = ttk.Frame(lf)
+        bar.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        self._table_all_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bar, text="show every die on the wafer",
+                        variable=self._table_all_var,
+                        command=self._fill_table).pack(side="left")
+        self._table_count_var = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self._table_count_var, foreground="#6b7280",
+                  font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
+
+        cols = ("seq", "quad", "run", "step", "devices")
         self._tree = ttk.Treeview(lf, columns=cols, show="headings", height=10)
         for col, head, width, stretch in (("seq", "#", 46, False),
                                           ("quad", "quad x,y", 74, False),
+                                          ("run", "run", 40, False),
                                           ("step", "MD", 64, False),
                                           ("devices", "devices", 260, True)):
             self._tree.heading(col, text=head)
             self._tree.column(col, width=width, anchor="w", stretch=stretch)
-        self._tree.grid(row=0, column=0, sticky="nsew")
+        self._tree.grid(row=1, column=0, sticky="nsew")
         sb = ttk.Scrollbar(lf, orient="vertical", command=self._tree.yview)
-        sb.grid(row=0, column=1, sticky="ns")
+        sb.grid(row=1, column=1, sticky="ns")
         self._tree.configure(yscrollcommand=sb.set)
         self._tree.tag_configure("here", background="#fde68a")
         self._tree.tag_configure("done", foreground="#9ca3af")
+        # A position on the wafer that this recipe does not probe. Still
+        # listed, and still selectable - Go To / Set Initial Chuck can send
+        # the chuck anywhere - just not part of the run.
+        self._tree.tag_configure("offrun", foreground="#9ca3af")
         self._tree.bind("<<TreeviewSelect>>", self._on_table_click)
 
     # -- recipe -------------------------------------------------------------
@@ -485,20 +509,44 @@ class EgPmaRunPanel(ttk.Frame):
         self._anchor_cb.config(values=matches[:self._ANCHOR_MAX_LISTED])
 
     def _fill_table(self):
-        # The run's touchdowns, in run order - not every wafer position.
-        # _touchdowns is now the whole wafer, but this table is the recipe's
-        # touchdown list and listing 634 rows would bury it. The iid stays the
-        # index into _touchdowns so selection still resolves to a position.
+        """Every wafer position, the run's own first and in run order.
+
+        The iid stays the index into _touchdowns, so selecting a row still
+        resolves to a position whichever set is shown.
+
+        Run order first, then the rest by index: the MD column is the step
+        from the previous touchdown, which only means anything along the
+        path the recipe actually walks - so it is filled for the run's rows
+        and left blank for positions the recipe never visits.
+        """
         self._tree.delete(*self._tree.get_children())
+        run_order = self._enabled_indices()
+        in_run = set(run_order)
         prev = None
-        for i in self._enabled_indices():
+        for i in run_order:
             t = self._touchdowns[i]
             qx, qy = self._quad(t)
             step = "start" if prev is None else \
                 f"{qx - prev[0]:+d},{qy - prev[1]:+d}"
             self._tree.insert("", "end", iid=str(i),
-                              values=(t["seq"], f"{qx},{qy}", step, t["device_id"]))
+                              values=(t["seq"], f"{qx},{qy}", "✓", step,
+                                      t["device_id"]))
             prev = (qx, qy)
+        n_off = 0
+        if self._table_all_var.get():
+            for i, t in enumerate(self._touchdowns):
+                if i in in_run:
+                    continue
+                qx, qy = self._quad(t)
+                self._tree.insert("", "end", iid=str(i), tags=("offrun",),
+                                  values=(t["seq"], f"{qx},{qy}", "", "",
+                                          t["device_id"]))
+                n_off += 1
+        self._table_count_var.set(
+            f"{len(run_order)} probed by this recipe"
+            + (f", {n_off} more on the wafer" if n_off else
+               ("" if self._table_all_var.get()
+                else f" — {len(self._touchdowns) - len(run_order)} others hidden")))
 
     # -- anchoring ----------------------------------------------------------
 
@@ -575,16 +623,35 @@ class EgPmaRunPanel(ttk.Frame):
                                    f"{t['device_id']}")
         self._mark_current()
         self._refresh_position()
+        # Paint now, inside the click, rather than whenever Tk next goes
+        # idle. The overlay is drawn on the map canvas by the calls above,
+        # but the canvas only shows it on the next idle cycle - so after a
+        # modal confirm, or with anything else queued, the box could lag the
+        # button press by a visible beat.
+        try:
+            wmap = self._run_map()
+            if wmap is not None:
+                wmap.canvas.update_idletasks()
+        except Exception:
+            pass
         self._log(f"[PMA] Anchored at #{t['seq']} {t['device_id']} quad ({qx},{qy})")
 
     def _mark_current(self):
+        run_order = self._enabled_indices()
+        in_run = set(run_order)
+        # Position WITHIN THE RUN, not the raw index: the list now also holds
+        # positions the recipe never visits, and "done" means "the run has
+        # already been past it", which an index comparison cannot express
+        # once the two orders differ.
+        done_upto = run_order.index(self._index) if self._index in in_run else None
         for iid in self._tree.get_children():
             i = int(iid)
-            tags = ()
+            tags = () if i in in_run else ("offrun",)
             if self._index is not None:
                 if i == self._index:
                     tags = ("here",)
-                elif i < self._index:
+                elif done_upto is not None and i in in_run \
+                        and run_order.index(i) < done_upto:
                     tags = ("done",)
             self._tree.item(iid, tags=tags)
         if self._index is not None:
@@ -1216,9 +1283,82 @@ class EgPmaRunPanel(ttk.Frame):
             return
         self._start(remaining)
 
+    def _pause(self):
+        """Finish what is in progress, then hold - the old ⏹ Stop behaviour.
+
+        Position is kept, so ▶ Run carries on from the next touchdown. That
+        is the safe way to interrupt a long run to look at something.
+        """
+        if not self._running:
+            return
+        self._paused = True
+        self._status_var.set("pausing after this touchdown…")
+        self._set_run_state("PAUSING…", "#b45309")
+
     def _stop(self):
+        """Stop NOW - do not finish the touchdown in progress.
+
+        The run thread checks _abort between steps, so it stops at the next
+        step boundary rather than after the whole shot. It cannot interrupt a
+        reading already in flight on the GPIB bus: that is one blocking call
+        into the instrument, and abandoning it mid-transfer would desync the
+        bus for everything after it.
+
+        Then it makes the bench safe - every channel opened, chuck separated
+        - and forgets the position, so ▶ Run restarts the recipe from its
+        first touchdown instead of resuming from wherever it was cut off.
+        Use ⏸ Pause to keep the position.
+        """
         self._abort = True
-        self._status_var.set("stopping after the current move…")
+        self._paused = False
+        self._status_var.set("stopping…")
+        self._set_run_state("STOPPING…", "#dc2626")
+
+    def _set_run_state(self, text: str, color: str):
+        """Drive the Run tab's big state label from this pane's own run.
+
+        It is the one place an operator looks to know what the machine is
+        doing, and a .PMA run never touched it - so the label sat on IDLE
+        through an entire wafer.
+        """
+        layout = self._main_layout
+        setter = getattr(layout, "_exec2_set_state", None)
+        if setter is None:
+            return
+        try:
+            self._ui(lambda: setter(text, color))
+        except Exception:
+            pass
+
+    def _make_safe(self, drv):
+        """Open every channel and separate the chuck. Safe to call twice."""
+        layout = self._main_layout
+        opener = getattr(layout, "_exec2_open_all_channels", None)
+        if opener is not None:
+            try:
+                opener()
+            except Exception as e:
+                self._ui(lambda: self._log(
+                    f"[PMA] ⚠ Could not open the switch channels — "
+                    f"{type(e).__name__}: {e}"))
+        if drv is not None:
+            try:
+                drv.z_down()
+                self._ui(lambda: self._log("[PMA] Chuck separated (Z down)."))
+            except Exception as e:
+                self._ui(lambda: self._log(
+                    f"[PMA] ⚠ Could not separate the chuck — "
+                    f"{type(e).__name__}: {e}  Check Z before moving."))
+
+    def reset_run_position(self):
+        """Forget where the run got to, so ▶ Run starts from the beginning."""
+        self._index = None
+        self._anchored = False
+        self._last_seq = None
+        self._um_residual = [0.0, 0.0]
+        self._anchor_state_var.set("not set — stopped, set the chuck again to run")
+        self._mark_current()
+        self._refresh_position()
 
     def _publish_total_dies(self) -> int:
         """Tell the stats panel how many DIES this run measures.
@@ -1244,15 +1384,25 @@ class EgPmaRunPanel(ttk.Frame):
     def _start(self, count: int):
         self._running = True
         self._abort = False
+        self._paused = False
+        # The measurement engine checks the LAYOUT's abort flag between
+        # steps, so a previous stop would make every later run bail on its
+        # very first step until something else happened to clear it.
+        try:
+            self._main_layout._exec2_aborted = False
+        except Exception:
+            pass
         self._publish_total_dies()
+        self._set_run_state("RUNNING (.PMA)", "#2563eb")
         drv = self._prober()
         cap = getattr(drv, "max_die_step", 5)
 
         def _work():
             done = 0
+            err = None
             try:
                 for _ in range(count):
-                    if self._abort:
+                    if self._abort or self._paused:
                         break
                     if not self._move_next(drv, cap):
                         break
@@ -1263,23 +1413,38 @@ class EgPmaRunPanel(ttk.Frame):
                 err = f"{type(e).__name__}: {str(e).splitlines()[0][:80]}"
                 self._ui(lambda: self._log(f"[PMA] run aborted — {err}"))
             finally:
-                # Separate before leaving the chuck unattended. The prober
-                # handles Z around its own moves, but nothing moves after the
-                # last touchdown, so without this the needles stay in contact.
-                if drv is not None:
-                    try:
-                        drv.z_down()
-                        self._ui(lambda: self._log("[PMA] Chuck separated (Z down)."))
-                    except Exception as e:
-                        self._ui(lambda: self._log(
-                            f"[PMA] ⚠ Could not separate the chuck — "
-                            f"{type(e).__name__}: {e}  Check Z before moving."))
+                # Always make the bench safe on the way out, however the loop
+                # ended. The prober handles Z around its own moves, but
+                # nothing moves after the last touchdown - and on a stop
+                # nothing moves at all - so without this the needles would
+                # stay in contact with channels still closed.
+                self._make_safe(drv)
                 # Cleared here, not in the Tk callback: if the window is gone the
                 # callback never runs and the panel would be dead for good.
                 self._running = False
-            self._ui(lambda: (self._status_var.set(
-                f"{'stopped' if self._abort else 'done'} — {done} touchdown(s)"),
-                self._mark_current(), self._refresh_position()))
+
+            stopped, paused = self._abort, self._paused
+            if stopped:
+                word, state, colour = "stopped", "STOPPED", "#dc2626"
+            elif paused:
+                word, state, colour = "paused", "PAUSED", "#b45309"
+            elif err:
+                word, state, colour = "error", "ERROR", "#dc2626"
+            else:
+                word, state, colour = "finished", "FINISHED", "#16a34a"
+            self._set_run_state(state, colour)
+
+            def _settle():
+                self._status_var.set(f"{word} — {done} touchdown(s)")
+                # A stop is a full reset: the recipe starts again from its
+                # first touchdown next time. Pause deliberately does not -
+                # that is the whole difference between the two buttons.
+                if stopped:
+                    self.reset_run_position()
+                else:
+                    self._mark_current()
+                    self._refresh_position()
+            self._ui(_settle)
 
         threading.Thread(target=_work, daemon=True).start()
 
