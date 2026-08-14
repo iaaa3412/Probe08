@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+from collections import Counter
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -43,6 +44,45 @@ _COLOR_SKIP = "#9ca3af"      # marked skip (grey)
 _COLOR_ALIGN = "#ef4444"     # marked alignment die (red)
 _COLOR_ABSENT = "#e2e8f0"    # not present (blank slot in the shot / no shot here)
 _COLOR_SELECTED = "#f59e0b"
+
+# Alignment/PCM/target dies are usually named differently from the real
+# device IDs around them on an imported recipe - either with one of these
+# explicit keywords, or (see _die_id_shape/_find_alignment_ids) a naming
+# shape that doesn't match the majority of the wafer's other die IDs. Used
+# by _autofill_from_major_grid (Load PMA/Recipe Gen) and _import_diemap_csv
+# (Import CSV) so those imports auto-mark them status="align" (highlighted
+# red) instead of importing them as ordinary numbered dies.
+_ALIGN_KEYWORDS = {"target", "pcm", "align", "alignment", "ref", "reference"}
+
+
+def _die_id_shape(text: str) -> str:
+    """'N12345' -> '@#' - letters collapse to one '@', digits to one '#',
+    everything else kept literal. Shape, not exact length/value, is what
+    should distinguish "just another die ID" from an oddly-named one."""
+    out = []
+    for ch in text:
+        marker = "@" if ch.isalpha() else "#" if ch.isdigit() else ch
+        if out and out[-1] == marker and marker in "@#":
+            continue
+        out.append(marker)
+    return "".join(out)
+
+
+def _find_alignment_ids(die_ids) -> set:
+    """Which of these non-blank die ID strings look like alignment/PCM/
+    target dies rather than real device IDs. Needs at least 4 IDs to trust
+    a "majority" shape - with fewer, nothing is confidently the odd one
+    out, so only the explicit keyword list applies."""
+    texts = [d.strip() for d in die_ids if d and d.strip()]
+    # startswith, not ==, so "PCM1"/"Target-5"/"align_2" also match, not
+    # only the bare keyword itself.
+    outliers = {d for d in texts
+               if any(d.lower().startswith(kw) for kw in _ALIGN_KEYWORDS)}
+    if len(texts) >= 4:
+        shapes = Counter(_die_id_shape(d) for d in texts)
+        majority_shape, _count = shapes.most_common(1)[0]
+        outliers |= {d for d in texts if _die_id_shape(d) != majority_shape}
+    return outliers
 
 
 def _to_float(text, default: float = 0.0) -> float:
@@ -1592,6 +1632,13 @@ class RecipeGenPanel(ttk.Frame):
         for r in range(need_shot_r):
             for c in range(need_shot_c):
                 cells[(r, c)] = self._shotmap_cells.get((r, c), False)
+        # SKIP/ALIGN are explicit literal keywords (unchanged, blank the ID
+        # since they're not a real device name) - anything else that looks
+        # like an alignment/PCM/target die (see _find_alignment_ids) also
+        # gets marked align, but keeps its own text as the die_id.
+        raw_texts = [(row[c] or "").strip() for row in rows for c in range(len(row))]
+        align_ids = _find_alignment_ids(
+            t for t in raw_texts if t.upper() not in ("SKIP", "ALIGN"))
         n = 0
         for r, row in enumerate(rows):
             for c in range(len(row)):
@@ -1607,6 +1654,8 @@ class RecipeGenPanel(ttk.Frame):
                     status, die_id = "skip", ""
                 elif text.upper() == "ALIGN":
                     status, die_id = "align", ""
+                elif text in align_ids:
+                    status = "align"
                 self._die_status[(sr, sc, slr, slc)] = {"die_id": die_id,
                                                         "status": status}
                 n += 1
@@ -1629,6 +1678,25 @@ class RecipeGenPanel(ttk.Frame):
     # nothing about a .PMA or .xls otherwise says how many dies share a
     # touchdown.
     # ==================================================================
+    def load_touchdowns_as_map(self, touchdowns: list, name: str, source_label: str):
+        """Same autofill _import_pma/_import_recipe_gen_xls do below, but
+        from an already-loaded touchdown list rather than re-reading a file
+        - what PmaProcessPanel.load_all (Electroglas's PMA Process tab)
+        calls so its LOAD ALL also builds a Wafer Builder map from the same
+        touchdowns it writes to the Run tab's wafer map, instead of leaving
+        Wafer Builder's Shot/Shot Map/Die Map untouched - which meant the
+        Run tab's "Wafer Builder" map source (set right after this by
+        _sync_views) only ever drew whatever stale/empty map Wafer Builder
+        already had, not the wafer LOAD ALL just loaded."""
+        if not touchdowns:
+            return
+        xs = sorted({t["x"] for t in touchdowns})
+        ys = sorted({t["y"] for t in touchdowns})
+        x_idx = {x: i for i, x in enumerate(xs)}
+        y_idx = {y: i for i, y in enumerate(ys)}
+        cells = {(y_idx[t["y"]], x_idx[t["x"]]): t["device_id"] for t in touchdowns}
+        self._autofill_from_major_grid(cells, name, source_label)
+
     def _import_pma(self):
         path = filedialog.askopenfilename(
             title="Load a .PMA recipe",
@@ -1645,15 +1713,10 @@ class RecipeGenPanel(ttk.Frame):
             messagebox.showerror("Empty Recipe", "No touchdowns found — are "
                                  "the .PMV and .PMS siblings next to the .PMA?")
             return
-        xs = sorted({t["x"] for t in touchdowns})
-        ys = sorted({t["y"] for t in touchdowns})
-        x_idx = {x: i for i, x in enumerate(xs)}
-        y_idx = {y: i for i, y in enumerate(ys)}
-        cells = {(y_idx[t["y"]], x_idx[t["x"]]): t["device_id"] for t in touchdowns}
         # A .PMA only lists the touchdowns its recipe actually visits, not
         # the whole wafer - so the Shot Map this produces is that sampled
         # subset, same spirit as "autofill", not a claim of completeness.
-        self._autofill_from_major_grid(cells, os.path.basename(path), "PMA recipe")
+        self.load_touchdowns_as_map(touchdowns, os.path.basename(path), "PMA recipe")
 
     def _import_recipe_gen_xls(self):
         if not _XLRD:
@@ -1706,18 +1769,28 @@ class RecipeGenPanel(ttk.Frame):
                       for r in range(shot_rows) for c in range(shot_cols)}
         shotmap_cells = {(r, c): (r, c) in cells
                          for r in range(max_r + 1) for c in range(max_c + 1)}
+        align_ids = _find_alignment_ids(
+            d for dies in die_lists.values() for d in dies)
         n = 0
+        n_align = 0
         for (r, c), dies in die_lists.items():
             for i, die in enumerate(dies):
                 if i >= len(names):
                     break
                 slot_c, slot_r = grid[names[i]]
-                is_real = die.strip().upper() not in ("NA", "TARGET", "")
-                die_id = die.strip() if is_real else ""
-                if is_real:
+                text = die.strip()
+                is_real = text.upper() not in ("NA", "")
+                if not is_real:
+                    die_id, status = "", "normal"
+                elif text in align_ids:
+                    die_id, status = text, "align"
+                    n += 1
+                    n_align += 1
+                else:
+                    die_id, status = text, "normal"
                     n += 1
                 self._die_status[(r, c, slot_r, slot_c)] = {
-                    "die_id": die_id, "status": "normal"}
+                    "die_id": die_id, "status": status}
 
         self._shot_rows_var.set(str(shot_rows))
         self._shot_cols_var.set(str(shot_cols))
@@ -1728,7 +1801,8 @@ class RecipeGenPanel(ttk.Frame):
         self._draw_shot()
         self._draw_shotmap()
         self._redraw_diemap()
+        align_note = f", {n_align} marked align" if n_align else ""
         self._log(f"[WAFER BUILDER] Imported '{name}' ({source_label}): "
                  f"{len(cells)} touchdown(s), {shot_rows}x{shot_cols} dies per "
-                 f"touchdown, {n} die(s) with an ID.")
+                 f"touchdown, {n} die(s) with an ID{align_note}.")
         self._sub_nb.select(2)

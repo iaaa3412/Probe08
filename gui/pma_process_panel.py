@@ -694,6 +694,17 @@ class PmaProcessPanel(ttk.Frame):
                 self._log(f"[PMA] LOAD ALL: the Wafer Map tab did not switch to "
                           f"the wafer view — {type(exc).__name__}: {exc}")
         gen = getattr(layout, "recipe_gen", None)
+        if gen is not None and hasattr(gen, "load_touchdowns_as_map"):
+            # Build an actual Wafer Builder map (Shot/Shot Map/Die Map) from
+            # these same shots - not just redrawing the Run tab from
+            # whatever Wafer Builder already had (which _sync_views below
+            # does, and which is stale/empty the first time LOAD ALL runs).
+            try:
+                gen.load_touchdowns_as_map(
+                    shots, os.path.basename(self._pma_path), source)
+            except Exception as exc:
+                self._log(f"[PMA] LOAD ALL: could not build a Wafer Builder "
+                          f"map from these shots — {type(exc).__name__}: {exc}")
         if gen is not None and hasattr(gen, "_sync_views"):
             try:
                 gen._sync_views(folder)

@@ -450,7 +450,7 @@ class EgPmaRunPanel(ttk.Frame):
         named = self._align_die_from_wafer_tab()
         if named and info["named_touchdown"] is not None:
             hit = info["named_touchdown"]
-            choices.append(f"align die ({named}) — #{hit['seq']} {hit['device_id']}")
+            choices.append(f"align die — #{hit['seq']} {hit['device_id']}")
         ai = self._align_index()
         if ai is not None:
             t = self._touchdowns[ai]
