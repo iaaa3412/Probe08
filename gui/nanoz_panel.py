@@ -875,6 +875,9 @@ class NanoZPanel(ttk.Frame):
                         value="accretech", command=self._redraw_nanoz_wafer_map).pack(side="left")
         ttk.Radiobutton(src_row, text="CSV", variable=self._nzmap_source_var,
                         value="csv", command=self._redraw_nanoz_wafer_map).pack(side="left")
+        ttk.Radiobutton(src_row, text="Wafer Builder", variable=self._nzmap_source_var,
+                        value="wafer_builder",
+                        command=self._redraw_nanoz_wafer_map).pack(side="left")
         ttk.Button(src_row, text="📥  Load CSV Wafer Map…",
                   command=self._nzmap_load_csv_dialog).pack(side="left", padx=(6, 0))
         self._nzmap_csv_path_var = tk.StringVar(value="No CSV loaded.")
@@ -929,6 +932,8 @@ class NanoZPanel(ttk.Frame):
             self._draw_accretech_nzmap()
         elif source == "csv":
             self._draw_csv_nzmap()
+        elif source == "wafer_builder":
+            self._draw_wafer_builder_nzmap()
         else:
             self._draw_probe_plan_nzmap()
 
@@ -982,6 +987,56 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_ax.set_xlim(0, max_col + 1)
         self._nzmap_ax.set_ylim(-(max_row + 1), 0)
         self._nzmap_ax.set_title(f"CSV — {len(dies)} die(s) — click a die to see its ID", fontsize=9)
+        self._nzmap_current_labels = [
+            {"x": d["col"], "y": -d["row"], "label": d["serial"], "color": "black"} for d in dies
+        ]
+        self._connect_nzmap_view_callbacks()
+        self._update_visible_nzmap_labels()
+        self._nzmap_canvas.draw_idle()
+
+    def _wafer_builder_dies(self) -> list:
+        """The Wafer Builder tab's Die Map, at die-pitch resolution - the
+        same data instrument_panel._exec2_wafer_builder_grid overlays onto
+        the Run tab's map, reused here so NanoZ shows whatever die IDs were
+        actually set there instead of a separate CSV/plan import.
+        """
+        gen = getattr(self._main_layout, "recipe_gen", None)
+        if gen is None:
+            return []
+        try:
+            dpx, dpy = gen._die_pitch()
+        except Exception:
+            return []
+        if not dpx or not dpy:
+            return []
+        out = []
+        for d in gen._die_positions():
+            if d["status"] != "normal" or not d["die_id"]:
+                continue
+            out.append({"row": round(d["y"] / dpy), "col": round(d["x"] / dpx),
+                        "serial": d["die_id"], "status": "wafer_builder"})
+        return out
+
+    def _draw_wafer_builder_nzmap(self):
+        dies = self._wafer_builder_dies()
+        if not dies:
+            self._draw_empty_nzmap(
+                "No Wafer Builder die map yet — set die IDs on the Wafer "
+                "Builder tab's Die Map (Set Die ID mode).")
+            return
+        self._nzmap_dies_by_rc = {(d["row"], d["col"]): d for d in dies}
+        self._nzmap_ax.clear()
+        self._nzmap_ax.set_aspect("equal")
+        patches = [Rectangle((d["col"] - 0.5, -d["row"] - 0.5), 1, 1) for d in dies]
+        coll = PatchCollection(patches, edgecolor="#1e293b", linewidths=0.4)
+        coll.set_facecolor("#7aaec8")
+        self._nzmap_ax.add_collection(coll)
+        max_col = max((d["col"] for d in dies), default=1)
+        max_row = max((d["row"] for d in dies), default=1)
+        self._nzmap_ax.set_xlim(0, max_col + 1)
+        self._nzmap_ax.set_ylim(-(max_row + 1), 0)
+        self._nzmap_ax.set_title(
+            f"Wafer Builder — {len(dies)} die(s) — click a die to see its ID", fontsize=9)
         self._nzmap_current_labels = [
             {"x": d["col"], "y": -d["row"], "label": d["serial"], "color": "black"} for d in dies
         ]
