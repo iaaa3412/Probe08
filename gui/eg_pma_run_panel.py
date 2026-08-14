@@ -1393,7 +1393,7 @@ class EgPmaRunPanel(ttk.Frame):
         except Exception:
             pass
         self._publish_total_dies()
-        self._set_run_state("RUNNING (.PMA)", "#2563eb")
+        self._set_run_state("RUNNING", "#2563eb")
         drv = self._prober()
         cap = getattr(drv, "max_die_step", 5)
 

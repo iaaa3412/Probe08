@@ -2234,9 +2234,21 @@ class MainLayout(ttk.Frame):
             # It already walks the recipe's full touchdown list, so Test
             # Selected here is for ad-hoc/partial runs, not a duplicate.
             # ⏹ Stop Run below now also stops this - see _exec2_abort.
-            ttk.Button(ctrl, text="▶  Run",
+            #
+            # Green border, default everything else - this is the button that
+            # starts the wafer, and it sat indistinguishable from Test Die /
+            # Test Selected / Unload, which only ever touch one die.
+            #
+            # Drawn as a frame BEHIND the button rather than a ttk style:
+            # Windows' native button themes paint their own border and ignore
+            # a style's bordercolor entirely, so the only way to get a
+            # coloured edge without switching the whole app to 'clam' is to
+            # let a coloured frame show through around it.
+            run_border = tk.Frame(ctrl, background="#15803d")
+            run_border.pack(side="left", padx=2, pady=5)
+            ttk.Button(run_border, text="▶  Run",
                        command=lambda: self.eg_pma_run._run_all()).pack(
-                       side="left", padx=2, pady=5)
+                       padx=2, pady=2)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
