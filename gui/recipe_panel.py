@@ -38,7 +38,22 @@ _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", 
                   # truth for per-die results attribution - see
                   # instrument_panel._exec2_run_steps_once. Blank/unparsable
                   # defaults to 1, so a single-die shot needs nothing set.
-                  "die")
+                  "die",
+                  # "switch" (the default) or "direct". A direct step is
+                  # cabled straight from the instrument to the probe card by
+                  # hand, bypassing the switchbox entirely - so it closes no
+                  # channels and needs no pin numbers, because the pins are
+                  # not what routes it. See ROUTE_DIRECT.
+                  "route")
+
+# A step is either routed through the switch matrix (pins name the crosspoints
+# / relay channels to close) or wired straight to the probe card by hand. The
+# second case is real: a 4-wire resistance check on the 3458A is often cabled
+# directly, and then a pin number describes nothing the GUI can act on - all
+# it has to do is take the reading.
+ROUTE_SWITCH = "switch"
+ROUTE_DIRECT = "direct"
+_ROUTES = (ROUTE_SWITCH, ROUTE_DIRECT)
 
 # The one step type that takes four pins: source HI/LO carry the test current,
 # sense HI/LO read the voltage right at the pad, so the probe/lead resistance
@@ -167,6 +182,19 @@ def _normalize_step(step: dict) -> dict:
         step["die"] = str(max(1, int(float(step.get("die") or "1"))))
     except (TypeError, ValueError):
         step["die"] = "1"
+    # Blank means switch-routed, NOT "work out the default from the
+    # instrument". Every recipe written before this field existed was
+    # switch-routed, and quietly re-reading one as direct would stop it
+    # closing the channels it has always closed. The 3458A-defaults-to-direct
+    # rule is an EDITOR default for steps being built (see
+    # _default_route_for), applied when you pick the instrument.
+    if step.get("route") not in _ROUTES:
+        step["route"] = ROUTE_SWITCH
+    if step["route"] == ROUTE_DIRECT:
+        # Nothing to close. Pins stay whatever they were - they are simply
+        # not required or used - so flipping back to switch does not lose
+        # what was already typed.
+        step["conn"] = ""
     # Enforced here rather than only in the editor, so a recipe hand-edited or
     # imported with sense pins on a 2-wire step cannot smuggle them through.
     if t != FOUR_WIRE_TYPE:
@@ -653,6 +681,10 @@ class RecipePanel(ttk.Frame):
         # dropdown on the Run tab - see _save() below.
         self._on_save = on_save or (lambda _name: None)
         self._conn_viewer = None
+        # Which instrument the editor's Direct/Switch box was last defaulted
+        # for, so picking a new instrument re-seeds it (3458A -> direct) but
+        # merely re-running _on_type_change does not clobber a manual choice.
+        self._route_defaulted_for = None
         self._system = system
         if system == "electroglas":
             self._smu_channel_choices = ("A",)
@@ -698,7 +730,7 @@ class RecipePanel(ttk.Frame):
         if self._system != "electroglas":
             return _INSTRUMENTS
         try:
-            import eg_profiles
+            from instruments import eg_profiles
             fitted = set(eg_profiles.fitted_keys())
         except Exception:
             return ("DMM", "SMU")
@@ -710,7 +742,7 @@ class RecipePanel(ttk.Frame):
         if self._system != "electroglas":
             return ""
         try:
-            import eg_profiles
+            from instruments import eg_profiles
             inst = eg_profiles.instruments()
             bench = eg_profiles.active_name()
         except Exception:
@@ -1000,13 +1032,14 @@ class RecipePanel(ttk.Frame):
         sf.columnconfigure(0, weight=1)
 
         cols = ("n", "name", "type", "instrument", "mode", "chan", "target", "die",
-                "hi", "lo", "his", "los",
+                "route", "hi", "lo", "his", "los",
                 "level", "limit", "avg", "min", "max", "shape", "freq", "conn")
         self._step_tree = ttk.Treeview(sf, columns=cols, show="headings",
                                        height=5, selectmode="browse")
         heads = [("n", "#", 28), ("name", "Name", 90), ("type", "Type", 75),
                  ("instrument", "Instr", 50), ("mode", "Mode", 55), ("chan", "Chan", 40),
                  ("target", "Target", 62), ("die", "Die #", 40),
+                 ("route", "Route", 52),
                  ("hi", "HI pin", 55), ("lo", "LO pin", 55),
                  ("his", "SnsHI", 52), ("los", "SnsLO", 52),
                  ("level", "Level", 52), ("limit", "Limit", 50),
@@ -1025,7 +1058,7 @@ class RecipePanel(ttk.Frame):
         # glance. Selecting a row still pulls every field into the editor
         # below from self._steps, not from what's on screen.
         self._step_tree["displaycolumns"] = (
-            "n", "name", "type", "die", "hi", "lo", "level")
+            "n", "name", "type", "die", "route", "hi", "lo", "level")
         self._step_tree.grid(row=0, column=0, sticky="nsew")
         ssb = ttk.Scrollbar(sf, orient="vertical", command=self._step_tree.yview)
         ssb.grid(row=0, column=1, sticky="ns")
@@ -1045,6 +1078,10 @@ class RecipePanel(ttk.Frame):
         self._ed_vars["type"].set("resistance")
         self._ed_vars["mode"].set("measure")
         self._ed_vars["die"].set("1")
+        self._ed_vars["route"].set(ROUTE_SWITCH)
+        # A checkbox is the control; the step field stays the "switch"/
+        # "direct" string, so a recipe CSV reads as words rather than 0/1.
+        self._direct_var = tk.BooleanVar(value=False)
 
         def _lbl(r, c, text):
             ttk.Label(editor, text=text).grid(row=r, column=c, sticky="e", padx=(6, 2), pady=2)
@@ -1147,6 +1184,19 @@ class RecipePanel(ttk.Frame):
         # ⚙ button used to sit right here, unlabeled - moved down to the
         # button bar, next to ✓ Validate, as "Compute Connection".
         self._conn_widgets = [conn_ent]
+        # Direct: the instrument is cabled straight to the probe card by
+        # hand, so no channel is closed and the pin fields below stop
+        # applying (they grey out). Ticked by default for the 3458A, which
+        # is usually leaded up directly for a 4-wire check - see
+        # _default_route_for.
+        self._direct_chk = ttk.Checkbutton(
+            editor, text="Direct wiring (no switchbox)",
+            variable=self._direct_var, command=self._on_route_toggle)
+        self._direct_chk.grid(row=6, column=0, columnspan=4, sticky="w",
+                              padx=(6, 2), pady=(2, 0))
+        self._direct_hint = ttk.Label(
+            editor, text="", foreground="#6b7280", font=("Arial", 8))
+        self._direct_hint.grid(row=6, column=4, columnspan=4, sticky="w")
         _lbl(4, 6, "Die #:")
         # Which die of the shot this measurement belongs to (Wafer Builder
         # Shot tab's die order, 1-based) - what the Results tab uses to
@@ -1233,6 +1283,18 @@ class RecipePanel(ttk.Frame):
         self._avg_count_ent.config(state="disabled")
         self._avg_delay_ent.config(state="disabled")
         self._nplc_ent.config(state="disabled")
+        # delay/open/passfail/picture route nothing and return early below,
+        # so settle the Direct box here rather than in each branch. Only
+        # "open" can carry channels, and those are the target step's, not
+        # its own - none of the four is a thing you cable up by hand.
+        if t in ("delay", "open", "passfail", "picture"):
+            self._ed_vars["route"].set(ROUTE_SWITCH)
+            self._route_defaulted_for = None
+            self._direct_var.set(False)
+            self._direct_chk.config(state="disabled")
+            self._direct_hint.config(text="")
+        else:
+            self._direct_chk.config(state="normal")
 
         if t == "delay":
             self._ed_vars["mode"].set("")
@@ -1324,6 +1386,87 @@ class RecipePanel(ttk.Frame):
             if not self._ed_vars["nplc"].get():
                 self._ed_vars["nplc"].set("1")
 
+        # Last, so it can override the pin/conn states the branches above
+        # just set: a direct step disables them whatever its type wanted.
+        if instrument != self._route_defaulted_for:
+            self._ed_vars["route"].set(self._default_route_for(instrument))
+            self._route_defaulted_for = instrument
+        self._apply_route_state()
+
+    # ------------------------------------------------------------------
+    # DIRECT vs SWITCH
+    #
+    # Most steps route through the switch matrix, and their HI/LO pins are
+    # what say which crosspoints (Accretech) or relay channels (Electroglas)
+    # to close. Some are cabled by hand straight from the instrument to the
+    # probe card - a 4-wire resistance check on the 3458A usually is - and
+    # then a pin number describes nothing the GUI can act on: the operator
+    # has already made the connection, and all the run has to do is take the
+    # reading.
+    # ------------------------------------------------------------------
+    def _instrument_model(self, instrument: str) -> str:
+        """The model name behind a step's DMM/SMU/WGEN choice on this bench."""
+        if not instrument:
+            return ""
+        try:
+            if self._system == "electroglas":
+                from instruments import eg_profiles
+                inst = eg_profiles.instruments()
+                fitted = set(eg_profiles.fitted_keys())
+            else:
+                from instruments.gpib_base import load_all_instrument_configs
+                inst = load_all_instrument_configs()
+                fitted = set(inst)
+        except Exception:
+            return ""
+        keys = (self._EG_INSTRUMENT_KEYS.get(instrument)
+                if self._system == "electroglas"
+                else {"DMM": ("dmm",), "SMU": ("smu",),
+                      "WGEN": ("wave_gen",)}.get(instrument)) or ()
+        for k in keys:
+            if k in inst and k in fitted:
+                return str(inst[k].get("name") or "")
+        return ""
+
+    def _default_route_for(self, instrument: str) -> str:
+        """Direct for the 3458A, switch for everything else.
+
+        Keyed off the MODEL rather than the "DMM" slot: the same slot is a
+        34461A on Accretech, which is bench-wired through the matrix like
+        anything else. Only ever seeds a step being built - a saved recipe
+        keeps whatever it was saved with (see _normalize_step).
+        """
+        return (ROUTE_DIRECT if "3458" in self._instrument_model(instrument)
+                else ROUTE_SWITCH)
+
+    def _apply_route_state(self):
+        """Grey the pin/Conn fields when the step is directly wired."""
+        direct = self._ed_vars["route"].get() == ROUTE_DIRECT
+        self._direct_var.set(direct)
+        if direct:
+            for w in self._pin_widgets + self._sense_widgets + self._conn_widgets:
+                try:
+                    w.config(state="disabled")
+                except tk.TclError:
+                    pass
+        self._direct_hint.config(
+            text=("cable the instrument to the probe card yourself — "
+                  "pins and channels do not apply")
+            if direct else "")
+        for btn in (getattr(self, "_btn_conn", None),):
+            if btn is not None:
+                btn.config(state="disabled" if direct else "normal")
+
+    def _on_route_toggle(self):
+        self._ed_vars["route"].set(
+            ROUTE_DIRECT if self._direct_var.get() else ROUTE_SWITCH)
+        if not self._direct_var.get():
+            # Back to switch: re-run the type logic so the pin and Conn
+            # fields come back in whatever state this step type wants them.
+            self._on_type_change()
+        else:
+            self._ed_vars["conn"].set("")
+            self._apply_route_state()
 
     def _conn_from_editor(self):
         step = self._editor_step()
@@ -1372,6 +1515,11 @@ class RecipePanel(ttk.Frame):
 
     def step_connections(self, step: dict):
         t = step.get("type")
+        # Before every type check: a directly-cabled step closes nothing
+        # whatever it measures, because the operator has already made the
+        # connection by hand at the probe card.
+        if step.get("route") == ROUTE_DIRECT and t not in ("delay", "picture"):
+            return [], ["direct wiring — no switchbox, nothing to close"], []
         if t == "delay":
             return [], ["no switching — wait"], []
         if t == "picture":
@@ -1583,6 +1731,13 @@ class RecipePanel(ttk.Frame):
                               f"not valid for {t}{'/' + mode if mode else ''} "
                               f"(expected {' or '.join(valid_instruments)})")
 
+            # A directly-cabled step routes through no switch, so its pins
+            # name nothing the GUI can act on. They are not required, and a
+            # blank one is not an error - the operator made the connection at
+            # the probe card by hand. Anything that IS filled in still gets
+            # the consistency checks below, so a half-remembered pin cannot
+            # sit there contradicting the wiring unnoticed.
+            direct = s.get("route") == ROUTE_DIRECT
             hi, lo = s.get("hi", "").strip(), s.get("lo", "").strip()
             if hi and lo and hi == lo:
                 issues.append(f"ERROR {tag}: HI and LO are the same pin ({hi})")
@@ -1591,7 +1746,7 @@ class RecipePanel(ttk.Frame):
                 his, los = s.get("his", "").strip(), s.get("los", "").strip()
                 pin_tokens += [his, los]
                 missing = [n for n, v in (("Sense HI", his), ("Sense LO", los)) if not v]
-                if missing:
+                if missing and not direct:
                     issues.append(f"ERROR {tag}: 4-wire needs all four pins — "
                                   f"missing {', '.join(missing)}")
                 # Four legs on one pin is a 2-wire measurement wearing a
@@ -1606,10 +1761,11 @@ class RecipePanel(ttk.Frame):
                         issues.append(f"ERROR {tag}: {' and '.join(names)} are the "
                                       f"same pin ({val}) — 4-wire needs four "
                                       f"separate pins")
-                if self._system != "electroglas":
+                if self._system != "electroglas" and not direct:
                     # Accretech's crosspoint needs a row explicitly assigned
                     # to SHI/SLO in Switch Settings - Electroglas's relay
-                    # wiring has no such per-role assignment to check.
+                    # wiring has no such per-role assignment to check, and a
+                    # direct step does not go through either.
                     rows = switch_topology.rows_for_fields(t, s.get("chan") or "", instrument)
                     for field, role in (("his", "SHI"), ("los", "SLO")):
                         if s.get(field, "").strip() and not rows.get(field):
@@ -1680,6 +1836,14 @@ class RecipePanel(ttk.Frame):
                     issues.append(f"ERROR {tag}: NPLC is not a number")
 
             conn = (s.get("conn") or "").replace(" ", "")
+            if direct:
+                # Storing no closures is the whole point of a direct step,
+                # not a missing-configuration error.
+                if conn:
+                    issues.append(f"WARN {tag}: marked direct but still carries "
+                                  f"switch closures ({conn}) — they will not be "
+                                  "closed; press Compute Connection to clear them")
+                continue
             if not conn:
                 issues.append(f"ERROR {tag}: no switch closures stored")
                 continue
@@ -1829,6 +1993,10 @@ class RecipePanel(ttk.Frame):
                     except ValueError:
                         pass
                 self._ed_vars[k].set(raw)
+            # Claim the instrument as already-defaulted BEFORE _on_type_change
+            # runs, or it would treat this step's instrument as a fresh pick
+            # and overwrite the route the step was actually saved with.
+            self._route_defaulted_for = stored.get("instrument", "")
             self._on_type_change()
 
     def _finalize_step(self, step: dict) -> bool:
@@ -1965,6 +2133,7 @@ class RecipePanel(ttk.Frame):
                 i, step.get("name", ""), step.get("type", ""),
                 step.get("instrument", ""), step.get("mode", ""),
                 step.get("chan", ""), step.get("target", ""), step.get("die", "1"),
+                step.get("route", ROUTE_SWITCH),
                 step.get("hi", ""), step.get("lo", ""),
                 step.get("his", ""), step.get("los", ""),
                 step.get("level", ""), step.get("limit", ""),
