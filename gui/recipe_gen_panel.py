@@ -1765,7 +1765,8 @@ class RecipeGenPanel(ttk.Frame):
     # nothing about a .PMA or .xls otherwise says how many dies share a
     # touchdown.
     # ==================================================================
-    def load_touchdowns_as_map(self, touchdowns: list, name: str, source_label: str):
+    def load_touchdowns_as_map(self, touchdowns: list, name: str, source_label: str,
+                               save_as: Optional[str] = None):
         """Same autofill _import_pma/_import_recipe_gen_xls do below, but
         from an already-loaded touchdown list rather than re-reading a file
         - what PmaProcessPanel.load_all (Electroglas's PMA Process tab)
@@ -1774,15 +1775,57 @@ class RecipeGenPanel(ttk.Frame):
         Wafer Builder's Shot/Shot Map/Die Map untouched - which meant the
         Run tab's "Wafer Builder" map source (set right after this by
         _sync_views) only ever drew whatever stale/empty map Wafer Builder
-        already had, not the wafer LOAD ALL just loaded."""
+        already had, not the wafer LOAD ALL just loaded.
+
+        save_as: if given, this ALSO creates/overwrites a NAMED map on
+        disk (warning first if one with that name already exists) instead
+        of just mutating whatever map happened to be active in memory - a
+        second LOAD ALL for a different recipe used to silently clobber
+        an unrelated map the operator had open on the Wafer Builder tab,
+        with no name and nothing saved either. _import_pma/
+        _import_recipe_gen_xls (the manual buttons) do not pass this -
+        their existing "edit whatever's active" behaviour is unchanged.
+        """
         if not touchdowns:
             return
+        save_path = None
+        if save_as:
+            folder = self._current_folder()
+            d = self._maps_dir(create=True)
+            target = self._safe_map_filename(save_as)
+            if d and folder and target:
+                save_path = os.path.join(d, target + ".json")
+                if os.path.isfile(save_path):
+                    if not messagebox.askyesno(
+                            "Overwrite Map",
+                            f"A Wafer Builder map named '{target}' already "
+                            "exists.\n\nOverwrite it with this LOAD ALL's "
+                            "wafer?"):
+                        self._log(f"[WAFER BUILDER] LOAD ALL: kept the "
+                                  f"existing map '{target}' - cancelled by "
+                                  "the operator.")
+                        return
+                self.map_name_var.set(target)
+            else:
+                self._log("[WAFER BUILDER] LOAD ALL: could not save a "
+                          f"named map for '{save_as}' - no ATA folder "
+                          "loaded.")
+
         xs = sorted({t["x"] for t in touchdowns})
         ys = sorted({t["y"] for t in touchdowns})
         x_idx = {x: i for i, x in enumerate(xs)}
         y_idx = {y: i for i, y in enumerate(ys)}
         cells = {(y_idx[t["y"]], x_idx[t["x"]]): t["device_id"] for t in touchdowns}
         self._autofill_from_major_grid(cells, name, source_label)
+
+        if save_path:
+            try:
+                with open(save_path, "w", encoding="utf-8") as f:
+                    json.dump(self._state_to_dict(), f, indent=2)
+                self._log(f"[WAFER BUILDER] Saved map '{self.map_name_var.get()}'")
+                self._refresh_map_picker()
+            except OSError as exc:
+                self._log(f"[WAFER BUILDER] Could not save map: {exc}")
 
     def _import_pma(self):
         path = filedialog.askopenfilename(

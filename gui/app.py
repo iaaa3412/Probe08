@@ -63,10 +63,17 @@ class AtomicaDashboard(tk.Tk):
         self.test_queue = []
         self.active_system = "accretech"
         self._by_system = {
+            # die_status: (row, col) -> "PASS"/"FAIL", set by
+            # instrument_panel._exec2_update_die_color as a run paints the
+            # wafer map - the only record of per-die verdicts outside the
+            # map widgets themselves, so cmd_save_csv can write them out
+            # and cmd_import_results_csv can repaint them on import.
             "accretech":   {"drivers": {}, "results": [], "ui": None,
-                            "total": 0, "tested": 0, "passed": 0, "failed": 0},
+                            "total": 0, "tested": 0, "passed": 0, "failed": 0,
+                            "die_status": {}},
             "electroglas": {"drivers": {}, "results": [], "ui": None,
-                            "total": 0, "tested": 0, "passed": 0, "failed": 0},
+                            "total": 0, "tested": 0, "passed": 0, "failed": 0,
+                            "die_status": {}},
         }
         # False until the startup sweep has run, so a bench selected during
         # construction does not connect twice.
@@ -151,6 +158,10 @@ class AtomicaDashboard(tk.Tk):
     @property
     def results_data(self):
         return self._by_system[self.active_system]["results"]
+
+    @property
+    def die_status(self):
+        return self._by_system[self.active_system]["die_status"]
 
     @property
     def ui(self):
@@ -1021,7 +1032,32 @@ class AtomicaDashboard(tk.Tk):
         if selected_dir:
             self.ui.working_dir_var.set(selected_dir)
 
+    # kind=META rows use these (one row, none repeated per RESULT/DIE row -
+    # see cmd_import_results_csv for the matching read side). kind=RESULT
+    # and kind=DIE share the rest of the header, each only filling in its
+    # own columns - same multi-kind-rows-in-one-CSV shape recipe_panel's
+    # RECIPE/STEP/SITE rows already use elsewhere in this codebase.
+    _RESULTS_CSV_FIELDS = [
+        "kind", "system", "ata_folder", "map_source", "probe_card", "recipe",
+        "lot_id", "wafer_id", "total_dies", "dies_tested", "dies_passed",
+        "dies_failed",
+        "timestamp", "die", "step", "type", "mode", "value", "unit",
+        "die_id", "switch", "set_voltage", "voltage", "connection",
+        "instrument", "row", "col", "status",
+    ]
+
     def cmd_save_csv(self):
+        """Writes <Lot>[_<Wafer>]_results.csv - self-contained enough for
+        cmd_import_results_csv to rebuild the whole Results tab (wafer map,
+        recipe, results table, pass/fail counts and colours) from this file
+        alone, even after the GUI has been relaunched. One META row carries
+        what would otherwise repeat identically down every line (system,
+        ATA folder, active recipe/probe card, running totals); RESULT rows
+        are the measurement history (same data "Save to CSV" always wrote,
+        now with row/col/die_id kept instead of dropped); DIE rows are the
+        per-die PASS/FAIL verdicts painted onto the wafer maps, which never
+        used to be saved anywhere.
+        """
         export_dir = self.ui.export_path_var.get()
         current_lot = self.ui.lot_id.get()
         if not os.path.exists(export_dir):
@@ -1036,17 +1072,180 @@ class AtomicaDashboard(tk.Tk):
         wafer_id = self.ui.wafer_id_var.get().strip()
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + ["results"]
         filepath = os.path.join(export_dir, "_".join(name_parts) + ".csv")
-        fieldnames = ["timestamp", "recipe", "die", "step", "type", "mode", "value", "unit"]
         try:
             with open(filepath, mode='w', newline='') as file:
-                writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
+                writer = csv.DictWriter(file, fieldnames=self._RESULTS_CSV_FIELDS,
+                                        extrasaction="ignore")
                 writer.writeheader()
-                writer.writerows(self.results_data)
+                writer.writerow({
+                    "kind": "META",
+                    "system": self.active_system,
+                    "ata_folder": getattr(self.ui, "_ata_folder", "") or "",
+                    "map_source": getattr(self.ui, "_exec2_map_source_var", None).get()
+                                  if hasattr(self.ui, "_exec2_map_source_var") else "",
+                    "probe_card": self.ui.pin_wiring.get_active_card()
+                                  if hasattr(self.ui, "pin_wiring") else "",
+                    "recipe": getattr(self.ui, "_exec2_recipe_var", None).get()
+                              if hasattr(self.ui, "_exec2_recipe_var") else "",
+                    "lot_id": current_lot,
+                    "wafer_id": wafer_id,
+                    "total_dies": self.total_dies,
+                    "dies_tested": self.dies_tested,
+                    "dies_passed": self.dies_passed,
+                    "dies_failed": self.dies_failed,
+                })
+                for row in self.results_data:
+                    out = dict(row)
+                    out["kind"] = "RESULT"
+                    writer.writerow(out)
+                for (row, col), status in self.die_status.items():
+                    writer.writerow({"kind": "DIE", "row": row, "col": col,
+                                     "status": status})
 
             self.ui.exec_panel.log(
-                f"[SYSTEM] Success! {len(self.results_data)} result(s) saved to -> {filepath}")
+                f"[SYSTEM] Success! {len(self.results_data)} result(s), "
+                f"{len(self.die_status)} die verdict(s) saved to -> {filepath}")
         except Exception as e:
             self.ui.exec_panel.log(f"[ERROR] Failed to save CSV file: {e}")
+
+    def cmd_import_results_csv(self):
+        """The reverse of cmd_save_csv - reads one of its files and puts the
+        GUI back the way it looked right after that run: ATA folder and
+        wafer map source reloaded, probe card and recipe reselected, the
+        results table and pass/fail totals rebuilt, and every die's
+        PASS/FAIL colour repainted on both wafer maps.
+
+        Best-effort on each piece independently (wrapped so one missing
+        probe card or moved ATA folder does not abort the rest) - this is
+        explicitly for a machine that may not have any of that state left,
+        per the "all you have is the CSV" scenario this exists for.
+        """
+        path = filedialog.askopenfilename(
+            title="Import Results CSV",
+            filetypes=[("Results CSV", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, newline='', encoding='utf-8') as f:
+                rows = list(csv.DictReader(f))
+        except Exception as e:
+            self.ui.exec_panel.log(f"[ERROR] Could not read {path}: {e}")
+            return
+        meta = next((r for r in rows if r.get("kind") == "META"), None)
+        if meta is None:
+            messagebox.showerror(
+                "Not a Results CSV",
+                "No META row found - this doesn't look like a file "
+                "'💾 Save to CSV' wrote (or it predates this Import feature).")
+            return
+
+        system = meta.get("system") or self.active_system
+        if system in self._by_system and system != self.active_system:
+            self.cmd_set_active_system(system)
+        ui = self.ui
+
+        folder = (meta.get("ata_folder") or "").strip()
+        if folder and os.path.isdir(folder):
+            try:
+                n_dies = ui.load_ata_folder(folder)
+                self.total_dies = n_dies
+                self._ata_lbl.config(text=f"ATA: {os.path.basename(folder)}  ({n_dies} dies)",
+                                     foreground="#1d4ed8")
+                self._refresh_ata_picker()
+                self._ata_picker_var.set(self._ata_display_name(os.path.basename(folder)))
+                ui.exec_panel.set_wafer_map(ui.wafer_map, wafer_id=os.path.basename(folder))
+            except Exception as e:
+                ui.exec_panel.log(f"[IMPORT] Could not load ATA folder {folder!r}: {e}")
+        elif folder:
+            ui.exec_panel.log(
+                f"[IMPORT] ATA folder {folder!r} not found on this machine - "
+                "continuing without it (results/pass-fail will still load).")
+
+        map_source = (meta.get("map_source") or "").strip()
+        if map_source and hasattr(ui, "_exec2_map_source_var"):
+            try:
+                ui._exec2_map_source_var.set(map_source)
+                ui._exec2_map_folder = folder or ui._exec2_map_folder
+                ui._exec2_draw_wafer_map(quiet_if_missing=True)
+            except Exception as e:
+                ui.exec_panel.log(f"[IMPORT] Could not draw wafer map source "
+                                  f"{map_source!r}: {e}")
+
+        probe_card = (meta.get("probe_card") or "").strip()
+        if probe_card and hasattr(ui, "pin_wiring"):
+            try:
+                ui.pin_wiring.switch_to_card(probe_card)
+            except Exception as e:
+                ui.exec_panel.log(f"[IMPORT] Could not switch to probe card "
+                                  f"{probe_card!r}: {e}")
+
+        recipe = (meta.get("recipe") or "").strip()
+        if recipe and hasattr(ui, "_exec2_load_recipe_by_name"):
+            try:
+                ui._exec2_load_recipe_by_name(recipe)
+            except Exception as e:
+                ui.exec_panel.log(f"[IMPORT] Could not load recipe {recipe!r}: {e}")
+
+        lot_id = (meta.get("lot_id") or "").strip()
+        wafer_id = (meta.get("wafer_id") or "").strip()
+        if lot_id:
+            ui.lot_id.set(lot_id)
+        if wafer_id:
+            ui.wafer_id_var.set(wafer_id)
+
+        results = []
+        die_status = {}
+        for r in rows:
+            kind = r.get("kind")
+            if kind == "RESULT":
+                clean = {k: v for k, v in r.items()
+                        if k not in ("kind", "system", "ata_folder", "map_source",
+                                    "probe_card", "lot_id", "wafer_id",
+                                    "total_dies", "dies_tested", "dies_passed",
+                                    "dies_failed", "status") and v != ""}
+                results.append(clean)
+            elif kind == "DIE":
+                try:
+                    rc = (int(r["row"]), int(r["col"]))
+                except (KeyError, ValueError, TypeError):
+                    continue
+                die_status[rc] = r.get("status") or "FAIL"
+
+        self.results_data.clear()
+        self.results_data.extend(results)
+        self.die_status.clear()
+        self.die_status.update(die_status)
+        if hasattr(ui, "_results_tree"):
+            ui._results_tree.delete(*ui._results_tree.get_children())
+            for row in results:
+                ui._results_tree.insert("", "end", values=(
+                    row.get("timestamp", ""), row.get("recipe", ""),
+                    row.get("die", ""), row.get("step", ""), row.get("type", ""),
+                    row.get("value", ""), row.get("unit", "")))
+        for (r, c), status in die_status.items():
+            if hasattr(ui, "_exec2_update_die_color"):
+                try:
+                    ui._exec2_update_die_color(r, c, status == "PASS")
+                except Exception:
+                    pass
+
+        def _int(v, default=0):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return default
+        self.total_dies = _int(meta.get("total_dies"), self.total_dies)
+        self.dies_tested = _int(meta.get("dies_tested"), len(die_status))
+        self.dies_passed = _int(meta.get("dies_passed"),
+                                sum(1 for s in die_status.values() if s == "PASS"))
+        self.dies_failed = _int(meta.get("dies_failed"),
+                                sum(1 for s in die_status.values() if s == "FAIL"))
+        self.update_statistics_visuals()
+        self.check_system_ready()
+        ui.exec_panel.log(
+            f"[IMPORT] Loaded {len(results)} result(s), {len(die_status)} die "
+            f"verdict(s) from {path} — recipe '{recipe or '?'}', "
+            f"probe card '{probe_card or '?'}'.")
 
     def cmd_export_sql(self):
         export_dir = self.ui.export_path_var.get()

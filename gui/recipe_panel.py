@@ -237,7 +237,14 @@ def _normalize_step(step: dict) -> dict:
         step["mode"] = "measure"
 
     options = _instrument_options(t, step["mode"])
-    if step["instrument"] not in options:
+    # Blank is now a legitimate state, not just "not yet set" - see
+    # pma_params_to_steps, which leaves it blank on purpose for a step
+    # that needs an instrument the active bench does not have fitted at
+    # all (Bias Voltage/apply needs an SMU; probe03 has none). Only a
+    # genuinely WRONG (non-blank, invalid) instrument gets corrected to
+    # the type/mode's default here - forcing blank back to a default
+    # would silently reintroduce the unavailable instrument.
+    if step["instrument"] and step["instrument"] not in options:
         step["instrument"] = _default_instrument(t, step["mode"])
     instrument = step["instrument"]
 
@@ -353,8 +360,25 @@ def _pma_num(params: dict, key: str, default: str = "0") -> str:
     return val
 
 
-def pma_params_to_steps(params: dict) -> list:
+def pma_params_to_steps(params: dict, available: tuple = _INSTRUMENTS) -> list:
+    """`available`: which instruments the active bench actually has fitted
+    (see RecipePanel._bench_instruments) - probe03 has no SMU, only the
+    3458A. A step whose type/mode has no instrument in common with
+    `available` at all (Bias Voltage/apply needs an SMU to source - no DMM
+    can do that) is built with instrument="" rather than a hardcoded "SMU"
+    that does not exist on that bench and would silently measure nothing.
+    A step that CAN run on what IS available (Leakage Measurement/measure
+    accepts either SMU or DMM) picks whichever of those is actually
+    fitted, preferring SMU when both are - so a whole-wafer .PMA imported
+    on probe03 still comes back mostly usable, not entirely blank.
+    """
     steps = []
+
+    def _pick_instrument(step_type: str, mode: str, preferred: str) -> str:
+        options = [i for i in _instrument_options(step_type, mode) if i in available]
+        if preferred in options:
+            return preferred
+        return options[0] if options else ""
 
     d1 = _pma_num(params, "Delay1", "100")
     if float(d1) > 0:
@@ -367,7 +391,8 @@ def pma_params_to_steps(params: dict) -> list:
     apply_name = "Bias Voltage"
     steps.append(_normalize_step({
         **_pma_blank_step(), "type": "voltage", "mode": "apply",
-        "instrument": "SMU", "chan": "A", "name": apply_name,
+        "instrument": _pick_instrument("voltage", "apply", "SMU"),
+        "chan": "A", "name": apply_name,
         "level": voltage, "limit": limit,
     }))
 
@@ -391,7 +416,8 @@ def pma_params_to_steps(params: dict) -> list:
     meas_name = "Leakage Measurement"
     steps.append(_normalize_step({
         **_pma_blank_step(), "type": "current", "mode": "measure",
-        "instrument": "SMU", "chan": "A", "name": meas_name,
+        "instrument": _pick_instrument("current", "measure", "SMU"),
+        "chan": "A", "name": meas_name,
         "avg_count": avg_count, "avg_delay": avg_delay_ms, "nplc": nplc,
         # MeterRange used to be dropped, so the SMU autoranged where LaMP had
         # pinned it. Carrying it means a different .PMA reconfigures the meter
@@ -611,7 +637,14 @@ def site_key(site: dict) -> tuple:
 def recipes_to_rows(recipes: dict) -> list:
     rows = []
     for name, rec in recipes.items():
-        rows.append({"kind": "RECIPE", "recipe": name})
+        # bench: which Electroglas prober (probe02/probe03) this recipe was
+        # built for - blank for Accretech (one fixed bench, no ambiguity)
+        # and for recipes saved before this existed. See RecipePanel's
+        # _active_bench_tag/_visible_recipe_names - a probe card is shared
+        # hardware between benches, but a recipe built around one bench's
+        # fitted instruments is not automatically usable on the other, so
+        # the picker only shows a bench-tagged recipe on its own bench.
+        rows.append({"kind": "RECIPE", "recipe": name, "bench": rec.get("bench", "")})
         for i, step in enumerate(rec.get("steps", []), 1):
             row = {"kind": "STEP", "recipe": name, "seq": str(i)}
             for k in _STEP_FIELDS:
@@ -641,8 +674,11 @@ def rows_to_recipes(rows: list) -> dict:
         name = (row.get("recipe") or "").strip()
         if not name:
             continue
-        recipes.setdefault(name, {"steps": [], "sites": []})
+        recipes.setdefault(name, {"steps": [], "sites": [], "bench": ""})
         if kind == "RECIPE":
+            bench = (row.get("bench") or "").strip()
+            if bench:
+                recipes[name]["bench"] = bench
             continue
         try:
             seq = int(row.get("seq") or 0)
@@ -735,6 +771,38 @@ class RecipePanel(ttk.Frame):
         "SMU": ("smu_eg",),
     }
 
+    def _active_bench_tag(self) -> str:
+        """Which prober bench a recipe created right now should be tagged
+        with, so it only shows on that bench later - see
+        _visible_recipe_names(). Reads AtomicaDashboard._active_bench(),
+        not special-cased to Electroglas: Accretech is a single fixed
+        bench today (probe08), so every recipe gets that same tag and
+        nothing is filtered out in practice - but a second Accretech
+        prober would already be scoped correctly with no further change
+        here, same as probe02/probe03 are now.
+        """
+        try:
+            return self.controller._active_bench() or ""
+        except Exception:
+            return ""
+
+    def _visible_recipe_names(self) -> list:
+        """Recipe names the picker/dropdown should show on the CURRENT
+        bench - a probe card is shared hardware between probe02/probe03,
+        but a recipe built around one bench's fitted instruments (e.g. an
+        SMU step) is not automatically usable on the other, so a
+        bench-tagged recipe only shows on its own bench. Untagged recipes
+        (Accretech, or anything saved before this existed) show
+        everywhere - nothing that already worked silently disappears.
+        Storage itself is untouched either way; _save_recipes still writes
+        every recipe on the card, just not all of them are offered here.
+        """
+        tag = self._active_bench_tag()
+        if not tag:
+            return list(self._recipes.keys())
+        return [n for n, rec in self._recipes.items()
+               if not rec.get("bench") or rec.get("bench") == tag]
+
     def _bench_instruments(self) -> tuple:
         """Instruments the ACTIVE prober actually has fitted.
 
@@ -782,6 +850,33 @@ class RecipePanel(ttk.Frame):
         if hasattr(self, "_instr_cb"):
             self._on_type_change()
         self._update_validity_label()
+        # A recipe tagged for the OTHER bench should stop showing the
+        # moment the bench actually switches, not just next time something
+        # else happens to refresh the picker.
+        if hasattr(self, "_picker"):
+            self._refresh_picker()
+
+    def _log_unbuildable_steps(self, steps: list):
+        """pma_params_to_steps left instrument="" on any step whose type/
+        mode has no instrument the active bench actually has fitted (Bias
+        Voltage/apply needs an SMU to source, and probe03 has none) - say
+        so plainly instead of leaving the operator to notice a blank
+        dropdown on their own. The touchdown list and the rest of the
+        recipe still come through; only these specific steps need a human
+        to either pick an instrument by hand or accept they can't run here.
+        """
+        blank = [s.get("name") or f"step {i}" for i, s in enumerate(steps, 1)
+                 if not s.get("instrument")
+                 and s.get("type") not in ("delay", "open", "passfail", "picture")]
+        if not blank:
+            return
+        self.controller.log(
+            f"[RECIPE] ⚠ {len(blank)} step(s) left with no instrument - the "
+            f"active bench has nothing that can do them "
+            f"({', '.join(self._instrument_choices) or 'none fitted'} only): "
+            + ", ".join(blank) + ". Pick one by hand on the Recipe tab if "
+            "there's a usable substitute, or accept they can't run on this "
+            "bench.")
 
     def _build_toolbar(self):
         bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
@@ -843,15 +938,14 @@ class RecipePanel(ttk.Frame):
                                   font=("Segoe UI", 8), anchor="w")
         self._file_lbl.pack(side="left", padx=8)
 
+        # Not shown - cluttered the bar down to just the recipe count and
+        # probe card picker. Both widgets kept alive (unpacked) since other
+        # code still calls .config() on them.
         self._default_lbl = tk.Label(bar, text="", bg="#e2e8f0", fg="#374151",
                                      font=("Segoe UI", 8, "italic"))
-        self._default_lbl.pack(side="left", padx=(0, 8))
-
-        # What DMM/SMU actually resolve to on the prober that is selected.
         self._bench_note_lbl = tk.Label(bar, text=self._bench_instrument_note(),
                                         bg="#e2e8f0", fg="#1d4ed8",
                                         font=("Segoe UI", 8))
-        self._bench_note_lbl.pack(side="right", padx=(0, 10))
 
 
     def _build_body(self):
@@ -2189,12 +2283,25 @@ class RecipePanel(ttk.Frame):
         self._update_default_label()
 
     def _refresh_picker(self):
-        names = list(self._recipes.keys())
+        names = self._visible_recipe_names()
         self._picker.config(values=names)
-        if self._current not in names and names:
+        if self._current in names:
+            self._picker_var.set(self._current)
+        elif names:
             self._load_form(names[0])
         else:
-            self._picker_var.set(self._current)
+            # Nothing visible on this bench (e.g. every recipe on the card
+            # is tagged for a different one) - clear the display instead
+            # of leaving the previous bench's recipe/steps stuck on
+            # screen with a dropdown that no longer lists it. The recipe
+            # itself is untouched in self._recipes, just not shown here.
+            self._current = ""
+            self._picker_var.set("")
+            self._steps = []
+            self._sites = []
+            self._refresh_steps()
+            self._refresh_sites()
+            self._update_validity_label()
         self._update_default_label()
 
     def _set_default_recipe(self):
@@ -2253,9 +2360,13 @@ class RecipePanel(ttk.Frame):
             messagebox.showerror("Duplicate", f"Recipe '{name}' already exists.")
             return
         self._store_form()
-        cur = self._recipes[self._current]
+        # No recipe to copy from once the card's last one was deleted -
+        # start blank rather than KeyError on a self._current that no
+        # longer points at anything.
+        cur = self._recipes.get(self._current, {"steps": [], "sites": []})
         rec = {"steps": [dict(s) for s in cur["steps"]],
-               "sites": [dict(s) for s in cur.get("sites", [])]}
+               "sites": [dict(s) for s in cur.get("sites", [])],
+               "bench": self._active_bench_tag()}
         self._recipes[name] = rec
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
@@ -2302,16 +2413,26 @@ class RecipePanel(ttk.Frame):
                                 "(in-memory only — no probe card active)")
 
     def _delete_recipe(self):
-        if len(self._recipes) <= 1:
-            messagebox.showinfo("Cannot Delete", "At least one recipe must remain.")
-            return
         name = self._current
+        if name not in self._recipes:
+            return
         if not messagebox.askyesno("Delete Recipe", f"Delete recipe '{name}'?"):
             return
 
         del self._recipes[name]
-        self._current = next(iter(self._recipes))
-        self._load_form(self._current)
+        if self._recipes:
+            self._current = next(iter(self._recipes))
+            self._load_form(self._current)
+        else:
+            # The last recipe on this card is gone - leave the dropdown
+            # blank rather than conjuring up a placeholder "(unsaved)"
+            # recipe nobody asked for. _new_recipe/import can start one.
+            self._current = ""
+            self._steps = []
+            self._sites = []
+            self._refresh_steps()
+            self._refresh_sites()
+            self._update_validity_label()
         self._refresh_picker()
 
         card = self._get_active_card()
@@ -2360,7 +2481,8 @@ class RecipePanel(ttk.Frame):
                 "No recognized measurement parameters (Voltage, delays, "
                 "averaging, current limit) were found in that file.")
             return False
-        steps = pma_params_to_steps(useful)
+        steps = pma_params_to_steps(useful, available=self._bench_instruments())
+        self._log_unbuildable_steps(steps)
         # A .PMA whose touchdowns name several devices is a multi-die shot,
         # and the block has to run once per die. This path never did that -
         # only the workbook import did - so a LOAD ALL of a quad recipe built
@@ -2427,7 +2549,8 @@ class RecipePanel(ttk.Frame):
             else:
                 self.controller.log(f"[RECIPE] Replacing existing recipe '{name}'.")
         self._store_form()
-        self._recipes[name] = {"steps": steps, "sites": []}
+        self._recipes[name] = {"steps": steps, "sites": [],
+                               "bench": self._active_bench_tag()}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
                 and not self._recipes["(unsaved)"]["steps"]
@@ -2502,7 +2625,8 @@ class RecipePanel(ttk.Frame):
                 "averaging, current limit) were found on that workbook's "
                 "MainMenu tab.")
             return False
-        steps = pma_params_to_steps(useful)
+        steps = pma_params_to_steps(useful, available=self._bench_instruments())
+        self._log_unbuildable_steps(steps)
 
         dies_per_shot = 1
         try:
@@ -2521,7 +2645,8 @@ class RecipePanel(ttk.Frame):
             name = f"{orig_name} ({n})"
             n += 1
         self._store_form()
-        self._recipes[name] = {"steps": steps, "sites": []}
+        self._recipes[name] = {"steps": steps, "sites": [],
+                               "bench": self._active_bench_tag()}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
                 and not self._recipes["(unsaved)"]["steps"]
@@ -2586,10 +2711,16 @@ class RecipePanel(ttk.Frame):
     def load_recipes(self, card: str, recipes: dict):
         self._active_card = card
         if recipes:
+            # bench dropped here previously - every recipe reloaded from
+            # disk came back untagged, so _visible_recipe_names() could
+            # never actually filter anything and every recipe showed on
+            # every bench regardless of what it was saved with.
             self._recipes = {name: {"steps": [dict(s) for s in rec.get("steps", [])],
-                                    "sites": [dict(s) for s in rec.get("sites", [])]}
+                                    "sites": [dict(s) for s in rec.get("sites", [])],
+                                    "bench": rec.get("bench", "")}
                               for name, rec in recipes.items()}
-            self._current = next(iter(self._recipes))
+            visible = self._visible_recipe_names()
+            self._current = visible[0] if visible else next(iter(self._recipes))
         else:
             self._recipes = {"(unsaved)": {"steps": [], "sites": []}}
             self._current = "(unsaved)"
@@ -2601,7 +2732,7 @@ class RecipePanel(ttk.Frame):
         self._card_picker_var.set(card)
         if card:
             self._file_lbl.config(
-                text=f"{len(recipes)} recipe(s) — probe card '{card}'", fg="#374151")
+                text=f"{len(recipes)} recipe(s)", fg="#374151")
             self.controller.log(
                 f"[RECIPE] Probe card '{card}': {len(recipes)} recipe(s)"
                 + (f": {', '.join(recipes)}" if recipes else ""))
@@ -2625,7 +2756,7 @@ class RecipePanel(ttk.Frame):
         self._update_connections()
 
     def get_recipe_names(self) -> list:
-        return list(self._recipes.keys())
+        return self._visible_recipe_names()
 
     def get_active_recipe(self) -> str:
         return self._current
