@@ -31,6 +31,7 @@ try:
     from matplotlib.figure import Figure
     from matplotlib.patches import Rectangle
     from matplotlib.collections import PatchCollection
+    from matplotlib.colors import to_rgba
     _MPL = True
 except ImportError:
     _MPL = False
@@ -140,11 +141,13 @@ class RecipeGenPanel(ttk.Frame):
 
     A CSV can be imported on any tab; _import_csv sniffs its shape to route
     it, falling back to whichever tab is currently open if the shape alone
-    doesn't say. On Accretech, a legacy .PMA or Recipe Generator .xls can
-    also be loaded - same idea as Import CSV, just autofilling all three
+    doesn't say. A legacy .PMA or Recipe Generator .xls can also be loaded
+    on either system - same idea as Import CSV, just autofilling all three
     pages from an older file instead of a plain grid (see
-    _autofill_from_major_grid). Electroglas doesn't get those two buttons:
-    its Wafer Builder was rebuilt CSV-only by design.
+    _autofill_from_major_grid). Both only ever touch this tab's own
+    Shot/Shot Map/Die Map state, unlike Electroglas's separate PMA Process
+    tab, whose own .PMA loading also feeds the Run tab's EgPmaRunPanel
+    bridge - so offering them here doesn't affect that.
 
     system picks which system's wafer map file Save Wafer Map writes to
     (ata_wafer_map_accretech.csv vs _electroglas.csv) and whether the
@@ -269,11 +272,16 @@ class RecipeGenPanel(ttk.Frame):
             side="left", padx=(6, 12))
         ttk.Button(bar, text="📥 Import CSV…", command=self._import_csv).pack(
             side="left", padx=(0, 6))
-        if self._system == "accretech":
-            ttk.Button(bar, text="📥 Load PMA…", command=self._import_pma).pack(
-                side="left", padx=(0, 6))
-            ttk.Button(bar, text="📥 Load Recipe Gen (.xls)…",
-                      command=self._import_recipe_gen_xls).pack(side="left", padx=(0, 6))
+        # Both systems get these now - _import_pma/_import_recipe_gen_xls
+        # only ever touch this tab's own Shot/Shot Map/Die Map state (via
+        # _autofill_from_major_grid), same as Import CSV. That's different
+        # from the Electroglas PMA Process tab's own .PMA loading, which
+        # also feeds the Run tab's EgPmaRunPanel bridge - this one doesn't
+        # affect anything outside Wafer Builder.
+        ttk.Button(bar, text="📥 Load PMA…", command=self._import_pma).pack(
+            side="left", padx=(0, 6))
+        ttk.Button(bar, text="📥 Load Recipe Gen (.xls)…",
+                  command=self._import_recipe_gen_xls).pack(side="left", padx=(0, 6))
 
     # ==================================================================
     # SHOT — what one touchdown covers
@@ -660,13 +668,22 @@ class RecipeGenPanel(ttk.Frame):
             return _COLOR_SKIP
         return _COLOR_HAS_ID if box["die_id"] else _COLOR_BLANK
 
-    def _redraw_diemap(self):
+    def _redraw_diemap(self, reset_view: bool = True):
         # Guards construction-order calls too, not just missing matplotlib -
         # Shot/Shot Map's own initial _draw_shot()/_draw_shotmap() run during
         # __init__ before _build_diemap_tab has created self.ax/self.canvas.
         if not _MPL or not hasattr(self, "ax"):
             return
         self._close_die_editor(commit=True)
+        # reset_view=False (the click/edit paths - see _diemap_update_one,
+        # which now handles those without a full rebuild at all, but keeps
+        # this as its fallback) preserves whatever the operator was zoomed/
+        # panned to instead of re-fitting the whole wafer - a full rebuild
+        # used to always re-fit, which is what made clicking a die appear to
+        # "zoom you out". Captured before clear() wipes it; already reflects
+        # the y-axis inversion below, since get_ylim() reports it as-is.
+        prev_xlim = self.ax.get_xlim()
+        prev_ylim = self.ax.get_ylim()
         self.ax.clear()
         if self._diemap_xlim_cid is not None:
             try:
@@ -678,12 +695,16 @@ class RecipeGenPanel(ttk.Frame):
         self._selected_die_patch = None
         self._die_boxes = self._die_positions()
         self._die_id_labels = []
+        self._diemap_coll = None
+        self._diemap_box_index = {b["key"]: i for i, b in enumerate(self._die_boxes)}
+        self._diemap_label_by_key = {}
         if self._die_boxes:
             patches = [Rectangle((b["x"], b["y"]), b["w"], b["h"])
                       for b in self._die_boxes]
             coll = PatchCollection(patches, edgecolor="#0f172a", linewidths=0.3)
             coll.set_facecolor([self._die_color(b) for b in self._die_boxes])
             self.ax.add_collection(coll)
+            self._diemap_coll = coll
             # Zoomed-out, one letter per die is unreadable clutter - hidden
             # until _diemap_label_visibility finds them big enough on screen.
             for b in self._die_boxes:
@@ -694,12 +715,18 @@ class RecipeGenPanel(ttk.Frame):
                     ha="center", va="center", fontsize=6, color="#0f172a",
                     zorder=6, clip_on=True)
                 self._die_id_labels.append(txt)
-            xs = [b["x"] for b in self._die_boxes]
-            ys = [b["y"] for b in self._die_boxes]
-            dpx, dpy = self._die_pitch()
-            self.ax.set_xlim(min(xs) - dpx, max(xs) + 2 * dpx)
-            self.ax.set_ylim(min(ys) - dpy, max(ys) + 2 * dpy)
-        self.ax.invert_yaxis()
+                self._diemap_label_by_key[b["key"]] = txt
+            if reset_view:
+                xs = [b["x"] for b in self._die_boxes]
+                ys = [b["y"] for b in self._die_boxes]
+                dpx, dpy = self._die_pitch()
+                self.ax.set_xlim(min(xs) - dpx, max(xs) + 2 * dpx)
+                self.ax.set_ylim(min(ys) - dpy, max(ys) + 2 * dpy)
+        if reset_view:
+            self.ax.invert_yaxis()
+        else:
+            self.ax.set_xlim(prev_xlim)
+            self.ax.set_ylim(prev_ylim)
         n_id = sum(1 for b in self._die_boxes if b["die_id"] and b["status"] == "normal")
         n_skip = sum(1 for b in self._die_boxes if b["status"] == "skip")
         n_align = sum(1 for b in self._die_boxes if b["status"] == "align")
@@ -707,6 +734,61 @@ class RecipeGenPanel(ttk.Frame):
                           f"{n_id} with ID, {n_skip} skip, {n_align} align")
         self.ax.set_aspect("equal")
         self.ax.set_axis_off()
+        self._diemap_label_visibility()
+        self.canvas.draw_idle()
+
+    def _diemap_update_one(self, key: tuple):
+        """Fast path for a single die's id/status changing (skip/align
+        toggle, ID edit commit, right-click clear) - repaints just that
+        die's patch color + label instead of a full ax.clear()+rebuild.
+        Falls back to a (view-preserving) full redraw if anything about the
+        fast path doesn't apply (matplotlib missing, no prior draw, or the
+        die/collection bookkeeping is stale for any reason).
+
+        This is what actually fixes the lag on a wafer with many die ID
+        labels showing - a full rebuild recreated every Text artist (one of
+        matplotlib's more expensive operations) on every single click, even
+        though only one die changed.
+        """
+        if (not _MPL or not hasattr(self, "ax")
+                or getattr(self, "_diemap_coll", None) is None):
+            self._redraw_diemap(reset_view=False)
+            return
+        idx = self._diemap_box_index.get(key)
+        if idx is None or idx >= len(self._die_boxes):
+            self._redraw_diemap(reset_view=False)
+            return
+
+        box = self._die_boxes[idx]
+        info = self._die_status.get(key, {"die_id": box["die_id"], "status": "normal"})
+        box["die_id"] = info.get("die_id", "")
+        box["status"] = info.get("status", "normal")
+
+        colors = self._diemap_coll.get_facecolor()
+        colors[idx] = to_rgba(self._die_color(box))
+        self._diemap_coll.set_facecolor(colors)
+
+        old_label = self._diemap_label_by_key.pop(key, None)
+        if old_label is not None:
+            try:
+                old_label.remove()
+            except Exception:
+                pass
+            if old_label in self._die_id_labels:
+                self._die_id_labels.remove(old_label)
+        if box["die_id"]:
+            txt = self.ax.text(
+                box["x"] + box["w"] / 2, box["y"] + box["h"] / 2, box["die_id"],
+                ha="center", va="center", fontsize=6, color="#0f172a",
+                zorder=6, clip_on=True)
+            self._die_id_labels.append(txt)
+            self._diemap_label_by_key[key] = txt
+
+        n_id = sum(1 for b in self._die_boxes if b["die_id"] and b["status"] == "normal")
+        n_skip = sum(1 for b in self._die_boxes if b["status"] == "skip")
+        n_align = sum(1 for b in self._die_boxes if b["status"] == "align")
+        self.ax.set_title(f"{self.map_name_var.get()} — {len(self._die_boxes)} die(s), "
+                          f"{n_id} with ID, {n_skip} skip, {n_align} align")
         self._diemap_label_visibility()
         self.canvas.draw_idle()
         self._diemap_status_var.set(f"{len(self._die_boxes)} die(s) on the wafer.")
@@ -752,7 +834,7 @@ class RecipeGenPanel(ttk.Frame):
         if event.button == 3:
             self._close_die_editor(commit=True)
             self._die_status[die["key"]] = {"die_id": die["die_id"], "status": "normal"}
-            self._redraw_diemap()
+            self._diemap_update_one(die["key"])
             return
         mode = self._diemap_mode_var.get()
         if mode == "id":
@@ -764,7 +846,7 @@ class RecipeGenPanel(ttk.Frame):
                                                      "status": "normal"})
             cur["status"] = "normal" if cur.get("status") == mode else mode
             self._die_status[die["key"]] = cur
-            self._redraw_diemap()
+            self._diemap_update_one(die["key"])
 
     def _select_die(self, box: dict):
         if self._selected_die_patch is not None:
@@ -815,7 +897,10 @@ class RecipeGenPanel(ttk.Frame):
         except Exception:
             pass
         if commit:
-            self._redraw_diemap()
+            if key is not None:
+                self._diemap_update_one(key)
+            else:
+                self._redraw_diemap(reset_view=False)
 
     # ==================================================================
     # NAMED MAPS — many Shot/Shot Map/Die Map definitions can live in one
@@ -1535,7 +1620,7 @@ class RecipeGenPanel(ttk.Frame):
         self._sub_nb.select(2)
 
     # ==================================================================
-    # LEGACY IMPORT (Accretech only) — .PMA / Recipe Generator .xls
+    # LEGACY IMPORT (both systems) — .PMA / Recipe Generator .xls
     #
     # Same idea as Import CSV, just autofilling all three pages from an
     # older file instead of a plain grid: dies-per-shot is only ever
