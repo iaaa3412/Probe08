@@ -503,6 +503,21 @@ their byte-offset clustering in the binary are strong, consistent evidence:
   confirmed to be SCPI at all (could be a simpler proprietary command set for
   this specific relay unit).
 
+  UPDATE 2026-08-14: this mismatch turned out not to matter. Lampexe already
+  chose (2026-07-22, above) to talk to the real hardware via this project's
+  own pyvisa-backed drivers instead of literally replicating AGT3494A.OCX's
+  command bytes - and hp_switchbox.py's SCPI CLOS/OPEN (@sccc) syntax was
+  independently confirmed to actually work against THIS card: probe02's
+  bench mapping (2026-08-10) closed each channel via that exact driver and
+  read real isolation values back on a Keithley 2400. Whatever internal
+  syntax the old exe's ActiveX control translated "CLOSE RELAY1" into,
+  SCPI (@sccc) is a working, verified alternative on the same physical
+  E1345A - not a guess. Lampexe's real_run_steps() (data_stub.py) uses it
+  for real per-die relay closing now. Die->channel mapping: die 1-4 of one
+  quad -> channel 0-3 (BENCH_WIRING["probe02"]["die_sets"]), confirmed the
+  same session by measuring 65-99 GOhm isolation on channels 0-3 specifically
+  and nothing on any other channel.
+
   Full ordered byte-offset walk (2026-07-22, real exe, ~32100-34200) turned up
   a few more pieces worth recording verbatim, none traced through code:
     "SCAN:MODE NONE" sits immediately before RELAY2 and right after the

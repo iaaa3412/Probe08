@@ -363,9 +363,12 @@ class RuntimeForm(tk.Toplevel, ModeAwareMixin):
         """cmdGo_Click (sub_40cba0): the real handler re-validates Wafer ID, loads the
         .PMA recipe, moves the prober to the align site, confirms Z-height/edge-sensor
         state with the operator, walks every die sending switch-relay + Keithley SCPI
-        commands, and finally sends the stage home. Simulated here via
-        data_stub.simulated_run_steps() against a fake die list, since there's no real
-        prober/GPIB/DB connected yet - see data_stub.py's module docstring."""
+        commands, and finally sends the stage home. data_stub.real_run_steps() does
+        this for real now (2026-08-14) against one quad's 4 die positions - closing
+        each die's confirmed relay channel and taking a real Keithley reading - when
+        Relay1/Keithley2400 actually connected; otherwise it degrades to the same
+        text-only shape simulated_run_steps always used. See real_run_steps'
+        docstring and data_stub.py's module docstring."""
         if self._run_in_progress:
             return
         wafer_id = self.txt_wafer_id_frame1.get().strip()
@@ -396,7 +399,7 @@ class RuntimeForm(tk.Toplevel, ModeAwareMixin):
 
         self._run_in_progress = True
         self.cmd_go.configure(state="disabled")
-        self._run_steps = data_stub.simulated_run_steps()
+        self._run_steps = data_stub.real_run_steps(self._hpib_by_name)
         self._advance_run()
 
     def _advance_run(self):

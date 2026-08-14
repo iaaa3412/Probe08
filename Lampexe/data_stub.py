@@ -32,7 +32,7 @@ if _PROJECT_ROOT not in sys.path:
 
 from instruments.electroglas_2001x import Electroglas2001X
 from instruments.keithley2400 import Keithley2400
-from instruments.hp_switchbox import HPSwitchbox
+from instruments.hp_switchbox import HPSwitchbox, bench_wiring
 
 REAL_RECIPE_DIR = r"C:\ProbeRecipe\LampElectrical"
 
@@ -350,12 +350,18 @@ def build_hpib_instruments() -> dict:
     instead of the old always-False StubGpibInstrument.is_reachable().
 
     Relay1 -> HPSwitchbox("relay1_eg") sends standard SCPI CLOS/OPEN (@sccc)
-    channel-list commands. The real prjLampElectrical.exe's own relay channel
-    NAMES (RELAY1-RELAY5, FET1-FET4 - recovered from the exe's raw string
-    table, see GPIB_COMMANDS.txt section 4) haven't been confirmed against
-    which numeric (@sccc) channel each one actually is on the real E1345A/
-    E1351A card - that mapping is unverified and needs checking against real
-    hardware before any per-die relay-closing logic gets built.
+    channel-list commands. Which numeric channel is which die was unresolved
+    as of the RE session that built this file - the real exe's own relay
+    channel NAMES (RELAY1-RELAY5, FET1-FET4, from its string table, see
+    GPIB_COMMANDS.txt section 4) were never confirmed against real E1345A
+    hardware. RESOLVED 2026-08-10 (main ATA app, not this RE effort): the
+    "probe02" bench in instruments/hp_switchbox.py's BENCH_WIRING was mapped
+    directly on this exact machine - closing each channel in turn and
+    measuring isolation on a Keithley 2400 - and it's an E1345A mux, the same
+    card family GPIB_COMMANDS.txt section 0.6 already identified from the
+    disassembly. That IS Relay1 here: two independent traces (this RE effort
+    and the on-bench mapping) landing on the same card. real_run_steps()
+    below uses BENCH_WIRING["probe02"]["die_sets"] for real per-die routing.
     """
     return {
         "2001X": Electroglas2001X(),
@@ -373,6 +379,88 @@ def simulated_run_steps(die_ids=None):
     for die in die_ids:
         yield f"Probing {die}", True
         yield f"Measuring {die}", True
+    yield "Probe Recipe completed normally", True
+    yield "Moving to home", True
+    yield "Ready", False
+
+
+# One 2x2 quad shot's die positions, in BENCH_WIRING["probe02"]["die_sets"]'s
+# own 1-4 order - the real granularity a LaMP recipe probes per touchdown
+# (confirmed 2026-07-22: 4 dies/shot, 2x2 quad). real_run_steps' default,
+# unlike DEMO_DIE_IDS above which is arbitrary placeholder labels for the
+# text-only simulation and was never meant to line up with real channels.
+QUAD_DIE_IDS = ["Die 1", "Die 2", "Die 3", "Die 4"]
+
+
+def real_run_steps(hpib: dict, die_ids=None):
+    """Same (status_text, is_log_line) shape as simulated_run_steps - same
+    verbatim recovered strings for fidelity - but for each die this now
+    genuinely closes that die's relay channel and takes a real Keithley 2400
+    reading, instead of just faking the status text on a timer.
+
+    hpib: build_hpib_instruments()'s return value (or any dict with
+    "Relay1"/"Keithley2400" keys). Falls back to text-only exactly like
+    simulated_run_steps whenever an instrument's real pyvisa session never
+    opened (.inst is None) - same graceful-degradation rule the rest of
+    Lampexe already follows (see build_hpib_instruments' docstring), so this
+    behaves the same as before on a PC with no GPIB hardware attached.
+
+    Die-to-channel mapping is instruments/hp_switchbox.py's
+    BENCH_WIRING["probe02"]["die_sets"] - see build_hpib_instruments'
+    docstring for how that got confirmed as this exact rig. Only 4 channels
+    are wired (one 2x2 quad); a die_ids list longer than 4 just has no
+    channel to close for the extra entries and says so rather than guessing.
+
+    The 10 V / 1 uA-compliance isolation test itself (source voltage, read
+    current, report both) matches the real flush-file data this RE effort
+    found (fldSetVoltage=fldVoltage=10 fixed, fldCurrent ~1e-9 A range) and
+    the same test hp_switchbox.py's module comment describes being used to
+    map the channels in the first place.
+    """
+    die_ids = die_ids or QUAD_DIE_IDS
+    relay = hpib.get("Relay1")
+    smu = hpib.get("Keithley2400")
+    relay_live = relay is not None and relay.inst is not None
+    smu_live = smu is not None and smu.inst is not None
+    die_sets = bench_wiring("probe02").get("die_sets", {})
+
+    yield "Waiting final OK to begin probing", False
+    yield "Ready", False
+    yield "Moving to first site", True
+    for i, die in enumerate(die_ids, start=1):
+        yield f"Probing {die}", True
+        chans = die_sets.get(i)
+        if relay_live and chans:
+            try:
+                relay.close_only(chans[0])
+                yield f"  CH{chans[0]:02d} closed (die {i} of the quad)", True
+            except Exception as e:
+                yield f"  relay close failed: {e}", True
+        elif not chans:
+            yield f"  no relay channel mapped for die {i} - not switched", True
+        else:
+            yield "  (Relay1 not connected - not switched)", True
+
+        yield f"Measuring {die}", True
+        if smu_live:
+            try:
+                smu.set_voltage("", 10.0)
+                smu.set_current_limit("", 1e-6)
+                smu.turn_output_on("")
+                current = smu.measure_current("")
+                smu.turn_output_off("")
+                resistance = (10.0 / current) if current else float("inf")
+                yield f"  {die}: I={current:.3e} A  R={resistance:.3e} Ohm", True
+            except Exception as e:
+                yield f"  measurement failed: {e}", True
+        else:
+            yield "  (Keithley 2400 not connected - not measured)", True
+
+    if relay_live:
+        try:
+            relay.open_all()
+        except Exception:
+            pass
     yield "Probe Recipe completed normally", True
     yield "Moving to home", True
     yield "Ready", False
