@@ -75,6 +75,16 @@ def reset_topology() -> dict:
     return data
 
 
+def ensure_default_file() -> bool:
+    """First-run scaffold - write the built-in default topology if this
+    machine has no switch_topology.yaml yet. Returns False if the file
+    already existed (left untouched)."""
+    if os.path.exists(TOPOLOGY_PATH):
+        return False
+    save_topology(_default_copy())
+    return True
+
+
 def slots() -> list:
     return load_topology()["slots"]
 

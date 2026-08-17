@@ -32,8 +32,15 @@ def _path() -> str:
 
 
 def load() -> dict:
-    with open(_path(), "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+    # A missing eg_probers.yaml (fresh machine, GUI System declined at
+    # startup) means "no benches recorded yet" - the same as app_settings's
+    # load_settings(), not a reason to crash every panel that asks for the
+    # active bench during construction.
+    try:
+        with open(_path(), "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except (OSError, ValueError):
+        return {}
 
 
 def _save(data: dict) -> None:
@@ -58,6 +65,12 @@ def active_name() -> str:
 def get(name: str = None) -> dict:
     data = load()
     name = name or active_name()
+    if not name:
+        # No bench recorded at all yet (fresh/declined GUI System folder) -
+        # that is a legitimate "nothing to show" for every read-only
+        # accessor built on top of get(), not an error. A KeyError is only
+        # for a caller asking about a SPECIFIC bench that doesn't exist.
+        return {}
     profile = (data.get("probers") or {}).get(name)
     if profile is None:
         raise KeyError(f"no Electroglas profile named {name!r} "

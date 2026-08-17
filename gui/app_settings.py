@@ -28,6 +28,45 @@ def save_settings(data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
+def machine_config_status() -> dict:
+    """Which pieces of this machine's setup exist on disk yet - the startup
+    check's source of truth for whether to prompt, and for which files
+    specifically to create. Imported lazily to dodge an import cycle
+    (instruments.gpib_base has no reason to import this gui/ module)."""
+    from instruments import gpib_base
+    import switch_topology
+    return {
+        "folder": os.path.isdir(_SETTINGS_DIR),
+        "app_settings.json": os.path.isfile(SETTINGS_PATH),
+        "instruments.yaml": os.path.isfile(
+            gpib_base.get_machine_config_path("instruments.yaml")),
+        "eg_probers.yaml": os.path.isfile(
+            gpib_base.get_machine_config_path("eg_probers.yaml")),
+        "switch_topology.yaml": os.path.isfile(switch_topology.TOPOLOGY_PATH),
+    }
+
+
+def create_basic_machine_config() -> list:
+    """Create whichever of this machine's setup files are missing, each
+    with a blank/no-defaults starter shape - never guesses a real address,
+    just the key structure the Setup tab expects to edit. Leaves anything
+    that already exists untouched. Returns the filenames actually created."""
+    from instruments import gpib_base
+    import switch_topology
+    os.makedirs(_SETTINGS_DIR, exist_ok=True)
+    created = []
+    if not os.path.isfile(SETTINGS_PATH):
+        save_settings({})
+        created.append("app_settings.json")
+    if gpib_base.create_default_instruments_yaml():
+        created.append("instruments.yaml")
+    if gpib_base.create_default_eg_probers_yaml():
+        created.append("eg_probers.yaml")
+    if switch_topology.ensure_default_file():
+        created.append("switch_topology.yaml")
+    return created
+
+
 # One default ATA folder for the whole project - not per system. Only one
 # prober is ever actually running against real data at a time, and having
 # Accretech/Electroglas remember different defaults was extra state nobody

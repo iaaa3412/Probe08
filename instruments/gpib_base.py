@@ -49,6 +49,63 @@ def get_machine_config_path(filename):
     return os.path.join(_MACHINE_CONFIG_DIR, filename)
 
 
+# Duplicated from instruments.eg_profiles.EG_KEYS/gui.accretech_setup_panel's
+# _ACCRETECH_KEYS rather than imported - eg_profiles imports FROM this module,
+# so importing it back here would be circular, and accretech_setup_panel is a
+# gui/ (Tk) module this low-level driver layer shouldn't need. Keep the three
+# lists in step by hand if a key is ever added.
+_ACCRETECH_KEYS = ("prober", "smu", "dmm", "switch_matrix", "wave_gen")
+_EG_KEYS = ("prober_eg", "smu_eg", "dmm_eg", "dmm_vxi_eg",
+           "relay1_eg", "relay2_eg", "relay3_eg", "power_supply_eg")
+
+
+def create_default_instruments_yaml() -> bool:
+    """First-run scaffold - every known instrument key present with a blank
+    name/address, so GPIBInstrument always finds its key instead of crashing
+    on a config file that was never written. No real address is guessed;
+    that's what the Setup tab is for. Returns False if the file already
+    existed (left untouched)."""
+    path = get_machine_config_path("instruments.yaml")
+    if os.path.exists(path):
+        return False
+    os.makedirs(_MACHINE_CONFIG_DIR, exist_ok=True)
+    data = {"instruments": {
+        key: {"name": "", "protocol": "GPIB", "address": "", "timeout_ms": 3000}
+        for key in _ACCRETECH_KEYS + _EG_KEYS
+    }}
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False)
+    return True
+
+
+def create_default_eg_probers_yaml() -> bool:
+    """First-run scaffold - one blank starter bench (probe02) with every
+    known EG instrument key present but unfilled, so the Setup tab and bench
+    picker have something to show and duplicate from instead of an empty
+    probers dict. Returns False if the file already existed."""
+    path = get_machine_config_path("eg_probers.yaml")
+    if os.path.exists(path):
+        return False
+    os.makedirs(_MACHINE_CONFIG_DIR, exist_ok=True)
+    data = {
+        "active": "probe02",
+        "probers": {
+            "probe02": {
+                "label": "probe02",
+                "instruments": {
+                    key: {"name": "", "address": "", "timeout_ms": 3000,
+                         "fitted": True, "id_queries": []}
+                    for key in _EG_KEYS
+                },
+            }
+        },
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False,
+                       allow_unicode=True, width=100)
+    return True
+
+
 def _resource_manager_for(via):
     if via not in _rm_cache:
         _rm_cache[via] = pyvisa.ResourceManager() if via is None else pyvisa.ResourceManager(via)
@@ -101,17 +158,26 @@ def open_resource(address, open_timeout=_OPEN_TIMEOUT_MS):
 
 class GPIBInstrument:
     def __init__(self, config_key):
+        self.address = None
+        self.timeout = 3000
+        self.inst = None
+
+        # A missing/incomplete instruments.yaml (fresh machine, GUI System
+        # folder declined at startup, key not filled in on Setup yet) is a
+        # "not connected" instrument, same as one that's simply unplugged -
+        # not a reason to crash the whole app.
         yaml_path = get_machine_config_path("instruments.yaml")
-
-        with open(yaml_path, "r") as file:
-            config = yaml.safe_load(file)
-
-        inst_data = config['instruments'].get(config_key)
-        if not inst_data:
-            raise ValueError(f"Instrument '{config_key}' not found in YAML.")
-
-        self.address = inst_data['address']
-        self.timeout = inst_data['timeout_ms']
+        try:
+            with open(yaml_path, "r") as file:
+                config = yaml.safe_load(file) or {}
+            inst_data = (config.get("instruments") or {}).get(config_key)
+            if not inst_data or not inst_data.get("address"):
+                raise ValueError(f"Instrument '{config_key}' not configured yet.")
+            self.address = inst_data["address"]
+            self.timeout = inst_data.get("timeout_ms", 3000)
+        except (OSError, ValueError) as e:
+            print(f"[{config_key.upper()}] FAILED to connect: {e}")
+            return
 
         try:
             self.inst, via = open_resource(self.address)

@@ -55,6 +55,7 @@ class AtomicaDashboard(tk.Tk):
         super().__init__()
         self.title("Electrical Prober")
         self.geometry("1400x800")
+        self._check_machine_config_folder()
         self._splash = None
         self._build_splash_screen()
         self.rowconfigure(2, weight=1)
@@ -107,6 +108,9 @@ class AtomicaDashboard(tk.Tk):
         self._by_system["electroglas"]["ui"] = self.instrument_panel_eg
 
         self._build_bottom_routing()
+        if getattr(self, "_pending_setup_log", None):
+            self.log(self._pending_setup_log)
+            self._pending_setup_log = None
         self._autoload_default_ata_folders()
         # After the folders, so switching system finds its folder already
         # loaded; before init_hardware, so the first connect sweep runs
@@ -123,6 +127,49 @@ class AtomicaDashboard(tk.Tk):
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
         self.after(1500, self._poll_prober_ready)
+
+    def _check_machine_config_folder(self):
+        """First thing on startup: does this machine actually have a GUI
+        System folder, and does it have all four setup files in it? A fresh
+        machine (or one where GUI System was declined/deleted) has neither -
+        warn about it up front and offer to scaffold blank versions, rather
+        than let the app silently run with nothing connected and no obvious
+        reason why, or crash reaching for a config file that was never
+        written."""
+        status = app_settings.machine_config_status()
+        missing = [name for name, present in status.items()
+                  if name != "folder" and not present]
+        if not missing:
+            return
+        if not status["folder"]:
+            prompt = ("This machine has no GUI System folder at "
+                      "C:/automationproject/GUI System - that's where the "
+                      "GUI keeps this machine's real setup (instrument "
+                      "addresses, Electroglas bench profiles, switch "
+                      "wiring, default ATA folder/prober). None of that "
+                      "exists yet.")
+        else:
+            prompt = ("This machine's GUI System folder is missing some "
+                      "setup files: " + ", ".join(missing) + ".")
+        create = messagebox.askyesno(
+            "GUI System Folder", prompt +
+            "\n\nCreate the missing file(s) now with a blank starter "
+            "setup? Nothing is guessed - every address/bench starts "
+            "empty and gets filled in on the Setup tab afterward.",
+            parent=self)
+        if not create:
+            messagebox.showwarning(
+                "No Machine Setup",
+                "Continuing without it - instrument connections and "
+                "per-bench profiles won't work until GUI System exists. "
+                "Nothing will crash, but nothing will connect either.",
+                parent=self)
+            return
+        created = app_settings.create_basic_machine_config()
+        self._pending_setup_log = (
+            f"[SYSTEM] GUI System folder: created {', '.join(created)} "
+            "with a blank starter setup - fill in real addresses/benches "
+            "on the Setup tab.") if created else None
 
     def _autoload_default_ata_folders(self):
         """One default ATA folder for the whole project, set via the ⭐ Set
