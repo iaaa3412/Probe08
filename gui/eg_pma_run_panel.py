@@ -1387,16 +1387,6 @@ class EgPmaRunPanel(ttk.Frame):
                     f"[PMA] ⚠ Could not separate the chuck — "
                     f"{type(e).__name__}: {e}  Check Z before moving."))
 
-    def reset_run_position(self):
-        """Forget where the run got to, so ▶ Run starts from the beginning."""
-        self._index = None
-        self._anchored = False
-        self._last_seq = None
-        self._um_residual = [0.0, 0.0]
-        self._anchor_state_var.set("not set — stopped, set the chuck again to run")
-        self._mark_current()
-        self._refresh_position()
-
     def _publish_total_dies(self) -> int:
         """Tell the stats panel how many DIES this run measures.
 
@@ -1430,7 +1420,7 @@ class EgPmaRunPanel(ttk.Frame):
         except Exception:
             pass
         self._publish_total_dies()
-        self._set_run_state("RUNNING (.PMA)", "#2563eb")
+        self._set_run_state("RUNNING", "#2563eb")
         drv = self._prober()
         cap = getattr(drv, "max_die_step", 5)
 
