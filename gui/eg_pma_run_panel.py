@@ -50,6 +50,7 @@ from electroglas_pma import (parse_pma_file, load_touchdowns, align_site_info,
                              format_quad, expand_touchdowns_to_dies, die_grid_index,
                              measurement_plan, workbook_touchdowns, QUAD_ORDER,
                              shot_geometry, slot_names)
+from recipe_gen_panel import shot_die_rc
 
 # Where LaMP kept its recipes, then the repo's own copies.
 _RECIPE_DIRS = (r"C:\_local\data\debug\LaMPElectrical",
@@ -1271,6 +1272,10 @@ class EgPmaRunPanel(ttk.Frame):
             self._start(1)
 
     def _run_all(self):
+        rp = getattr(self._main_layout, "recipe_panel", None)
+        if rp is not None and getattr(rp, "is_minor_moves", None) and rp.is_minor_moves():
+            self._run_minor_moves()
+            return
         if not self._guard():
             return
         enabled = self._enabled_indices()
@@ -1322,6 +1327,122 @@ class EgPmaRunPanel(ttk.Frame):
         if restart:
             self._needs_restart = True  # consumed by _move_next's first hop
         self._start(remaining)
+
+    # -- Minor Moves (shot-aware single-die stepping) -----------------------
+    #
+    # A parallel run path, entirely separate from the .PMA-driven engine
+    # above: no self._touchdowns, no anchor/quad math. A wafer-map square is
+    # a Wafer Builder SHOT (several real dies, e.g. a 7x9 reticle); this
+    # probe card only ever contacts one die at a time, so the chuck is
+    # repositioned - by absolute die coordinate, via the driver's own
+    # goto_die() (bounded/verified relative stepping under the hood, see
+    # that method's docstring in instruments/electroglas_2001x.py) - to
+    # whichever die # a recipe step calls for, measures just that step, and
+    # moves on. Mirrors instrument_panel.py's _exec2_minor_move_thread
+    # (Accretech) using goto_die() instead of move_to_die_xy(). Off by
+    # default (Recipe tab's Minor Moves checkbox) and not yet exercised
+    # against a real Electroglas single-die-shot project - see that
+    # checkbox's own docstring.
+
+    def _run_minor_moves(self):
+        if self._running:
+            self._log("[PMA] Already running")
+            return
+        drv = self._prober()
+        if drv is None:
+            self._log("[PMA] Prober not connected")
+            return
+        rp = self._main_layout.recipe_panel
+        origin = rp.get_shot_origin()
+        if origin is None:
+            self._log("[PMA] Minor Moves: no shot origin set for this recipe "
+                      "— press 📍 Set Shot Origin on the Recipe tab (with the "
+                      "chuck on shot R0C0's die R0C0), then Run again.")
+            return
+        gen = getattr(self._main_layout, "recipe_gen", None)
+        if gen is None:
+            self._log("[PMA] Minor Moves: the Wafer Builder tab is not available.")
+            return
+        shot_rows, shot_cols = gen._shot_dims()
+        shot_cells = dict(gen._shot_cells)
+        shots = sorted({(d["row"], d["col"]) for d in gen.shots_as_die_list()})
+        if not shots:
+            self._log("[PMA] Minor Moves: no shots on the Wafer Builder map.")
+            return
+        steps = self._main_layout.recipe_panel.get_steps()
+        if not steps:
+            self._log("[PMA] Minor Moves: the loaded recipe has no steps.")
+            return
+        if not messagebox.askokcancel(
+                "Run (Minor Moves)",
+                f"Probe {len(shots)} shot(s), visiting only the die(s) the "
+                "recipe references in each?\n\nTHIS MEASURES. Z is verified "
+                "before each measurement; the chuck is separated at the end."):
+            return
+        self._running = True
+        self._abort = False
+        self._set_run_state("RUNNING (Minor Moves)", "#2563eb")
+        self._log(f"[PMA] ▶ Run (Minor Moves) — {len(shots)} shot(s).")
+        threading.Thread(
+            target=self._minor_move_thread,
+            args=(shots, steps, origin, shot_rows, shot_cols, shot_cells),
+            daemon=True).start()
+
+    def _minor_move_thread(self, shots: list, steps: list, origin: tuple,
+                           shot_rows: int, shot_cols: int, shot_cells: dict):
+        drv = self._prober()
+        origin_x, origin_y = origin
+        run_steps = getattr(self._main_layout, "_exec2_run_steps_once", None)
+        error_msg = None
+
+        steps_by_die: dict = {}
+        for s in steps:
+            try:
+                die_num = int(float(s.get("die") or 1))
+            except (TypeError, ValueError):
+                die_num = 1
+            steps_by_die.setdefault(die_num, []).append(s)
+        needed = sorted(steps_by_die)
+
+        try:
+            drv.z_down()
+            for shot_row, shot_col in shots:
+                if self._abort:
+                    break
+                for die_num in needed:
+                    if self._abort:
+                        break
+                    rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+                    if rc is None:
+                        self._ui(lambda sr=shot_row, sc=shot_col, dn=die_num: self._log(
+                            f"[PMA] ⚠ Minor Moves: die #{dn} is not on shot "
+                            f"R{sr}C{sc} — skipped."))
+                        continue
+                    r, c = rc
+                    die_x = origin_x + shot_col * shot_cols + c
+                    die_y = origin_y + shot_row * shot_rows + r
+                    label = f"shot R{shot_row}C{shot_col} die #{die_num} (X{die_x} Y{die_y})"
+                    self._ui(lambda lab=label: self._status_var.set(f"moving to {lab}"))
+                    self._ui(lambda lab=label: self._log(f"[PMA] >> goto_die X={die_x} Y={die_y}"))
+                    drv.goto_die(die_x, die_y)
+                    drv.z_up()
+                    ok = bool(run_steps(steps_by_die[die_num])) if run_steps else False
+                    self._ui(lambda p=ok, lab=label: self._log(
+                        f"[RESULT] {'PASS' if p else 'FAIL'}  {lab}"))
+                    drv.z_down()
+        except Exception as e:
+            error_msg = str(e)
+            self._ui(lambda: self._log(f"[PMA] ERROR: {e}"))
+        finally:
+            self._running = False
+            try:
+                self._make_safe(drv)
+            except Exception:
+                pass
+            if error_msg:
+                self._set_run_state(f"ERROR: {error_msg[:60]}", "#dc2626")
+            else:
+                self._set_run_state("FINISHED (Minor Moves)", "#16a34a")
 
     def _pause(self):
         """Finish what is in progress, then hold - the old ⏹ Stop behaviour.

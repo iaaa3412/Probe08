@@ -11,7 +11,9 @@ import electroglas_pma
 
 DIE_PIN_KIND = "DIEPIN"
 
-CARD_CSV_FIELDS = ["kind", "recipe", "pin", "pad", "net", "seq", "bench"] + list(STEP_FIELDS)
+CARD_CSV_FIELDS = (["kind", "recipe", "pin", "pad", "net", "seq", "bench",
+                    "minor_moves", "shot_origin_x", "shot_origin_y"]
+                   + list(STEP_FIELDS))
 
 
 def _bind_zoom_only(canvas, on_zoom=None):
@@ -355,6 +357,18 @@ class WaferMapPanel(ttk.LabelFrame):
         self._draw_from_die_list(dies)
         if self._show_title:
             self.config(text=f"Wafer Map — {len(self.dies)} dies")
+        return len(self.dies)
+
+    def load_die_list(self, dies: list, label: str = "dies") -> int:
+        """Draw from an in-memory list rather than a CSV file - used by
+        Minor Moves, where a square represents a Wafer Builder SHOT (see
+        RecipeGenPanel.shots_as_die_list()) rather than a die read from
+        ata_wafer_map_*.csv. Same row shape _parse_die_list() produces."""
+        self.clear_status()
+        self._last_dies = dies
+        self._draw_from_die_list(dies)
+        if self._show_title:
+            self.config(text=f"Wafer Map — {len(self.dies)} {label}")
         return len(self.dies)
 
     def _parse_die_list(self, raw):

@@ -653,6 +653,20 @@ class Electroglas2001X(GPIBInstrument):
         """
         return self.query("?P") or ""
 
+    def get_die_position(self) -> tuple:
+        """Current die coordinate as (x, y), parsed from ?P ("X0Y0").
+
+        Thin wrapper around get_xy_position() + _parse_die_position() -
+        goto_die() already does this internally on every step; this just
+        exposes the same read as a single call for a caller (e.g. the
+        Recipe tab's minor-moves origin capture) that only wants the
+        current position, not a move.
+        """
+        pos = self._parse_die_position(self.get_xy_position())
+        if pos is None:
+            raise ValueError("Cannot parse ?P response for current die position")
+        return pos
+
     def get_die_counts(self) -> str:
         """?Y -> 'G0B0U0' + one 'D<n>' per bin.
 

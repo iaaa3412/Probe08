@@ -133,6 +133,19 @@ def present_slots(cells: Dict[tuple, dict], rows: int, cols: int) -> Dict[tuple,
     return out
 
 
+def shot_die_rc(cells: Dict[tuple, dict], rows: int, cols: int,
+                die_num: int) -> Optional[tuple]:
+    """The inverse of present_slots(): (row, col) within the shot for a
+    given 1-based die #, or None if that die # is not on this shot -
+    used by the minor-moves execution path (a recipe step's own "die"
+    field is exactly this die #) to know which cell of the shot to move
+    to, and by Set Shot Origin's sanity check that die #1 exists."""
+    for rc, num in present_slots(cells, rows, cols).items():
+        if num == die_num:
+            return rc
+    return None
+
+
 def sniff_csv_kind(rows: List[List[str]]) -> Optional[str]:
     """Which of the three tabs a plain CSV grid describes, from its shape
     alone - no file extension or naming convention to rely on.
@@ -508,6 +521,19 @@ class RecipeGenPanel(ttk.Frame):
         spx = _to_float(self._shot_pitch_x_var.get(), 0.0) or cols * dx
         spy = _to_float(self._shot_pitch_y_var.get(), 0.0) or rows * dy
         return spx, spy
+
+    def shots_as_die_list(self) -> list:
+        """The wafer's SHOT positions, shaped like WaferMapPanel's own
+        die-list rows (row/col/x_um/y_um/die_id) - used by Minor Moves so
+        the Run tab's map can show one square per SHOT instead of one per
+        individual die. x_um/y_um here are purely for on-screen layout
+        (spaced by _shot_pitch()) - the real chuck motion never reads
+        them; see instrument_panel.py/eg_pma_run_panel.py's minor-moves
+        execution path, which works entirely in die-index coordinates."""
+        spx, spy = self._shot_pitch()
+        return [{"row": r, "col": c, "x_um": c * spx, "y_um": -r * spy,
+                "die_id": ""}
+               for (r, c), present in self._shotmap_cells.items() if present]
 
     # ==================================================================
     # SHOT MAP — how many touchdowns, and their arrangement

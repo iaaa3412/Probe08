@@ -644,7 +644,17 @@ def recipes_to_rows(recipes: dict) -> list:
         # hardware between benches, but a recipe built around one bench's
         # fitted instruments is not automatically usable on the other, so
         # the picker only shows a bench-tagged recipe on its own bench.
-        rows.append({"kind": "RECIPE", "recipe": name, "bench": rec.get("bench", "")})
+        origin = rec.get("shot_origin")
+        rows.append({"kind": "RECIPE", "recipe": name, "bench": rec.get("bench", ""),
+                     # Minor moves: see RecipePanel._on_minor_moves_toggle /
+                     # _set_shot_origin. shot_origin is the die-index
+                     # coordinate the chuck was sitting at (shot row0/col0,
+                     # die row0/col0) when the operator last pressed Set
+                     # Shot Origin for THIS recipe - re-captured live before
+                     # each run, but saved here so a reload does not lose it.
+                     "minor_moves": "1" if rec.get("minor_moves") else "",
+                     "shot_origin_x": "" if origin is None else str(origin[0]),
+                     "shot_origin_y": "" if origin is None else str(origin[1])})
         for i, step in enumerate(rec.get("steps", []), 1):
             row = {"kind": "STEP", "recipe": name, "seq": str(i)}
             for k in _STEP_FIELDS:
@@ -674,11 +684,20 @@ def rows_to_recipes(rows: list) -> dict:
         name = (row.get("recipe") or "").strip()
         if not name:
             continue
-        recipes.setdefault(name, {"steps": [], "sites": [], "bench": ""})
+        recipes.setdefault(name, {"steps": [], "sites": [], "bench": "",
+                                  "minor_moves": False, "shot_origin": None})
         if kind == "RECIPE":
             bench = (row.get("bench") or "").strip()
             if bench:
                 recipes[name]["bench"] = bench
+            recipes[name]["minor_moves"] = (row.get("minor_moves") or "").strip() == "1"
+            ox = (row.get("shot_origin_x") or "").strip()
+            oy = (row.get("shot_origin_y") or "").strip()
+            if ox and oy:
+                try:
+                    recipes[name]["shot_origin"] = [float(ox), float(oy)]
+                except ValueError:
+                    pass
             continue
         try:
             seq = int(row.get("seq") or 0)
@@ -753,10 +772,20 @@ class RecipePanel(ttk.Frame):
         self._steps: list[dict] = self._recipes[self._current]["steps"]
         self._sites: list[dict] = self._recipes[self._current]["sites"]
 
-        self.rowconfigure(1, weight=1)
+        # Minor moves: a wafer-map square is a SHOT (several real dies,
+        # e.g. a 7x9 reticle) rather than one die - single-die probe
+        # cards (Accretech's today; Electroglas's on a future project)
+        # physically reposition to whichever die # a step calls for
+        # instead of contacting the whole shot at once. Off by default -
+        # see the recipe's own "minor_moves"/"shot_origin" fields above.
+        self._minor_moves_var = tk.BooleanVar(value=False)
+        self._shot_origin_status_var = tk.StringVar(value="")
+
+        self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
 
         self._build_toolbar()
+        self._build_minor_moves_bar()
         self._build_body()
         self._refresh_picker()
         self._update_connections()
@@ -947,6 +976,77 @@ class RecipePanel(ttk.Frame):
                                         bg="#e2e8f0", fg="#1d4ed8",
                                         font=("Segoe UI", 8))
 
+    def _build_minor_moves_bar(self):
+        bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
+        bar.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
+
+        self._minor_moves_chk = ttk.Checkbutton(
+            bar, text="Minor moves (multi-die shot)",
+            variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
+        self._minor_moves_chk.pack(side="left", padx=(8, 8), pady=4)
+
+        self._shot_origin_btn = ttk.Button(
+            bar, text="📍 Set Shot Origin", state="disabled",
+            command=self._set_shot_origin)
+        self._shot_origin_btn.pack(side="left", padx=(0, 8), pady=4)
+
+        tk.Label(bar, textvariable=self._shot_origin_status_var, bg="#e2e8f0",
+                 fg="#6b7280", font=("Segoe UI", 8, "italic")).pack(
+                 side="left", padx=(0, 8))
+
+    def _on_minor_moves_toggle(self):
+        rec = self._recipes.get(self._current)
+        if rec is not None:
+            rec["minor_moves"] = self._minor_moves_var.get()
+        self._shot_origin_btn.config(
+            state="normal" if self._minor_moves_var.get() else "disabled")
+        self._refresh_shot_origin_label()
+
+    def _refresh_shot_origin_label(self):
+        if not self._minor_moves_var.get():
+            self._shot_origin_status_var.set("")
+            return
+        rec = self._recipes.get(self._current) or {}
+        origin = rec.get("shot_origin")
+        if origin:
+            self._shot_origin_status_var.set(
+                f"origin set: die X={origin[0]:.0f} Y={origin[1]:.0f}")
+        else:
+            self._shot_origin_status_var.set(
+                "origin not set — 📍 Set Shot Origin before running")
+
+    def _set_shot_origin(self):
+        """Capture the chuck's CURRENT die coordinate as this recipe's
+        minor-moves origin - the operator must have it sitting on shot
+        (row 0, col 0)'s die (row 0, col 0) first, same manual alignment
+        step every other run mode already requires before starting.
+        Mirrors eg_pma_run_panel's _set_anchor in spirit, without the
+        quad/align-site disambiguation that has no equivalent here."""
+        if self._current not in self._recipes:
+            return
+        drv = self.controller.drivers.get("prober")
+        if not (drv and drv.inst):
+            messagebox.showerror("Not Connected", "The prober is not connected.")
+            return
+        try:
+            x, y = drv.get_die_position()
+        except Exception as exc:
+            messagebox.showerror(
+                "Set Shot Origin", f"Could not read the current die position: {exc}")
+            return
+        if not messagebox.askyesno(
+                "Set Shot Origin",
+                f"Set this recipe's shot origin to the chuck's CURRENT "
+                f"position (die X={x:.0f} Y={y:.0f})?\n\n"
+                "The chuck must be sitting on shot (row 0, col 0)'s die "
+                "(row 0, col 0) right now - every minor move a run makes "
+                "is computed relative to this point."):
+            return
+        self._recipes[self._current]["shot_origin"] = [x, y]
+        self._refresh_shot_origin_label()
+        self.controller.log(
+            f"[RECIPE] '{self._current}': shot origin set to die "
+            f"X={x:.0f} Y={y:.0f}")
 
     def _build_body(self):
         # A PanedWindow (drag sash) rather than fixed grid-row weights, so the
@@ -954,7 +1054,7 @@ class RecipePanel(ttk.Frame):
         # not just something that happens to grow proportionally when the
         # window does.
         body = ttk.PanedWindow(self, orient="vertical")
-        body.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
+        body.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
         self._build_steps(body)
         self._build_sites(body)
 
@@ -2258,6 +2358,10 @@ class RecipePanel(ttk.Frame):
         self._refresh_steps()
         self._refresh_sites()
         self._update_validity_label()
+        self._minor_moves_var.set(bool(rec.get("minor_moves")))
+        self._shot_origin_btn.config(
+            state="normal" if self._minor_moves_var.get() else "disabled")
+        self._refresh_shot_origin_label()
 
     def _switch_recipe(self):
         name = self._picker_var.get()
@@ -2288,6 +2392,9 @@ class RecipePanel(ttk.Frame):
             self._refresh_steps()
             self._refresh_sites()
             self._update_validity_label()
+            self._minor_moves_var.set(False)
+            self._shot_origin_btn.config(state="disabled")
+            self._shot_origin_status_var.set("")
         self._update_default_label()
 
     def _set_default_recipe(self):
@@ -2352,7 +2459,15 @@ class RecipePanel(ttk.Frame):
         cur = self._recipes.get(self._current, {"steps": [], "sites": []})
         rec = {"steps": [dict(s) for s in cur["steps"]],
                "sites": [dict(s) for s in cur.get("sites", [])],
-               "bench": self._active_bench_tag()}
+               "bench": self._active_bench_tag(),
+               # Copies whether the sibling recipe used minor moves, but
+               # NOT its captured shot_origin - that was a physical chuck
+               # position read live for that run, and blindly trusting it
+               # for a new recipe (possibly a different shot layout) would
+               # be exactly the kind of stale-state mistake Set Shot Origin
+               # exists to prevent. The new recipe has to capture its own.
+               "minor_moves": bool(cur.get("minor_moves")),
+               "shot_origin": None}
         self._recipes[name] = rec
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
                 and len(self._recipes) > 1
@@ -2703,7 +2818,9 @@ class RecipePanel(ttk.Frame):
             # every bench regardless of what it was saved with.
             self._recipes = {name: {"steps": [dict(s) for s in rec.get("steps", [])],
                                     "sites": [dict(s) for s in rec.get("sites", [])],
-                                    "bench": rec.get("bench", "")}
+                                    "bench": rec.get("bench", ""),
+                                    "minor_moves": bool(rec.get("minor_moves")),
+                                    "shot_origin": rec.get("shot_origin")}
                               for name, rec in recipes.items()}
             visible = self._visible_recipe_names()
             self._current = visible[0] if visible else next(iter(self._recipes))
@@ -2746,6 +2863,18 @@ class RecipePanel(ttk.Frame):
 
     def get_active_recipe(self) -> str:
         return self._current
+
+    def is_minor_moves(self) -> bool:
+        """Whether the loaded recipe wants shot-aware single-die stepping
+        - see the Recipe tab's Minor Moves checkbox / _build_minor_moves_bar."""
+        rec = self._recipes.get(self._current)
+        return bool(rec and rec.get("minor_moves"))
+
+    def get_shot_origin(self):
+        """The (die_x, die_y) captured by 📍 Set Shot Origin for the loaded
+        recipe, or None if it has not been set yet this session."""
+        rec = self._recipes.get(self._current)
+        return rec.get("shot_origin") if rec else None
 
     def select_recipe(self, name: str) -> bool:
         if name not in self._recipes:

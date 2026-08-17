@@ -28,7 +28,7 @@ from recipe_panel import RecipePanel, load_default_recipe
 from pma_wafer_panel import PmaWaferPanel, merge_with_accretech, centroid_offset
 from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
-from recipe_gen_panel import RecipeGenPanel
+from recipe_gen_panel import RecipeGenPanel, shot_die_rc
 import export_formats as xfmt
 import mdb_export
 import app_settings
@@ -2518,12 +2518,40 @@ class MainLayout(ttk.Frame):
 
     def _exec2_log(self, msg: str):
         ts = time.strftime("%H:%M:%S")
-        self.controller.log(f"{ts}  {msg}")
+        line = f"{ts}  {msg}"
+        try:
+            self.controller.log(line)
+        except (RuntimeError, tk.TclError):
+            # Called from a run thread on every step, so a queued Tcl call
+            # occasionally losing the "main thread is not in main loop"
+            # race (same class of bug fixed in pma_wafer_panel.py's
+            # workbook loader) must not take the run down with it - the
+            # run continues; this one line just goes to stdout instead.
+            print(line)
+
+    def _exec2_minor_moves_active(self) -> bool:
+        """Whether the CURRENTLY LOADED recipe wants shot-aware single-die
+        stepping - see the Recipe tab's Minor Moves checkbox. Read fresh
+        each time rather than cached, since it can change any time the
+        operator picks a different recipe."""
+        rp = getattr(self, "recipe_panel", None)
+        return bool(rp and hasattr(rp, "is_minor_moves") and rp.is_minor_moves())
 
     def _exec2_draw_wafer_map(self, quiet_if_missing: bool = False):
         folder = self._exec2_map_folder
-        filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
-        n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
+        # Minor Moves: the map represents wafer builder SHOTS (several
+        # real dies each), not individual dies read from a CSV - see
+        # RecipeGenPanel.shots_as_die_list(). Accretech only for now (see
+        # the Minor Moves plan) - Electroglas keeps its own PMA-driven
+        # map even once its checkbox exists.
+        if self._system == "accretech" and self._exec2_minor_moves_active():
+            gen = getattr(self, "recipe_gen", None)
+            dies = gen.shots_as_die_list() if gen is not None else []
+            n = self._exec2_wafer_map.load_die_list(dies, label="shots")
+            filename = "(Wafer Builder shots)"
+        else:
+            filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
+            n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
         self._exec2_wafer_map.clear_picks()
         name = os.path.basename(folder)
         self._exec2_map_path_var.set(
@@ -2682,6 +2710,20 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[RUN] es error: {e}")
             threading.Thread(target=_stop_and_clear, daemon=True).start()
 
+    def _exec2_safe_after(self, fn):
+        """self.after(0, fn), swallowing the rare "main thread is not in
+        main loop" RuntimeError a queued Tcl call can raise when called
+        from a run thread (same class of bug fixed in
+        pma_wafer_panel.py's workbook loader). Used in _exec2_finish_run
+        because that is the one cleanup path EVERY run thread's finally
+        block depends on to unlock the UI - losing that race there left a
+        run stuck showing RUNNING forever instead of just losing a log
+        line, which is what happens everywhere else _exec2_log is used."""
+        try:
+            self.after(0, fn)
+        except (RuntimeError, tk.TclError):
+            pass
+
     def _exec2_finish_run(self, token: int, msg: str, color: str):
         if token != self._exec2_run_token:
             # Superseded by a newer run (or an abort) while this thread was
@@ -2691,20 +2733,25 @@ class MainLayout(ttk.Frame):
         finished_mode = self._exec2_run_mode
         self._exec2_running  = False
         self._exec2_run_mode = None
-        self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
-        self.after(0, lambda: self._exec2_test_btn.config(state="normal"))
-        self.after(0, lambda: self.recipe_panel.set_locked(False))
-        self.after(0, lambda: self._exec2_step_var.set("Step: —"))
-        self.after(0, lambda: self._exec2_wafer_map.enable_picking(
+        self._exec2_safe_after(lambda: self._exec2_full_btn.config(state="normal"))
+        self._exec2_safe_after(lambda: self._exec2_test_btn.config(state="normal"))
+        self._exec2_safe_after(lambda: self.recipe_panel.set_locked(False))
+        self._exec2_safe_after(lambda: self._exec2_step_var.set("Step: —"))
+        self._exec2_safe_after(lambda: self._exec2_wafer_map.enable_picking(
             on_change=self._exec2_on_sites_changed))
         if not self._exec2_aborted:
-            self.after(0, lambda: self._exec2_set_state(msg, color))
+            self._exec2_safe_after(lambda: self._exec2_set_state(msg, color))
         if self._exec2_on_run_finished:
-            p, f, total = (self._exec2_pass_var.get(), self._exec2_fail_var.get(),
-                          self._exec2_total_dies)
+            # pass_var/fail_var are Tk vars - read them inside the deferred
+            # call (main thread) rather than here (this thread), same
+            # reasoning as _exec2_safe_after itself.
+            total = self._exec2_total_dies
             aborted = self._exec2_aborted
             hook = self._exec2_on_run_finished
-            self.after(0, lambda: hook(p, f, total, aborted, finished_mode))
+            def _call_hook():
+                hook(self._exec2_pass_var.get(), self._exec2_fail_var.get(),
+                    total, aborted, finished_mode)
+            self._exec2_safe_after(_call_hook)
 
     def _exec2_ensure_separated(self, prober, stb: int, sim: bool):
         if sim or stb != 67:
@@ -2712,8 +2759,9 @@ class MainLayout(ttk.Frame):
         self._exec2_log("[RUN] ⚠ finished chuck UP (STB=67 — contact) >> D  (Separate)")
         prober.z_down()
 
-    def _exec2_zup_measure_zdown(self, sim: bool, prober, die_label: str) -> bool:
-        self.after(0, lambda: self._exec2_step_var.set("Step: Contact"))
+    def _exec2_zup_measure_zdown(self, sim: bool, prober, die_label: str,
+                                 steps: list = None) -> bool:
+        self._exec2_safe_after(lambda: self._exec2_step_var.set("Step: Contact"))
         try:
             self._exec2_log("[RUN] >> Z  (Contact — chuck rises, wafer CONTACTS probe card)")
             if not sim:
@@ -2725,9 +2773,9 @@ class MainLayout(ttk.Frame):
         except Exception as e:
             self._exec2_log(f"[RUN] Touchdown error: {e} — measuring anyway")
 
-        self.after(0, lambda: self._exec2_step_var.set("Step: Testing"))
-        ok = self._exec2_run_steps_once()
-        self.after(0, lambda p=ok, dl=die_label: self._exec2_log(
+        self._exec2_safe_after(lambda: self._exec2_step_var.set("Step: Testing"))
+        ok = self._exec2_run_steps_once(steps)
+        self._exec2_safe_after(lambda p=ok, dl=die_label: self._exec2_log(
             f"[RESULT] {'PASS' if p else 'FAIL'}  {dl}"))
 
         z_down_confirmed = True
@@ -2850,6 +2898,18 @@ class MainLayout(ttk.Frame):
             return
         if not self._exec2_can_start():
             return
+        # Minor Moves: every SHOT currently on the map (see
+        # _exec2_draw_wafer_map), not the prober's own native G/J walk -
+        # each shot then gets its own needed-dies-only visit inside
+        # _exec2_minor_move_thread.
+        if self._system == "accretech" and self._exec2_minor_moves_active():
+            shots = list(self._exec2_wafer_map.dies.keys())
+            if not shots:
+                self._exec2_log("[RUN] Minor Moves: no shots on the map — "
+                                "check the Wafer Builder Shot Map tab.")
+                return
+            self._exec2_start_minor_moves(shots, "Full Die")
+            return
         self._exec2_reset_counts(total_dies=len(self._exec2_wafer_map._last_dies or []))
         self._exec2_running  = True
         self._exec2_aborted  = False
@@ -2939,6 +2999,148 @@ class MainLayout(ttk.Frame):
             else:
                 self._exec2_finish_run(my_token, "FINISHED (Full Die)", "#16a34a")
 
+    def _exec2_start_minor_moves(self, shots: list, mode_label: str):
+        """Shared Full Die / Test Die startup for Minor Moves - `shots` are
+        (row, col) SHOT positions (see _exec2_draw_wafer_map), each visited
+        only at the die(s) the loaded recipe's steps reference by die #.
+        Same button/lock/state bookkeeping _exec2_start_full_die and
+        _exec2_start_test_die already do for the native G/J path.
+
+        Everything Tk-touching (recipe_gen's shot dims/cells, which read
+        Tk StringVars) is resolved HERE, on the main thread, and handed to
+        the worker as plain data - a background thread calling .get() on a
+        Tk variable can raise "main thread is not in main loop" (the same
+        class of bug fixed in pma_wafer_panel.py's workbook loader; see
+        that file's load_workbook_path for the longer explanation)."""
+        origin = self.recipe_panel.get_shot_origin()
+        if origin is None:
+            self._exec2_log("[RUN] Minor Moves: no shot origin set for this "
+                            "recipe — press 📍 Set Shot Origin on the Recipe "
+                            "tab (with the chuck on shot R0C0's die R0C0), "
+                            "then start again.")
+            return
+        gen = getattr(self, "recipe_gen", None)
+        if gen is None:
+            self._exec2_log("[RUN] Minor Moves: the Wafer Builder tab is not available.")
+            return
+        shot_rows, shot_cols = gen._shot_dims()
+        shot_cells = dict(gen._shot_cells)
+
+        self._exec2_reset_counts(total_dies=len(shots))
+        self._exec2_running  = True
+        self._exec2_aborted  = False
+        self._exec2_run_mode = "full" if mode_label == "Full Die" else "test"
+        self._exec2_run_token += 1
+        my_token = self._exec2_run_token
+        self._exec2_full_btn.config(state="disabled")
+        self._exec2_test_btn.config(state="disabled")
+        self.recipe_panel.set_locked(True)
+        self._exec2_wafer_map.enable_picking(0)
+        self.after(0, lambda: self._exec2_set_state(
+            f"RUNNING (Minor Moves — {mode_label})", "#2563eb"))
+        self._exec2_log(f"[RUN] ▶ {mode_label} (Minor Moves) — {len(shots)} shot(s), "
+                        "visiting only the die(s) the recipe references.")
+        self._exec2_lot_thread = threading.Thread(
+            target=self._exec2_minor_move_thread,
+            args=(shots, my_token, origin, shot_rows, shot_cols, shot_cells),
+            daemon=True)
+        self._exec2_lot_thread.start()
+
+    def _exec2_minor_move_thread(self, shots: list, my_token: int, origin: tuple,
+                                 shot_rows: int, shot_cols: int, shot_cells: dict):
+        prober = self.controller.drivers.get("prober")
+        sim = not (prober and prober.inst)
+        error_msg = None
+        origin_x, origin_y = origin
+
+        # Group the loaded steps by the die # they target (default 1, same
+        # fallback _is_measurement_step's callers use elsewhere) - this is
+        # the whole point of Minor Moves: a shot's dies are visited only
+        # for the steps that actually reference them, in one batch per die.
+        steps_by_die: dict = {}
+        for s in self._exec2_steps:
+            try:
+                die_num = int(float(s.get("die") or 1))
+            except (TypeError, ValueError):
+                die_num = 1
+            steps_by_die.setdefault(die_num, []).append(s)
+        needed = sorted(steps_by_die)
+        if not needed:
+            self._exec2_log("[RUN] Minor Moves: the loaded recipe has no steps.")
+            self._exec2_finish_run(my_token, "ERROR: no steps", "#dc2626")
+            return
+
+        try:
+            self._exec2_log("[RUN] >> D  (Separate)")
+            if sim:
+                time.sleep(0.15)
+            else:
+                prober.z_down()
+
+            for shot_row, shot_col in shots:
+                if (not self._exec2_running or self._exec2_aborted
+                        or self._exec2_run_token != my_token):
+                    break
+                shot_ok = True
+                any_die = False
+                for die_num in needed:
+                    if (not self._exec2_running or self._exec2_aborted
+                            or self._exec2_run_token != my_token):
+                        break
+                    rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+                    if rc is None:
+                        self._exec2_log(
+                            f"[RUN] ⚠ Minor Moves: die #{die_num} is not on "
+                            f"shot R{shot_row}C{shot_col} — skipped.")
+                        continue
+                    r, c = rc
+                    die_x = origin_x + shot_col * shot_cols + c
+                    die_y = origin_y + shot_row * shot_rows + r
+                    die_label = (f"shot R{shot_row}C{shot_col} die #{die_num} "
+                                f"(X{die_x:.0f} Y{die_y:.0f})")
+                    self._exec2_safe_after(
+                        lambda d=die_label: self._exec2_die_var.set(f"Die: {d}"))
+                    self._exec2_safe_after(
+                        lambda x=die_x, y=die_y:
+                        self._exec2_xy_var.set(f"X: {x:.0f} die\nY: {y:.0f} die"))
+                    self._exec2_safe_after(
+                        lambda r=shot_row, c=shot_col: self._exec2_highlight_current(r, c))
+                    self._exec2_die_num += 1
+
+                    self._exec2_log(f"[RUN] >> J  (Position die X={die_x:.0f} Y={die_y:.0f})")
+                    if sim:
+                        stb = 66
+                        time.sleep(0.1)
+                    else:
+                        stb = prober.move_to_die_xy(die_x, die_y)
+                    self._exec2_log(f"[RUN] << STB={stb}")
+                    if stb == 81:
+                        self._exec2_log("[RUN] << (wafer end)")
+                        self._exec2_running = False
+                        break
+                    if stb == 90:
+                        self._exec2_log("[RUN] << (probing stop — <STOP> pushed)")
+                        self._exec2_running = False
+                        break
+                    self._exec2_ensure_separated(prober, stb, sim)
+
+                    ok = self._exec2_zup_measure_zdown(
+                        sim, prober, die_label, steps_by_die[die_num])
+                    shot_ok = shot_ok and ok
+                    any_die = True
+                    self._exec2_safe_after(
+                        self._exec2_add_pass if ok else self._exec2_add_fail)
+
+                if any_die:
+                    self._exec2_update_die_color(shot_row, shot_col, shot_ok)
+        except Exception as e:
+            error_msg = str(e)
+            self._exec2_log(f"[RUN] ERROR: {e}")
+        finally:
+            if error_msg:
+                self._exec2_finish_run(my_token, f"ERROR: {error_msg[:60]}", "#dc2626")
+            else:
+                self._exec2_finish_run(my_token, "FINISHED (Minor Moves)", "#16a34a")
 
     def _exec2_on_sites_changed(self, picks):
         self._exec2_sites_var.set(self._exec2_sites_label(picks))
@@ -3466,6 +3668,11 @@ class MainLayout(ttk.Frame):
         if not sites:
             self._exec2_log("[RUN] No dies available to pick test sites from.")
             return
+        # Minor Moves: sites are picked SHOTS (see _exec2_draw_wafer_map),
+        # each visited only at the dies the loaded recipe needs.
+        if self._system == "accretech" and self._exec2_minor_moves_active():
+            self._exec2_start_minor_moves(sites, "Test Die")
+            return
         self._exec2_reset_counts(total_dies=len(sites))
         self._exec2_running  = True
         self._exec2_aborted  = False
@@ -3790,7 +3997,19 @@ class MainLayout(ttk.Frame):
             return drivers.get("switch")
         return drivers.get("relay1") or drivers.get("switch")
 
-    def _exec2_run_steps_once(self) -> bool:
+    def _exec2_run_steps_once(self, steps: list = None) -> bool:
+        """Run the loaded recipe's steps once against wherever the chuck
+        currently sits.
+
+        `steps` defaults to every loaded step (self._exec2_steps) - the
+        normal case. Minor Moves passes a narrower subset (only the
+        step(s) whose Die # field matches whichever die the chuck was
+        just moved to within the current shot - see
+        _exec2_minor_move_thread), so a die that isn't itself a full
+        touchdown still runs exactly the steps meant for it.
+        """
+        if steps is None:
+            steps = self._exec2_steps
         import random
         import re
         switch = self._exec2_switch_driver()
@@ -3840,9 +4059,9 @@ class MainLayout(ttk.Frame):
         last_reading = None
         readings_by_name = {}
 
-        self._exec2_log(f"[MEASURE] One iteration — {len(self._exec2_steps)} step(s)"
+        self._exec2_log(f"[MEASURE] One iteration — {len(steps)} step(s)"
                         + ("  [SIM — no switch matrix connected]" if sim else ""))
-        for i, s in enumerate(self._exec2_steps, 1):
+        for i, s in enumerate(steps, 1):
             # Checked per STEP, not per touchdown: ⏹ Stop means stop, and a
             # shot's recipe is a dozen steps across four dies - finishing it
             # would keep sourcing into the wafer for seconds after the
@@ -4193,7 +4412,7 @@ class MainLayout(ttk.Frame):
                 kids = self._results_tree.get_children()
                 if kids:
                     self._results_tree.see(kids[-1])
-            self.after(0, _ui)
+            self._exec2_safe_after(_ui)
 
     def clear_results(self):
         self.controller.results_data.clear()

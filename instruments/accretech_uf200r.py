@@ -84,6 +84,25 @@ class AccretechUF200R(GPIBInstrument):
     def get_xy_position(self) -> str:
         return self.query("Q") or ""
 
+    def get_die_position(self) -> tuple:
+        """Current die coordinate as (x, y), parsed from Q ("YnnnXnnn").
+
+        Same regex instrument_panel.py's _parse_q_response uses for this
+        exact response - kept here too (rather than imported) so this
+        driver has no dependency on gui/, and so a caller (e.g. the Recipe
+        tab's minor-moves origin capture) does not have to know the wire
+        format at all.
+        """
+        import re
+        raw = (self.get_xy_position() or "").strip()
+        m = re.search(r'Y\s*([+-]?\d+)\s*X\s*([+-]?\d+)', raw)
+        if m:
+            return float(m.group(2)), float(m.group(1))
+        parts = re.findall(r'[+-]?\d+\.?\d*', raw)
+        if len(parts) >= 2:
+            return float(parts[1]), float(parts[0])
+        raise ValueError(f"Cannot parse Q response: {raw!r}")
+
     def get_xy_absolute(self) -> str:
         return self.query("R") or ""
 
