@@ -1476,7 +1476,15 @@ class MainLayout(ttk.Frame):
             except Exception as exc:
                 self._exec2_log(f"[RUN] Could not reset the Run tab for the new "
                                 f"ATA folder: {type(exc).__name__}: {exc}")
-        self._exec2_autoload_default_recipe(folder_path)
+        # NOT here yet - _exec2_autoload_default_recipe (moved below,
+        # after the new wafer map is actually drawn) selects the recipe's
+        # touchdowns via self._exec2_wafer_map.set_picked(), which needs
+        # self._exec2_wafer_map.dies to already be this folder's dies. This
+        # early in the method it is still the PREVIOUS folder's (or empty on
+        # the very first load), so the picks it set matched nothing - and
+        # either way clear_picks()/_on_sites_changed([]) below wiped them a
+        # few lines later regardless. That is why the highlight sometimes
+        # would not show up right after an autoload.
 
         all_files = {f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))}
 
@@ -1564,6 +1572,22 @@ class MainLayout(ttk.Frame):
                 pma_process.scan_ata_folder()
             except Exception:
                 pass
+
+        # Now that the map actually holds this folder's dies (and the picks
+        # from the previous folder are cleared), the default recipe's
+        # touchdowns can be selected and will actually paint. This also has
+        # to be AFTER pma_process.scan_ata_folder() above, not just after
+        # the map draw: _exec2_apply_recipe_sites expands each selected site
+        # into its WHOLE shot via eg_pma_run._seq_at_rc/_cells, and those are
+        # only populated once eg_pma_run has adopted a recipe and built its
+        # row/col index (_build_rc_index, via scan_ata_folder's own PMA
+        # autoload -> adopt_from_process). Selecting sites before that index
+        # exists does not fail loudly - _exec2_touchdown_cells falls back to
+        # the raw (row, col) picks with no shot expansion - so only the
+        # anchor die of each shot got selected, not the whole quad. A manual
+        # reselect from the Recipe dropdown later worked fine because by then
+        # the index was already built, which made this look intermittent.
+        self._exec2_autoload_default_recipe(folder_path)
 
         nanoz = getattr(self, "nanoz_panel", None)
         if nanoz is not None:

@@ -1294,9 +1294,19 @@ class RecipeGenPanel(ttk.Frame):
         """Called when the ATA folder loads/changes. Prefers the folder's
         explicit default (set via the Set Default button); falls back to a
         map named "Autoload", or the single map present if there is only
-        one, so older folders that predate Set Default keep working. Silent
-        no-op for zero or multiple ambiguous candidates with no default set
-        - left to the Load dropdown in that case."""
+        one, so older folders that predate Set Default keep working. Zero or
+        multiple ambiguous candidates with no default set leaves this tab
+        blank - left to the Load dropdown in that case.
+
+        Always starts blank (below), regardless of which branch this ends up
+        taking: a folder switch must never leave the PREVIOUS folder's map on
+        screen just because the new one doesn't have an unambiguous one of
+        its own - a brand new ATA folder used to keep showing whatever map
+        was loaded before it, with nothing on this tab suggesting it was
+        stale.
+        """
+        self.map_name_var.set("")
+        self._state_from_dict({})
         d = os.path.join(folder, "wafer_builder_maps")
         if not os.path.isdir(d):
             return

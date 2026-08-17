@@ -303,7 +303,7 @@ REQUIRED PROBER-SIDE SETTINGS for any of this to work (same source):
 Until the prober's I/O port is configured and brought ON LINE, its software
 does not service the GPIB bus at all: the interface chip still answers
 listener-detect and serial polls, but every command byte is refused at the
-handshake. See references/probe_2001x.py, which measures exactly that.
+handshake.
 """
 
 import datetime

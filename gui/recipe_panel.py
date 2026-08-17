@@ -1252,10 +1252,6 @@ class RecipePanel(ttk.Frame):
                                     postcommand=lambda: self._refresh_pin_values(self._los_cb))
         self._los_cb.grid(row=5, column=3, sticky="w")
         self._sense_widgets = [self._his_cb, self._los_cb]
-        self._sense_note = ttk.Label(
-            editor, text="4-wire only — HI/LO source the current, Sense HI/LO read the pad",
-            foreground="#6b7280")
-        self._sense_note.grid(row=5, column=4, columnspan=4, sticky="w", padx=(6, 0))
 
         _lbl(2, 0, "Level:")
         self._level_ent = ttk.Entry(editor, textvariable=self._ed_vars["level"], width=9)
@@ -1303,9 +1299,6 @@ class RecipePanel(ttk.Frame):
             variable=self._direct_var, command=self._on_route_toggle)
         self._direct_chk.grid(row=6, column=0, columnspan=4, sticky="w",
                               padx=(6, 2), pady=(2, 0))
-        self._direct_hint = ttk.Label(
-            editor, text="", foreground="#6b7280", font=("Arial", 8))
-        self._direct_hint.grid(row=6, column=4, columnspan=4, sticky="w")
         _lbl(4, 6, "Die #:")
         # Which die of the shot this measurement belongs to (Wafer Builder
         # Shot tab's die order, 1-based) - what the Results tab uses to
@@ -1375,12 +1368,10 @@ class RecipePanel(ttk.Frame):
         # cannot leave orphaned sense pins behind.
         if t == FOUR_WIRE_TYPE:
             _set(self._sense_widgets, "normal")
-            self._sense_note.config(foreground="#6b7280")
         else:
             _set(self._sense_widgets, "disabled")
             self._ed_vars["his"].set("")
             self._ed_vars["los"].set("")
-            self._sense_note.config(foreground="#cbd5e1")
         self._target_cb.config(state="disabled")
         self._limit_ent.config(state="disabled")
         self._shape_cb.config(state="disabled")
@@ -1401,7 +1392,6 @@ class RecipePanel(ttk.Frame):
             self._route_defaulted_for = None
             self._direct_var.set(False)
             self._direct_chk.config(state="disabled")
-            self._direct_hint.config(text="")
         else:
             self._direct_chk.config(state="normal")
 
@@ -1558,10 +1548,6 @@ class RecipePanel(ttk.Frame):
                     w.config(state="disabled")
                 except tk.TclError:
                     pass
-        self._direct_hint.config(
-            text=("cable the instrument to the probe card yourself — "
-                  "pins and channels do not apply")
-            if direct else "")
         for btn in (getattr(self, "_btn_conn", None),):
             if btn is not None:
                 btn.config(state="disabled" if direct else "normal")

@@ -274,10 +274,10 @@ class EgPmaRunPanel(ttk.Frame):
         ttk.Label(bar, textvariable=self._table_count_var, foreground="#6b7280",
                   font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
 
-        cols = ("seq", "quad", "run", "step", "devices")
+        cols = ("seq", "grid", "run", "step", "devices")
         self._tree = ttk.Treeview(lf, columns=cols, show="headings", height=10)
         for col, head, width, stretch in (("seq", "#", 46, False),
-                                          ("quad", "quad x,y", 74, False),
+                                          ("grid", "grid x,y", 74, False),
                                           ("run", "run", 40, False),
                                           ("step", "MD", 64, False),
                                           ("devices", "devices", 260, True)):
@@ -367,7 +367,7 @@ class EgPmaRunPanel(ttk.Frame):
         # being that list: it is now an ORDER over it, applied by
         # _enabled_indices. Keyed on quad coordinates rather than seq, because
         # the workbook and the .PMA number their shots independently.
-        self._pma_order_keys = [self._quad(t) for t in touchdowns]
+        self._pma_order_keys = [self._grid_xy(t) for t in touchdowns]
         self._touchdowns = self._map_source_touchdowns()
         self._index = None
         self._anchored = False
@@ -426,9 +426,9 @@ class EgPmaRunPanel(ttk.Frame):
     def _fill_info(self):
         f, dx, dy = self._fields, *self._die_um
         n = len(self._touchdowns)
-        align = self._align_quad()
+        align = self._align_grid_xy()
         lines = [
-            f"die size (quad pitch)  {dx:.0f} x {dy:.0f} um   "
+            f"die size (grid pitch)  {dx:.0f} x {dy:.0f} um   "
             f"= {dx / 1000:.3f} x {dy / 1000:.3f} mm",
             f"touchdowns this run    {len(self._enabled_indices())}",
         ]
@@ -436,7 +436,7 @@ class EgPmaRunPanel(ttk.Frame):
             lines.append(f"wafer positions        {n}  (the chuck can be set "
                          "to, or moved to, any of them)")
         if align:
-            lines.append(f"align site             quad ({align[0]:.0f},{align[1]:.0f})")
+            lines.append(f"align site             grid ({align[0]:.0f},{align[1]:.0f})")
         n_minor = int(f.get("CountMovesMinor") or 1)
         lines.append(
             f"structure              {f.get('CountMovesMajor', '?')} major"
@@ -453,11 +453,14 @@ class EgPmaRunPanel(ttk.Frame):
         return align_site_info(self._fields, self._touchdowns,
                                self._align_die_from_wafer_tab() or "")
 
-    def _align_quad(self):
-        """Quad coords of the align site, from the ...FromAlignSite fields."""
+    def _align_grid_xy(self):
+        """Die-grid coords of the align site, from the ...FromAlignSite fields."""
         return self._align_info()["quad"]
 
-    def _quad(self, t) -> tuple:
+    def _grid_xy(self, t) -> tuple:
+        """This touchdown's position in die-grid units (die-pitch steps from
+        the origin) - not specific to a 2x2 shot. A single-die probe card's
+        touchdowns get exactly the same coordinate, one die-grid step each."""
         return (round(t["x"] / self._die_um[0]), round(t["y"] / self._die_um[1]))
 
     def _align_index(self):
@@ -525,7 +528,7 @@ class EgPmaRunPanel(ttk.Frame):
         prev = None
         for i in run_order:
             t = self._touchdowns[i]
-            qx, qy = self._quad(t)
+            qx, qy = self._grid_xy(t)
             step = "start" if prev is None else \
                 f"{qx - prev[0]:+d},{qy - prev[1]:+d}"
             self._tree.insert("", "end", iid=str(i),
@@ -537,7 +540,7 @@ class EgPmaRunPanel(ttk.Frame):
             for i, t in enumerate(self._touchdowns):
                 if i in in_run:
                     continue
-                qx, qy = self._quad(t)
+                qx, qy = self._grid_xy(t)
                 self._tree.insert("", "end", iid=str(i), tags=("offrun",),
                                   values=(t["seq"], f"{qx},{qy}", "", "",
                                           t["device_id"]))
@@ -618,8 +621,8 @@ class EgPmaRunPanel(ttk.Frame):
         self._anchored = True
         self._um_residual = [0.0, 0.0]
         t = self._touchdowns[idx]
-        qx, qy = self._quad(t)
-        self._anchor_state_var.set(f"anchored at #{t['seq']} quad ({qx},{qy}) — "
+        qx, qy = self._grid_xy(t)
+        self._anchor_state_var.set(f"anchored at #{t['seq']} grid ({qx},{qy}) — "
                                    f"{t['device_id']}")
         self._mark_current()
         self._refresh_position()
@@ -634,7 +637,7 @@ class EgPmaRunPanel(ttk.Frame):
                 wmap.canvas.update_idletasks()
         except Exception:
             pass
-        self._log(f"[PMA] Anchored at #{t['seq']} {t['device_id']} quad ({qx},{qy})")
+        self._log(f"[PMA] Anchored at #{t['seq']} {t['device_id']} grid ({qx},{qy})")
 
     def _mark_current(self):
         run_order = self._enabled_indices()
@@ -663,8 +666,8 @@ class EgPmaRunPanel(ttk.Frame):
             self._mark_on_wafer_map(None)
             return
         t = self._touchdowns[self._index]
-        qx, qy = self._quad(t)
-        self._pos_var.set(f"#{t['seq']}/{len(self._touchdowns)}  quad ({qx},{qy})  "
+        qx, qy = self._grid_xy(t)
+        self._pos_var.set(f"#{t['seq']}/{len(self._touchdowns)}  grid ({qx},{qy})  "
                           f"{t['device_id']}")
         self._mark_on_wafer_map(t)
         self._highlight(self._index)
@@ -1228,7 +1231,7 @@ class EgPmaRunPanel(ttk.Frame):
         order would abandon the route the .PMA lays out. This maps the .PMA's
         sequence onto the position list by quad coordinate.
         """
-        index_of = {self._quad(t): i for i, t in enumerate(self._touchdowns)}
+        index_of = {self._grid_xy(t): i for i, t in enumerate(self._touchdowns)}
         return [index_of[k] for k in getattr(self, "_pma_order_keys", [])
                 if k in index_of]
 
@@ -1637,8 +1640,8 @@ class EgPmaRunPanel(ttk.Frame):
             return False
         i = self._index
         cur, nxt = self._touchdowns[i], self._touchdowns[target]
-        cx, cy = self._quad(cur)
-        nx, ny = self._quad(nxt)
+        cx, cy = self._grid_xy(cur)
+        nx, ny = self._grid_xy(nxt)
         dx, dy = nx - cx, ny - cy
         if (dx, dy) == (0, 0):
             self._index = target
@@ -1684,11 +1687,11 @@ class EgPmaRunPanel(ttk.Frame):
         self._index = target
         self._ui(lambda: (self._mark_current(), self._refresh_position()))
         self._ui(lambda: self._log(
-            f"[PMA] #{nxt['seq']} MD {dx:+d},{dy:+d} -> quad ({nx},{ny})  "
+            f"[PMA] #{nxt['seq']} MD {dx:+d},{dy:+d} -> grid ({nx},{ny})  "
             f"{nxt['device_id']}"))
         return True
 
-    def _move_um(self, drv, cur, nxt, target, quad) -> bool:
+    def _move_um(self, drv, cur, nxt, target, grid_xy) -> bool:
         """Relative MICRON move (MM), the way the original LaMP exe worked.
 
         The recipe's own coordinates are microns, so the delta between two
@@ -1739,7 +1742,7 @@ class EgPmaRunPanel(ttk.Frame):
         note = ""
         if before is not None and after is not None:
             got = (after[0] - before[0], after[1] - before[1])
-            dxq, dyq = quad[0] - self._quad(cur)[0], quad[1] - self._quad(cur)[1]
+            dxq, dyq = grid_xy[0] - self._grid_xy(cur)[0], grid_xy[1] - self._grid_xy(cur)[1]
             if got != (dxq, dyq):
                 note = (f"   [?P moved ({got[0]:+d},{got[1]:+d}) dies, recipe step "
                         f"is ({dxq:+d},{dyq:+d}) — the prober's die size differs "
@@ -1753,8 +1756,8 @@ class EgPmaRunPanel(ttk.Frame):
         self._index = target
         self._ui(lambda: (self._mark_current(), self._refresh_position()))
         self._ui(lambda: self._log(
-            f"[PMA] #{nxt['seq']} MM {dx_um:+d},{dy_um:+d} um -> quad "
-            f"({quad[0]},{quad[1]})  {nxt['device_id']}{note}"))
+            f"[PMA] #{nxt['seq']} MM {dx_um:+d},{dy_um:+d} um -> grid "
+            f"({grid_xy[0]},{grid_xy[1]})  {nxt['device_id']}{note}"))
         return True
 
     def _on_motion_mode(self):
@@ -1790,7 +1793,7 @@ class EgPmaRunPanel(ttk.Frame):
             self.update_selection_window()
             return
         t = self._touchdowns[index]
-        qx, qy = self._quad(t)
+        qx, qy = self._grid_xy(t)
         dies = [d for d in t["devices"] if d.strip().upper() != "NA"]
         na = len(t["devices"]) - len(dies)
         detail = format_quad(t["device_id"], *self.shot_layout())
@@ -1804,7 +1807,7 @@ class EgPmaRunPanel(ttk.Frame):
                       f"({corner}) — touchdown #{t['seq']}\n")
         self._sel_var.set(
             f"{picked}"
-            f"#{t['seq']}  quad ({qx},{qy})   {len(dies)} die"
+            f"#{t['seq']}  grid ({qx},{qy})   {len(dies)} die"
             f"{'' if len(dies) == 1 else 's'}"
             f"{f', {na} empty' if na else ''}\n"
             f"  {detail}\n"
@@ -1823,8 +1826,8 @@ class EgPmaRunPanel(ttk.Frame):
         target = self._selected
         t = self._touchdowns[target]
         cur = self._touchdowns[self._index]
-        cx, cy = self._quad(cur)
-        nx, ny = self._quad(t)
+        cx, cy = self._grid_xy(cur)
+        nx, ny = self._grid_xy(t)
         if not messagebox.askokcancel(
                 "Move", f"Move from #{cur['seq']} to #{t['seq']}?\n\n"
                         f"MD {nx - cx:+d},{ny - cy:+d} die steps\n"

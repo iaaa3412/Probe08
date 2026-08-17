@@ -21,24 +21,17 @@ class PmaProcessPanel(ttk.Frame):
         self._pma_choices = []
         self._xls_choices = []
 
-        self.operator_var = tk.StringVar()
-        self.process_step_var = tk.StringVar()
         self.recipe_name_var = tk.StringVar()
-        self.prober_name_var = tk.StringVar(value="Electroglas 2001CXE")
-        self.wafer_size_var = tk.StringVar()
         self._production_die_var = tk.StringVar(value="—")
-        self.test_die_var = tk.StringVar(value="—")
         self._pma_picker_var = tk.StringVar()
         self._xls_picker_var = tk.StringVar()
 
-        self.rowconfigure(5, weight=1)
+        self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
 
         self._build_toolbar()
         self._build_source_picker()
-        self._build_run_setup()
-        self._build_wafer_info()
-        self._build_align_site()
+        self._build_info_section()
         self._build_body()
 
     def _log(self, msg: str):
@@ -96,81 +89,71 @@ class PmaProcessPanel(ttk.Frame):
         ttk.Button(bar, text="⭐ Set Both as Default",
                    command=self._set_defaults).pack(side="left")
 
-        self._defaults_lbl = ttk.Label(bar, text="", foreground="#6b7280")
-        self._defaults_lbl.pack(side="left", padx=(12, 0))
-        self._update_defaults_label()
-
-    def _build_run_setup(self):
-        lf = ttk.LabelFrame(self, text="Run Setup", padding=8)
+    def _build_info_section(self):
+        """One read-only table for everything that used to be spread over
+        three separate LabelFrames (Run Setup, Wafer Info, Align Site) - the
+        operator never typed into any of those that actually did anything
+        (Operator/Process Step/Prober Name/Wafer Size/Test Die # were never
+        read by anything downstream; Lot ID/Wafer ID are the real toolbar
+        StringVars, editable there, not here), so there was no reason for
+        this tab to offer its own copy of edit boxes. This just shows what
+        LOAD ALL/the .PMA/the recipe generator actually produced."""
+        lf = ttk.LabelFrame(self, text="Wafer / Run Info", padding=6)
         lf.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 4))
-        for i in range(6):
-            lf.columnconfigure(i, weight=1)
+        lf.columnconfigure(0, weight=1)
 
-        fields = (
-            ("Lot ID:", self._main_layout.lot_id),
-            ("Wafer ID:", self._main_layout.wafer_id_var),
-            ("Operator:", self.operator_var),
-            ("Process Step:", self.process_step_var),
-            ("Recipe Name:", self.recipe_name_var),
-            ("Prober Name:", self.prober_name_var),
-        )
-        for col, (label, var) in enumerate(fields):
-            ttk.Label(lf, text=label).grid(row=0, column=col, sticky="w", padx=(0, 6))
-            ttk.Entry(lf, textvariable=var, width=16).grid(
-                row=1, column=col, sticky="ew", padx=(0, 6))
+        self._info_tree = ttk.Treeview(
+            lf, columns=("field", "value"), show="headings", height=8,
+            selectmode="none")
+        self._info_tree.heading("field", text="Field")
+        self._info_tree.heading("value", text="Value")
+        self._info_tree.column("field", width=200, anchor="w")
+        self._info_tree.column("value", width=460, anchor="w")
+        self._info_tree.grid(row=0, column=0, sticky="ew")
+        self._info_tree.tag_configure("mismatch", foreground="#b91c1c")
+        self._info_tree.tag_configure("normal", foreground="#111827")
 
-    def _build_wafer_info(self):
-        lf = ttk.LabelFrame(self, text="Wafer Info", padding=8)
-        lf.grid(row=3, column=0, sticky="ew", padx=6, pady=(0, 4))
+        self._info_rows = {}
+        for key, label in (
+            ("lot_id", "Lot ID"),
+            ("wafer_id", "Wafer ID"),
+            ("recipe_name", "Recipe Name (matched)"),
+            ("touchdowns", "Touchdowns"),
+            ("align_die", "Align Die (Recipe Gen)"),
+            ("align_td", "Touchdown at Align Site"),
+            ("align_offset", "Offset to First Touchdown"),
+            ("align_source", "Align Source"),
+        ):
+            self._info_rows[key] = self._info_tree.insert(
+                "", "end", values=(label, "—"), tags=("normal",))
 
-        ttk.Label(lf, text="Wafer Size:").pack(side="left")
-        ttk.Entry(lf, textvariable=self.wafer_size_var, width=10).pack(
-            side="left", padx=(4, 16))
+        self._set_info("lot_id", self._main_layout.lot_id.get() or "—")
+        self._set_info("wafer_id", self._main_layout.wafer_id_var.get() or "—")
+        self._main_layout.lot_id.trace_add(
+            "write", lambda *a: self._set_info(
+                "lot_id", self._main_layout.lot_id.get() or "—"))
+        self._main_layout.wafer_id_var.trace_add(
+            "write", lambda *a: self._set_info(
+                "wafer_id", self._main_layout.wafer_id_var.get() or "—"))
+        self.recipe_name_var.trace_add(
+            "write", lambda *a: self._set_info(
+                "recipe_name", self.recipe_name_var.get() or "—"))
+        self._production_die_var.trace_add(
+            "write", lambda *a: self._set_info(
+                "touchdowns", self._production_die_var.get()))
 
-        ttk.Label(lf, text="Production Die #:").pack(side="left")
-        ttk.Label(lf, textvariable=self._production_die_var,
-                 font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 16))
-
-        ttk.Label(lf, text="Test Die #:").pack(side="left")
-        ttk.Entry(lf, textvariable=self.test_die_var, width=8).pack(
-            side="left", padx=(4, 0))
-
-        ttk.Label(lf, text="(full wafer map now shown on the PMA Wafer tab)",
-                 foreground="gray").pack(side="left", padx=(16, 0))
-
-    def _build_align_site(self):
-        lf = ttk.LabelFrame(self, text="Align Site", padding=8)
-        lf.grid(row=4, column=0, sticky="ew", padx=6, pady=(0, 4))
-        lf.columnconfigure(1, weight=1)
-
-        self._align_die_var = tk.StringVar(value="—")
-        self._align_td_var = tk.StringVar(value="—")
-        self._align_offset_var = tk.StringVar(value="—")
-        self._align_source_var = tk.StringVar(
-            value="Load a .PMA file (and a recipe generator .xls for the die ID).")
-
-        rows = (
-            ("Align die (Recipe Gen):", self._align_die_var),
-            ("Touchdown at align site:", self._align_td_var),
-            ("Offset to first touchdown:", self._align_offset_var),
-        )
-        for r, (label, var) in enumerate(rows):
-            ttk.Label(lf, text=label).grid(row=r, column=0, sticky="w", padx=(0, 8))
-            ttk.Label(lf, textvariable=var, font=("Segoe UI", 9, "bold")).grid(
-                row=r, column=1, sticky="w")
-
-        self._align_source_lbl = ttk.Label(
-            lf, textvariable=self._align_source_var, foreground="#6b7280")
-        self._align_source_lbl.grid(row=3, column=0, columnspan=2, sticky="w",
-                                    pady=(4, 0))
-        ttk.Button(lf, text="↻ Refresh", command=self.refresh_align_site).grid(
-            row=0, column=2, rowspan=2, sticky="e", padx=(12, 0))
+    def _set_info(self, key: str, value: str, tag: str = "normal"):
+        iid = self._info_rows.get(key)
+        if iid is None:
+            return
+        self._info_tree.set(iid, "value", value)
+        self._info_tree.item(iid, tags=(tag,))
 
     def _workbook_align_die(self) -> str:
         """The 'Align Die' cell from the recipe-generator workbook, if loaded.
 
         The workbook lives on the PMA Wafer tab, so it may be loaded before or
-        after the .PMA - hence the Refresh button and the re-read on load.
+        after the .PMA - hence the re-read in refresh_align_site() on load.
         """
         wafer = getattr(self._main_layout, "pma_wafer", None)
         if wafer is None:
@@ -185,65 +168,65 @@ class PmaProcessPanel(ttk.Frame):
 
     def refresh_align_site(self):
         if not self._fields:
-            self._align_die_var.set("—")
-            self._align_td_var.set("—")
-            self._align_offset_var.set("—")
-            self._align_source_var.set(
-                "Load a .PMA file (and a recipe generator .xls for the die ID).")
-            self._align_source_lbl.config(foreground="#6b7280")
+            self._set_info("align_die", "—")
+            self._set_info("align_td", "—")
+            self._set_info("align_offset", "—")
+            self._set_info("align_source",
+                           "Load a .PMA file (and a recipe generator .xls "
+                           "for the die ID).")
             return
 
         align_die = self._workbook_align_die()
         info = egpma.align_site_info(self._fields, self._touchdowns, align_die)
 
-        self._align_die_var.set(
-            egpma.format_quad(align_die) if info["die_ids"]
-            else "— (no recipe generator .xls loaded)")
+        self._set_info("align_die",
+                       egpma.format_quad(align_die) if info["die_ids"]
+                       else "— (no recipe generator .xls loaded)")
 
         td = info["touchdown"]
         if td is not None:
-            # The touchdown's OWN quad, not the PMA-derived one - on a mismatch
-            # those differ, and showing the derived one next to the workbook's
-            # die would be actively misleading.
-            quad = ""
+            # The touchdown's OWN grid position, not the PMA-derived one - on
+            # a mismatch those differ, and showing the derived one next to
+            # the workbook's die would be actively misleading.
+            grid_xy = ""
             try:
-                quad = (f"   quad ({td['x'] / float(self._fields['DieSizeX']):.0f},"
-                        f"{td['y'] / float(self._fields['DieSizeY']):.0f})")
+                grid_xy = (f"   grid ({td['x'] / float(self._fields['DieSizeX']):.0f},"
+                          f"{td['y'] / float(self._fields['DieSizeY']):.0f})")
             except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 pass
-            self._align_td_var.set(
-                f"#{td['seq']}  {egpma.format_quad(td['device_id'])}{quad}")
+            self._set_info("align_td",
+                           f"#{td['seq']}  {egpma.format_quad(td['device_id'])}{grid_xy}")
         elif info["quad"] is not None:
-            self._align_td_var.set(
-                f"quad ({info['quad'][0]:.0f},{info['quad'][1]:.0f}) "
-                f"— no touchdown probes the align site")
+            self._set_info("align_td",
+                           f"grid ({info['quad'][0]:.0f},{info['quad'][1]:.0f}) "
+                           f"— no touchdown probes the align site")
         else:
-            self._align_td_var.set("— (PMA has no align-site offset)")
+            self._set_info("align_td", "— (PMA has no align-site offset)")
 
         if info["offset_um"]:
             ox, oy = info["offset_um"]
-            self._align_offset_var.set(
-                f"X {egpma.fmt_num(ox)} um, Y {egpma.fmt_num(oy)} um")
+            self._set_info("align_offset",
+                           f"X {egpma.fmt_num(ox)} um, Y {egpma.fmt_num(oy)} um")
         else:
-            self._align_offset_var.set("—")
+            self._set_info("align_offset", "—")
 
         if info["agree"] is False:
-            self._align_source_var.set(
+            self._set_info(
+                "align_source",
                 f"MISMATCH: the workbook names #{info['named_touchdown']['seq']} "
                 f"but the PMA offset points at #{info['quad_touchdown']['seq']} — "
-                f"using the workbook.")
-            self._align_source_lbl.config(foreground="#b91c1c")
+                f"using the workbook.", tag="mismatch")
         else:
             note = "  (both sources agree)" if info["agree"] else ""
-            self._align_source_var.set(
+            self._set_info(
+                "align_source",
                 f"Source: {info['source'] or 'unknown'}{note}   "
                 f"— the operator aligns and lands the chuck here; the Run tab "
                 f"anchors from it.")
-            self._align_source_lbl.config(foreground="#6b7280")
 
     def _build_body(self):
         split = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
-        split.grid(row=5, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        split.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
 
         fields_lf = ttk.LabelFrame(split, text="Parsed PMA Fields", width=320)
         split.add(fields_lf, weight=0)
@@ -277,10 +260,6 @@ class PmaProcessPanel(ttk.Frame):
         self._move_tree.configure(yscrollcommand=vsb2.set)
         vsb2.pack(side="right", fill="y")
         self._move_tree.pack(fill="both", expand=True, padx=(4, 0), pady=4)
-
-        self._summary_var = tk.StringVar(value="Load a .PMA file to begin.")
-        ttk.Label(self, textvariable=self._summary_var, foreground="#374151").grid(
-            row=6, column=0, sticky="w", padx=8, pady=(0, 6))
 
     def _pma_source_dir(self) -> str:
         folder = getattr(self._main_layout, "_ata_folder", "")
@@ -333,15 +312,6 @@ class PmaProcessPanel(ttk.Frame):
         except OSError as exc:
             self._log(f"[PMA] Could not save default source selection: {exc}")
 
-    def _update_defaults_label(self):
-        defaults = self._load_defaults()
-        parts = []
-        if defaults.get("pma"):
-            parts.append(f"PMA default: {defaults['pma']}")
-        if defaults.get("xls"):
-            parts.append(f"Recipe Gen default: {defaults['xls']}")
-        self._defaults_lbl.config(text="   |   ".join(parts))
-
     def _set_defaults(self):
         """Default the PMA and the workbook together, as one pairing."""
         pma, xls = self._pma_picker_var.get(), self._xls_picker_var.get()
@@ -358,7 +328,6 @@ class PmaProcessPanel(ttk.Frame):
         defaults = self._load_defaults()
         defaults["pma"], defaults["xls"] = pma, xls
         self._save_defaults(defaults)
-        self._update_defaults_label()
         self._log(f"[PMA] Default set to PMA '{pma or '—'}' + recipe generator "
                   f"'{xls or '—'}' — both auto-load whenever this ATA folder "
                   "is opened.")
@@ -398,7 +367,6 @@ class PmaProcessPanel(ttk.Frame):
                           f"in {PMA_SOURCE_SUBDIR}\\ — pick one from the Recipe "
                           "Generator dropdown (or ⭐ Set Default to auto-load it next time).")
 
-        self._update_defaults_label()
 
     def _copy_if_missing(self, src: str, dest_dir: str) -> str:
         if not os.path.isfile(src):
@@ -475,7 +443,6 @@ class PmaProcessPanel(ttk.Frame):
         self._log(f"[PMA] Deleted {name} from {PMA_SOURCE_SUBDIR}\\")
         self._refresh_pickers()
         self._pma_picker_var.set("")
-        self._update_defaults_label()
 
     def _delete_xls(self):
         name = self._xls_picker_var.get()
@@ -504,7 +471,6 @@ class PmaProcessPanel(ttk.Frame):
         self._log(f"[PMA] Deleted {name} from {PMA_SOURCE_SUBDIR}\\")
         self._refresh_pickers()
         self._xls_picker_var.set("")
-        self._update_defaults_label()
 
     def _clear_pma(self):
         self._pma_path = ""
@@ -513,8 +479,10 @@ class PmaProcessPanel(ttk.Frame):
         self._move_list = []
         self._fields_tree.delete(*self._fields_tree.get_children())
         self._move_tree.delete(*self._move_tree.get_children())
-        self._summary_var.set("Load a .PMA file to begin.")
         self._path_lbl.config(text="No PMA file loaded", foreground="gray")
+        self._production_die_var.set("—")
+        self.recipe_name_var.set("")
+        self.refresh_align_site()
         pma_wafer = getattr(self._main_layout, "pma_wafer", None)
         if pma_wafer is not None:
             pma_wafer.clear_pma_source()
@@ -833,7 +801,6 @@ class PmaProcessPanel(ttk.Frame):
         self._touchdowns = touchdowns
 
         self._production_die_var.set(str(len(touchdowns)))
-        self.test_die_var.set(str(len(touchdowns)))
 
         pma_wafer = getattr(self._main_layout, "pma_wafer", None)
         if pma_wafer is not None and touchdowns:
@@ -910,9 +877,5 @@ class PmaProcessPanel(ttk.Frame):
         elif move_list:
             move_note = " — select/create a probe card first to save the move list"
 
-        self._summary_var.set(
-            f"{len(touchdowns)} touchdown(s), {len(move_list)} move(s) parsed from "
-            f"{os.path.basename(path)}{saved_note}{recipe_note}{move_note} — "
-            "see PMA Wafer tab for the map")
         self._log(f"[PMA] Loaded {path}: {len(touchdowns)} touchdown(s), "
                   f"{len(move_list)} move(s){saved_note}{recipe_note}{move_note}")

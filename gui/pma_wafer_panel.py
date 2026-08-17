@@ -4,6 +4,7 @@ import bisect
 import csv
 import math
 import os
+import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -910,14 +911,39 @@ class PmaWaferPanel(ttk.Frame):
     def load_workbook_path(self, path: str):
         self.path_var.set(f"Loading {os.path.basename(path)} …")
         self._log(f"[PMA] Opening legacy recipe workbook {path}")
-        threading.Thread(target=self._load_worker, args=(path,), daemon=True).start()
+        result_q: "queue.Queue" = queue.Queue()
+        threading.Thread(target=self._load_worker, args=(path, result_q),
+                         daemon=True).start()
+        # Polling started here, from the caller's own (main) thread, rather
+        # than the worker calling self.after() itself once done. This panel's
+        # own autoload (ATA folder -> pma_process.scan_ata_folder() ->
+        # here) runs during AtomicaDashboard.__init__(), before app.mainloop()
+        # is ever called - a worker finishing fast enough to call self.after()
+        # from ITS thread before mainloop starts raised "RuntimeError: main
+        # thread is not in main loop", straight into _load_failed() below as
+        # a "Could not load workbook" popup with that message. Scheduling the
+        # poll from the main thread has no such race: self.after() queuing a
+        # callback on the thread that owns the Tcl interpreter is always
+        # safe, mainloop running or not - it just waits to fire.
+        self._poll_load_result(result_q)
 
-    def _load_worker(self, path: str):
+    def _load_worker(self, path: str, result_q: "queue.Queue"):
+        # Pure computation only - no Tk calls here. See load_workbook_path().
         try:
-            data = parse_legacy_workbook(path)
-            self.after(0, lambda: self._after_load(data))
+            result_q.put(("ok", parse_legacy_workbook(path)))
         except Exception as exc:
-            self.after(0, lambda e=exc: self._load_failed(e))
+            result_q.put(("error", exc))
+
+    def _poll_load_result(self, result_q: "queue.Queue"):
+        try:
+            kind, payload = result_q.get_nowait()
+        except queue.Empty:
+            self.after(50, lambda: self._poll_load_result(result_q))
+            return
+        if kind == "ok":
+            self._after_load(payload)
+        else:
+            self._load_failed(payload)
 
     def _load_failed(self, exc: Exception):
         self.path_var.set("Load failed.")

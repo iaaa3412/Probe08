@@ -325,6 +325,13 @@ class WaferMapPanel(ttk.LabelFrame):
         if not os.path.exists(map_file):
             self.canvas.delete("all")
             self.dies.clear()
+            # _last_dies is what other views mirror from (see
+            # instrument_panel._sync_results_wafer_map) rather than reading
+            # this panel's own canvas/self.dies - leaving it holding the
+            # PREVIOUS folder's dies here made the Results tab keep showing
+            # the old wafer even though this panel's own canvas correctly
+            # went blank.
+            self._last_dies = []
             self.canvas.create_text(
                 150, 80, text=f"{filename} not found\nin selected folder.",
                 fill="red", justify="center"
