@@ -9,10 +9,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from instrument_panel import MainLayout
 from probe_routing_panel import scrollable_routing
 from instruments.accretech_uf200r import AccretechUF200R
-from instruments.dmm import Keysight34461A
-from instruments.smu import Keithley2636B
-from instruments.switch import Keithley707B
-from instruments.wave_gen import Keysight33512B
+from instruments.keysight_34461a import Keysight34461A
+from instruments.keithley_2636b import Keithley2636B
+from instruments.keithley_707b import Keithley707B
+from instruments.keysight_33512b import Keysight33512B
 from instruments.electroglas_2001x import Electroglas2001X
 from instruments.keithley2400 import Keithley2400
 from instruments.hp3458a import HP3458A
@@ -34,7 +34,7 @@ ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A"
                                 "HP Switchbox 3", "Agilent 6634B"]
 
 # Accretech is one machine for now. Electroglas benches come from
-# instruments/eg_probers.yaml instead, because they genuinely differ.
+# GUI System/eg_probers.yaml instead, because they genuinely differ.
 ACCRETECH_BENCHES = ("probe08",)
 
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
@@ -125,13 +125,13 @@ class AtomicaDashboard(tk.Tk):
         self.after(1500, self._poll_prober_ready)
 
     def _autoload_default_ata_folders(self):
-        """Each system (Accretech/Electroglas) can have its own default ATA
-        folder, set via the ⭐ Set as Default button on the ATA Folder tab —
-        load them both now so switching system doesn't need a manual load."""
+        """One default ATA folder for the whole project, set via the ⭐ Set
+        as Default button on the ATA Folder tab — load it into both systems
+        now so switching system doesn't need a manual load."""
+        folder = app_settings.get_default_ata_folder()
+        if not (folder and os.path.isdir(folder)):
+            return
         for system in ("accretech", "electroglas"):
-            folder = app_settings.get_default_ata_folder(system)
-            if not (folder and os.path.isdir(folder)):
-                continue
             ui = self._by_system[system]["ui"]
             n_dies = ui.load_ata_folder(folder)
             self._by_system[system]["total"] = n_dies
@@ -212,7 +212,7 @@ class AtomicaDashboard(tk.Tk):
         else:
             self._main_pane.add(self.ui, weight=1)
         self._style_system_toggle()
-        default_folder = app_settings.get_default_ata_folder(system)
+        default_folder = app_settings.get_default_ata_folder()
         if default_folder and os.path.isdir(default_folder):
             if self.ui._ata_folder != default_folder:
                 self._do_load_ata_folder(default_folder)
@@ -638,7 +638,7 @@ class AtomicaDashboard(tk.Tk):
         self.check_system_ready()
 
     # Driver per profile key. Which of these actually get connected depends on
-    # the active bench profile - see instruments/eg_probers.yaml. A key marked
+    # the active bench profile - see GUI System/eg_probers.yaml. A key marked
     # not-fitted there is skipped rather than reported as a failure, because the
     # benches genuinely differ: probe02 has a Keithley 2400 and a working VXI
     # multimeter, probe03 has neither.
@@ -791,7 +791,7 @@ class AtomicaDashboard(tk.Tk):
 
         # Which physical prober the active system is pointed at. The Electroglas
         # benches carry different instruments at different addresses, so this
-        # decides what gets connected - see instruments/eg_probers.yaml.
+        # decides what gets connected - see GUI System/eg_probers.yaml.
         # Accretech has only probe08 for now, so its list is a single entry and
         # the control is inert rather than hidden, to keep the toolbar stable.
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y",

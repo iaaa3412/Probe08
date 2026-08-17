@@ -2,7 +2,7 @@
 
 The EG benches are not built alike - different instruments, different GPIB
 addresses, and the same secondary address holding a different relay card from
-one bench to the next. instruments/eg_probers.yaml records each bench; this
+one bench to the next. GUI System/eg_probers.yaml records each bench; this
 module selects between them.
 
 HOW IT PLUGS IN. The drivers all resolve their address through
@@ -10,15 +10,15 @@ instruments.yaml, so switching profile writes the active bench's addresses into
 that file's *_eg entries. Nothing downstream has to know profiles exist, and
 instruments.yaml stays an honest picture of what the GUI is currently pointed
 at. The profile file remains the source of truth; instruments.yaml is derived.
+Both files live in GUI System/, next to app_settings.json - real per-machine
+setup, not program source.
 """
-
-import os
 
 import yaml
 
-from instruments.gpib_base import get_resource_path
+from instruments.gpib_base import get_machine_config_path
 
-_PROFILES_FILE = "instruments/eg_probers.yaml"
+_PROFILES_FILE = "eg_probers.yaml"
 
 # Every EG instrument key a profile may define. A key absent from a profile is
 # treated as not fitted on that bench rather than an error - benches differ, and
@@ -28,7 +28,7 @@ EG_KEYS = ("prober_eg", "smu_eg", "dmm_eg", "dmm_vxi_eg",
 
 
 def _path() -> str:
-    return get_resource_path(_PROFILES_FILE)
+    return get_machine_config_path(_PROFILES_FILE)
 
 
 def load() -> dict:
@@ -117,7 +117,7 @@ def apply_to_instruments_yaml(name: str = None) -> list:
     """
     name = name or active_name()
     inst = instruments(name)
-    yaml_path = get_resource_path("instruments/instruments.yaml")
+    yaml_path = get_machine_config_path("instruments.yaml")
     with open(yaml_path, "r", encoding="utf-8") as fh:
         live = yaml.safe_load(fh) or {}
     live.setdefault("instruments", {})

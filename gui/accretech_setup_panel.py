@@ -1,8 +1,8 @@
 """Setup tab (Accretech) - edit the fixed instrument set's addresses/
-timeouts/protocol without hand-editing instruments/instruments.yaml.
+timeouts/protocol without hand-editing GUI System/instruments.yaml.
 
 DIFFERENT SHAPE FROM ELECTROGLAS ON PURPOSE. Electroglas has real per-bench
-profiles (instruments/eg_profiles.py, instruments/eg_probers.yaml) because
+profiles (instruments/eg_profiles.py, GUI System/eg_probers.yaml) because
 probe02 and probe03 are genuinely different benches with different
 instruments at different addresses. Accretech has no such thing today - one
 bench (probe08), five instrument keys hardcoded into
@@ -22,9 +22,9 @@ import os
 
 import yaml
 
-from instruments.gpib_base import get_resource_path
+from instruments.gpib_base import get_machine_config_path
 
-_YAML_PATH = "instruments/instruments.yaml"
+_YAML_PATH = "instruments.yaml"
 
 # The five keys AtomicaDashboard.init_hardware() actually connects, in the
 # order it connects them - see gui/app.py's ACCRETECH_REQUIRED_DRIVERS.
@@ -36,13 +36,13 @@ _KEY_LABELS = {
 
 
 def _load_yaml() -> dict:
-    path = get_resource_path(_YAML_PATH)
+    path = get_machine_config_path(_YAML_PATH)
     with open(path, "r", encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
 
 def _save_yaml(data: dict) -> None:
-    path = get_resource_path(_YAML_PATH)
+    path = get_machine_config_path(_YAML_PATH)
     with open(path, "w", encoding="utf-8") as fh:
         yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False)
 

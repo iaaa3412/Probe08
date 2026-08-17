@@ -1,24 +1,18 @@
 import json
 import os
-import sys
 
-# When frozen by PyInstaller, __file__-relative paths land inside the
-# bundle's extracted _internal/ folder (onedir) or a temp dir (onefile) -
-# both are wrong for a persistent, user-writable settings file, since
-# onefile's temp dir is wiped on every exit and onedir's _internal/ can
-# require admin rights if installed under Program Files. sys.executable's
-# directory (where AtomicaTester.exe itself sits) is the stable, normally
-# user-writable location in both frozen cases; only fall back to this
-# module's own directory when running from source (not frozen).
-if getattr(sys, "frozen", False):
-    _SETTINGS_DIR = os.path.dirname(os.path.abspath(sys.executable))
-else:
-    _SETTINGS_DIR = os.path.dirname(os.path.abspath(__file__))
+# Lives next to the project's data folders (LAMPATA, NautATA, ...) rather
+# than next to the exe/script - this machine info (default ATA folder,
+# default prober, channel assignments) belongs to the project on this PC,
+# not to whichever copy of the GUI happens to be running it.
+_SETTINGS_DIR = "C:/automationproject/GUI System"
 
 SETTINGS_PATH = os.path.join(_SETTINGS_DIR, "app_settings.json")
 
 
 def load_settings() -> dict:
+    # If "GUI System" hasn't been created yet, there is nothing to load -
+    # start blank rather than creating it just to read from it.
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -27,17 +21,24 @@ def load_settings() -> dict:
 
 
 def save_settings(data: dict) -> None:
+    # Saving is an explicit user action (e.g. "Set as Default"), so it's
+    # fine to create the folder here even though loading never does.
+    os.makedirs(_SETTINGS_DIR, exist_ok=True)
     with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
-def get_default_ata_folder(system: str) -> "str | None":
-    return load_settings().get("default_ata_folder", {}).get(system)
+# One default ATA folder for the whole project - not per system. Only one
+# prober is ever actually running against real data at a time, and having
+# Accretech/Electroglas remember different defaults was extra state nobody
+# asked for.
+def get_default_ata_folder() -> "str | None":
+    return load_settings().get("default_ata_folder")
 
 
-def set_default_ata_folder(system: str, folder: str) -> None:
+def set_default_ata_folder(folder: str) -> None:
     data = load_settings()
-    data.setdefault("default_ata_folder", {})[system] = folder
+    data["default_ata_folder"] = folder
     save_settings(data)
 
 

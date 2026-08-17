@@ -2,7 +2,10 @@ import os
 import string
 import yaml
 
-_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "instruments")
+# Real per-machine setup - how this bench's switch matrix is actually wired -
+# lives outside the repo next to app_settings.json/instruments.yaml, not
+# under instruments/. See gui/app_settings.py's module docstring.
+_CONFIG_DIR = "C:/automationproject/GUI System"
 TOPOLOGY_PATH = os.path.join(_CONFIG_DIR, "switch_topology.yaml")
 
 ROW_LETTERS_POOL = list(string.ascii_uppercase)

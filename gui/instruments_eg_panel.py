@@ -8,7 +8,7 @@ from instruments import eg_profiles
 from hp3458a_debug_panel import HP3458ADebugPanel
 
 # The roster of Electroglas instruments is per-bench and lives in
-# instruments/eg_probers.yaml, not here. The benches are genuinely different -
+# GUI System/eg_probers.yaml, not here. The benches are genuinely different -
 # probe02 carries a Keithley 2400 and a working E1326B, probe03 has neither and
 # puts its wired relay card at a different secondary address - so a hardcoded
 # list here would describe one bench while the drivers talked to another.
@@ -28,7 +28,7 @@ from hp3458a_debug_panel import HP3458ADebugPanel
 
 
 def _eg_instruments():
-    """Roster for the active bench, from instruments/eg_probers.yaml.
+    """Roster for the active bench, from GUI System/eg_probers.yaml.
 
     Was a hardcoded list. The EG benches carry different instruments at
     different addresses, so the roster has to follow the selected profile or

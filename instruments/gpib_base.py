@@ -37,6 +37,18 @@ def get_resource_path(relative_path):
         return os.path.join(project_root, relative_path)
 
 
+# Real per-machine setup - which instrument is at which GPIB address, which
+# Electroglas bench is active, how the switch matrix is wired - lives outside
+# the repo, next to app_settings.json (see gui/app_settings.py), not under
+# instruments/. It describes THIS machine, not the program, so it has no
+# business being committed/pushed/reverted along with the code.
+_MACHINE_CONFIG_DIR = "C:/automationproject/GUI System"
+
+
+def get_machine_config_path(filename):
+    return os.path.join(_MACHINE_CONFIG_DIR, filename)
+
+
 def _resource_manager_for(via):
     if via not in _rm_cache:
         _rm_cache[via] = pyvisa.ResourceManager() if via is None else pyvisa.ResourceManager(via)
@@ -89,7 +101,7 @@ def open_resource(address, open_timeout=_OPEN_TIMEOUT_MS):
 
 class GPIBInstrument:
     def __init__(self, config_key):
-        yaml_path = get_resource_path("instruments/instruments.yaml")
+        yaml_path = get_machine_config_path("instruments.yaml")
 
         with open(yaml_path, "r") as file:
             config = yaml.safe_load(file)
@@ -148,14 +160,14 @@ class GPIBInstrument:
 
 
 def load_all_instrument_configs() -> dict:
-    yaml_path = get_resource_path("instruments/instruments.yaml")
+    yaml_path = get_machine_config_path("instruments.yaml")
     with open(yaml_path, "r") as file:
         config = yaml.safe_load(file)
     return config["instruments"]
 
 
 def set_instrument_address(config_key: str, address: str) -> None:
-    yaml_path = get_resource_path("instruments/instruments.yaml")
+    yaml_path = get_machine_config_path("instruments.yaml")
     with open(yaml_path, "r") as file:
         config = yaml.safe_load(file)
     if config_key not in config["instruments"]:

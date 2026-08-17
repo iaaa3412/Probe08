@@ -1,5 +1,5 @@
 """Setup tab (Electroglas) - add/edit prober benches and their instrument
-fitment, without hand-editing instruments/eg_probers.yaml.
+fitment, without hand-editing GUI System/eg_probers.yaml.
 
 WHAT THIS DOES NOT TOUCH. Each instrument entry in that file can carry
 notes/scanned/id_queries/write_probe from real bench characterization work

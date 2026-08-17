@@ -1580,15 +1580,15 @@ class MainLayout(ttk.Frame):
         if not self._ata_folder:
             messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
             return
-        app_settings.set_default_ata_folder(self._system, self._ata_folder)
+        app_settings.set_default_ata_folder(self._ata_folder)
         self._update_default_ata_label()
         self.controller.log(
             f"[SYSTEM] '{os.path.basename(self._ata_folder)}' set as the default "
-            f"ATA folder for {self._system.capitalize()} — auto-loads on startup "
-            "and when switching to this system.")
+            "ATA folder for the project — auto-loads on startup and when "
+            "switching systems or probers.")
 
     def _update_default_ata_label(self):
-        default_folder = app_settings.get_default_ata_folder(self._system)
+        default_folder = app_settings.get_default_ata_folder()
         if default_folder:
             is_current = (default_folder == self._ata_folder)
             self._default_ata_lbl.config(
@@ -2028,7 +2028,7 @@ class MainLayout(ttk.Frame):
             self.switch_settings = SwitchSettingsPanel(tab, controller=self.controller)
             self.switch_settings.grid(row=0, column=0, sticky="nsew")
         else:
-            nb.add(tab, text="Switch Debug")
+            nb.add(tab, text="Switch Settings")
             self.switch_debug = SwitchboxTestPanel(tab, controller=self.controller)
             self.switch_debug.grid(row=0, column=0, sticky="nsew")
 
