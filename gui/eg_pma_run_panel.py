@@ -1404,6 +1404,19 @@ class EgPmaRunPanel(ttk.Frame):
             steps_by_die.setdefault(die_num, []).append(s)
         needed = sorted(steps_by_die)
 
+        # Set Shot Origin was captured with the chuck on shot (0,0)'s die
+        # #1 (Wafer Builder Shot-tab numbering), not necessarily grid cell
+        # (0,0) - present_slots()'s "order" can put die #1 anywhere in the
+        # shot. So every absolute coordinate below is offset relative to
+        # die #1's own (row, col) within a shot, not the shot's raw origin.
+        die1_rc = shot_die_rc(shot_cells, shot_rows, shot_cols, 1)
+        if die1_rc is None:
+            self._ui(lambda: self._log(
+                "[PMA] ⚠ Minor Moves: this shot has no die #1 - treating "
+                "grid cell (0,0) as the reference instead."))
+            die1_rc = (0, 0)
+        r1, c1 = die1_rc
+
         try:
             drv.z_down()
             for shot_row, shot_col in shots:
@@ -1419,8 +1432,8 @@ class EgPmaRunPanel(ttk.Frame):
                             f"R{sr}C{sc} — skipped."))
                         continue
                     r, c = rc
-                    die_x = origin_x + shot_col * shot_cols + c
-                    die_y = origin_y + shot_row * shot_rows + r
+                    die_x = origin_x + shot_col * shot_cols + (c - c1)
+                    die_y = origin_y + shot_row * shot_rows + (r - r1)
                     label = f"shot R{shot_row}C{shot_col} die #{die_num} (X{die_x} Y{die_y})"
                     self._ui(lambda lab=label: self._status_var.set(f"moving to {lab}"))
                     self._ui(lambda lab=label: self._log(f"[PMA] >> goto_die X={die_x} Y={die_y}"))

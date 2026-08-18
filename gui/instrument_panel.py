@@ -25,7 +25,7 @@ from eg_pma_run_panel import EgPmaRunPanel
 from accr_wafer_panel import AccrWaferPanel
 from cassette_panel import CassettePanel
 from recipe_panel import RecipePanel, load_default_recipe
-from pma_wafer_panel import PmaWaferPanel, merge_with_accretech, centroid_offset
+from pma_wafer_panel import PmaWaferPanel, centroid_offset
 from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
 from recipe_gen_panel import RecipeGenPanel, shot_die_rc
@@ -3070,6 +3070,18 @@ class MainLayout(ttk.Frame):
             self._exec2_finish_run(my_token, "ERROR: no steps", "#dc2626")
             return
 
+        # Set Shot Origin was captured with the chuck on shot (0,0)'s die
+        # #1 (Wafer Builder Shot-tab numbering), not necessarily grid cell
+        # (0,0) - present_slots()'s "order" can put die #1 anywhere in the
+        # shot. So every absolute coordinate below is offset relative to
+        # die #1's own (row, col) within a shot, not the shot's raw origin.
+        die1_rc = shot_die_rc(shot_cells, shot_rows, shot_cols, 1)
+        if die1_rc is None:
+            self._exec2_log("[RUN] ⚠ Minor Moves: this shot has no die #1 - "
+                            "treating grid cell (0,0) as the reference instead.")
+            die1_rc = (0, 0)
+        r1, c1 = die1_rc
+
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
             if sim:
@@ -3094,8 +3106,8 @@ class MainLayout(ttk.Frame):
                             f"shot R{shot_row}C{shot_col} — skipped.")
                         continue
                     r, c = rc
-                    die_x = origin_x + shot_col * shot_cols + c
-                    die_y = origin_y + shot_row * shot_rows + r
+                    die_x = origin_x + shot_col * shot_cols + (c - c1)
+                    die_y = origin_y + shot_row * shot_rows + (r - r1)
                     die_label = (f"shot R{shot_row}C{shot_col} die #{die_num} "
                                 f"(X{die_x:.0f} Y{die_y:.0f})")
                     self._exec2_safe_after(
@@ -3416,6 +3428,24 @@ class MainLayout(ttk.Frame):
     def _exec2_overlay_accretech_rc(self):
         return set(self._exec2_wafer_map.dies.keys())
 
+    @staticmethod
+    def _exec2_overlay_all_accretech(grid: list, accretech_rc, row_offset: int,
+                                     col_offset: int) -> list:
+        """One overlay entry per square the Accretech map actually has -
+        unlike merge_with_accretech (which drops any square the Wafer
+        Builder grid has no real ID for), this always covers the whole
+        real wafer shape. Overlaying is "select every square this wafer
+        really has, and label whichever of them also got a real ID from
+        Wafer Builder" - Save Selected Map wants the former regardless of
+        whether the latter found anything at all, e.g. no Wafer Builder
+        map loaded yet, or one with no die IDs on it."""
+        by_rc: dict = {}
+        for p in grid:
+            rc = (p["row"] + row_offset, p["col"] + col_offset)
+            by_rc.setdefault(rc, []).extend(p["die_ids"])
+        return [{"row": r, "col": c, "die_ids": by_rc.get((r, c), []), "raw_text": ""}
+               for r, c in sorted(accretech_rc)]
+
     _EXEC2_OVERLAY_MIN_DIE_PX = 22  # below this on-screen die width, overlay text is unreadable clutter
 
     def _exec2_update_overlay_visibility(self):
@@ -3555,8 +3585,12 @@ class MainLayout(ttk.Frame):
 
     def _exec2_draw_overlay(self, matched: list):
         self._exec2_clear_overlay()
+        # Labels only for cells with a real ID - every cell in `matched`
+        # still gets SELECTED below regardless, since Save Selected Map
+        # acts on the selection, not on which squares happened to get a
+        # label. See _exec2_overlay_all_accretech.
         self._exec2_overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"])
-                                       for d in matched}
+                                       for d in matched if d["die_ids"]}
         self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
             self._exec2_wafer_map, self._exec2_overlay_die_ids)
         rwm = getattr(self, "_results_wafer_map", None)
@@ -3600,21 +3634,25 @@ class MainLayout(ttk.Frame):
 
         def recompute(*_a):
             grid = self._exec2_wafer_builder_grid()
-            if not grid:
-                state["grid"], state["matched"] = [], []
-                summary_var.set("No Wafer Builder map loaded — build one on the "
-                                "Wafer Builder tab first.")
-                return
             try:
                 ro, co = row_var.get(), col_var.get()
             except tk.TclError:
                 return
             state["grid"] = grid
-            state["matched"] = merge_with_accretech(grid, accretech_rc, ro, co)
+            # Every square the Accretech map has is selected regardless of
+            # whether Wafer Builder has a real ID for it - a real ID just
+            # earns that square a text label. See
+            # _exec2_overlay_all_accretech's own docstring.
+            state["matched"] = self._exec2_overlay_all_accretech(grid, accretech_rc, ro, co)
+            n_with_id = sum(1 for m in state["matched"] if m["die_ids"])
             summary_var.set(
                 f"Accretech dies on map:   {len(accretech_rc)}\n"
                 f"Wafer Builder dies (real ID): {len(grid)}\n"
-                f"Overlaid (on both maps): {len(state['matched'])}"
+                f"Will select: {len(state['matched'])}"
+                f"  ({n_with_id} labeled with a real ID)"
+                + ("" if grid else
+                   "\n\nNo Wafer Builder map loaded - selecting the Accretech "
+                   "map's own squares with no ID labels.")
             )
 
         row_var.trace_add("write", recompute)

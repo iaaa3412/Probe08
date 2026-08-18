@@ -649,9 +649,11 @@ def recipes_to_rows(recipes: dict) -> list:
                      # Minor moves: see RecipePanel._on_minor_moves_toggle /
                      # _set_shot_origin. shot_origin is the die-index
                      # coordinate the chuck was sitting at (shot row0/col0,
-                     # die row0/col0) when the operator last pressed Set
-                     # Shot Origin for THIS recipe - re-captured live before
-                     # each run, but saved here so a reload does not lose it.
+                     # die #1 - the Wafer Builder Shot tab's own numbering,
+                     # not necessarily grid cell row0/col0) when the
+                     # operator last pressed Set Shot Origin for THIS
+                     # recipe - re-captured live before each run, but saved
+                     # here so a reload does not lose it.
                      "minor_moves": "1" if rec.get("minor_moves") else "",
                      "shot_origin_x": "" if origin is None else str(origin[0]),
                      "shot_origin_y": "" if origin is None else str(origin[1])})
@@ -1018,10 +1020,12 @@ class RecipePanel(ttk.Frame):
     def _set_shot_origin(self):
         """Capture the chuck's CURRENT die coordinate as this recipe's
         minor-moves origin - the operator must have it sitting on shot
-        (row 0, col 0)'s die (row 0, col 0) first, same manual alignment
-        step every other run mode already requires before starting.
-        Mirrors eg_pma_run_panel's _set_anchor in spirit, without the
-        quad/align-site disambiguation that has no equivalent here."""
+        (row 0, col 0)'s die #1 first (the Wafer Builder Shot tab's own
+        die-1, NOT necessarily grid cell (0,0) - present_slots()'s "order"
+        can put die #1 anywhere in the shot), same manual alignment step
+        every other run mode already requires before starting. Mirrors
+        eg_pma_run_panel's _set_anchor in spirit, without the quad/
+        align-site disambiguation that has no equivalent here."""
         if self._current not in self._recipes:
             return
         drv = self.controller.drivers.get("prober")
@@ -1038,9 +1042,10 @@ class RecipePanel(ttk.Frame):
                 "Set Shot Origin",
                 f"Set this recipe's shot origin to the chuck's CURRENT "
                 f"position (die X={x:.0f} Y={y:.0f})?\n\n"
-                "The chuck must be sitting on shot (row 0, col 0)'s die "
-                "(row 0, col 0) right now - every minor move a run makes "
-                "is computed relative to this point."):
+                "The chuck must be sitting on shot (row 0, col 0)'s die #1 "
+                "(per the Wafer Builder Shot tab's own numbering) right "
+                "now - every minor move a run makes is computed relative "
+                "to this point."):
             return
         self._recipes[self._current]["shot_origin"] = [x, y]
         self._refresh_shot_origin_label()
