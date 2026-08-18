@@ -987,10 +987,21 @@ class RecipePanel(ttk.Frame):
             variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
         self._minor_moves_chk.pack(side="left", padx=(8, 8), pady=4)
 
-        self._shot_origin_btn = ttk.Button(
-            bar, text="📍 Set Shot Origin", state="disabled",
-            command=self._set_shot_origin)
-        self._shot_origin_btn.pack(side="left", padx=(0, 8), pady=4)
+        # Accretech gets its origin from the Run tab's own Overlay dialog
+        # (its confirmed row/col offset IS the translation between Wafer
+        # Builder's logical die grid and real absolute die coordinates -
+        # nothing to capture here). Electroglas has no Overlay yet, so it
+        # still needs the manual capture button.
+        if self._system == "accretech":
+            self._shot_origin_btn = ttk.Button(
+                bar, text="↻ Refresh", state="disabled",
+                command=self._refresh_shot_origin_label)
+            self._shot_origin_btn.pack(side="left", padx=(0, 8), pady=4)
+        else:
+            self._shot_origin_btn = ttk.Button(
+                bar, text="📍 Set Shot Origin", state="disabled",
+                command=self._set_shot_origin)
+            self._shot_origin_btn.pack(side="left", padx=(0, 8), pady=4)
 
         tk.Label(bar, textvariable=self._shot_origin_status_var, bg="#e2e8f0",
                  fg="#6b7280", font=("Segoe UI", 8, "italic")).pack(
@@ -1007,6 +1018,19 @@ class RecipePanel(ttk.Frame):
     def _refresh_shot_origin_label(self):
         if not self._minor_moves_var.get():
             self._shot_origin_status_var.set("")
+            return
+        if self._system == "accretech":
+            ui = self.controller._by_system.get("accretech", {}).get("ui")
+            confirmed = bool(getattr(ui, "_exec2_overlay_offset_confirmed", False))
+            if confirmed:
+                ro = getattr(ui, "_exec2_overlay_row_offset", 0)
+                co = getattr(ui, "_exec2_overlay_col_offset", 0)
+                self._shot_origin_status_var.set(
+                    f"using Overlay alignment (row {ro:+d}, col {co:+d})")
+            else:
+                self._shot_origin_status_var.set(
+                    "no confirmed Overlay alignment — press Overlay… on the "
+                    "Run tab first")
             return
         rec = self._recipes.get(self._current) or {}
         origin = rec.get("shot_origin")

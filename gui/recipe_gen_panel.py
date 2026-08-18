@@ -378,6 +378,7 @@ class RecipeGenPanel(ttk.Frame):
                                       highlightbackground="#cbd5e1")
         self._shot_canvas.grid(row=0, column=0, sticky="nsew")
         self._shot_canvas.bind("<Button-1>", self._on_shot_click)
+        self._shot_canvas.bind("<Shift-Button-1>", self._on_shot_shift_click)
         self._shot_canvas.bind("<Button-3>", self._on_shot_right_click)
         self._shot_canvas.bind("<Configure>", lambda _e: self._draw_shot())
 
@@ -387,13 +388,17 @@ class RecipeGenPanel(ttk.Frame):
                  ).pack(anchor="w")
         ttk.Label(side, text="Click a blank square to add a die there; click "
                             "a die to renumber it (which die it is - 1, 2, "
-                            "3...  in this shot). Right-click removes a die "
-                            "(makes it blank).\n\nPins are assigned per "
-                            "measurement step on the Recipe tab, not here - "
-                            "this only records die order, which is what "
-                            "the Recipe tab's Die # field and the Results "
-                            "tab use to know which square a measurement "
-                            "belongs to.", foreground="#6b7280",
+                            "3...  in this shot). Shift-click a die to name "
+                            "its ID - applied to every shot's die at that "
+                            "same slot across the whole wafer (an individual "
+                            "die can still be renamed on its own on the Die "
+                            "Map tab). Right-click removes a die (makes it "
+                            "blank).\n\nPins are assigned per measurement "
+                            "step on the Recipe tab, not here - this only "
+                            "records die order, which is what the Recipe "
+                            "tab's Die # field and the Results tab use to "
+                            "know which square a measurement belongs to.",
+                 foreground="#6b7280",
                  wraplength=220, justify="left").pack(anchor="w", pady=(2, 6))
         ttk.Label(side, textvariable=self._shot_status_var, foreground="#374151",
                  wraplength=220, justify="left").pack(anchor="w", pady=(6, 0))
@@ -450,11 +455,18 @@ class RecipeGenPanel(ttk.Frame):
             cv.create_rectangle(x0, y0, x1, y1, fill=fill, outline=outline,
                                width=width)
             if present:
+                die_id = self._shot_cells.get((r, c), {}).get("die_id", "")
+                label = f"die {slot}\n{die_id}" if die_id else f"die {slot}"
                 cv.create_text((x0 + x1) / 2, (y0 + y1) / 2,
-                              text=f"die {slot}", font=("Segoe UI", 9, "bold"),
+                              text=label, font=("Segoe UI", 9, "bold"),
                               fill="#0f172a")
         n_dies = len(slots)
-        self._shot_status_var.set(f"{n_dies} die(s) in this shot.")
+        n_named = sum(1 for cell in self._shot_cells.values()
+                     if cell.get("present") and cell.get("die_id"))
+        self._shot_status_var.set(
+            f"{n_dies} die(s) in this shot."
+            + (f"  {n_named} named (applied to every shot on the wafer)."
+               if n_named else ""))
 
     def _on_shot_click(self, event):
         for (r, c), (x0, y0, x1, y1) in self._shot_cell_rects().items():
@@ -466,6 +478,14 @@ class RecipeGenPanel(ttk.Frame):
                     return
                 self._draw_shot()
                 self._set_shot_order_dialog(r, c)
+                return
+
+    def _on_shot_shift_click(self, event):
+        for (r, c), (x0, y0, x1, y1) in self._shot_cell_rects().items():
+            if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+                self._shot_selected = (r, c)
+                self._draw_shot()
+                self._set_shot_die_id_dialog(r, c)
                 return
 
     def _on_shot_right_click(self, event):
@@ -499,6 +519,30 @@ class RecipeGenPanel(ttk.Frame):
             return
         self._set_shot_order(row, col, new)
         self._draw_shot()
+
+    def _set_shot_die_id_dialog(self, row: int, col: int):
+        """Name this SLOT's die ID once here, rather than per shot on the
+        Die Map - every shot's own die at this slot picks it up
+        automatically (see _die_positions()'s fallback), useful when a
+        known real ID/label always lands on the same die-in-shot across
+        the whole wafer. An individual edit on one specific die (Die Map
+        tab) still overrides this for that die alone."""
+        cell = self._shot_cells.get((row, col))
+        if not cell or not cell.get("present"):
+            return
+        cur = cell.get("die_id", "")
+        new = simpledialog.askstring(
+            "Name Die (whole wafer)",
+            f"Die ID for this slot (row {row}, col {col}) - applied to "
+            "every shot's die at this same slot across the wafer, unless "
+            "a specific die has its own individual ID set on the Die Map "
+            "tab.\n\nLeave blank to clear.",
+            initialvalue=cur, parent=self)
+        if new is None:
+            return
+        self._shot_cells[(row, col)]["die_id"] = new.strip()
+        self._draw_shot()
+        self._redraw_diemap()
 
     def _set_shot_order(self, row: int, col: int, new_order: int):
         rows, cols = self._shot_dims()
@@ -706,7 +750,16 @@ class RecipeGenPanel(ttk.Frame):
 
     def _die_positions(self) -> List[dict]:
         """Every die the current Shot x Shot Map produces, in wafer microns,
-        each carrying its own status (defaulting to normal/blank)."""
+        each carrying its own status (defaulting to normal/blank).
+
+        die_id: an individual edit on THIS die (Die Map tab, self._die_status)
+        wins if there is one; otherwise it falls back to whatever name the
+        Shot tab gave this die's SLOT (self._shot_cells[(slr,slc)]["die_id"])
+        - naming a slot once on the Shot tab labels that same die-in-shot
+        across every shot on the wafer, e.g. a real ID known to be at slot 1
+        of every shot, without visiting/typing it in per shot. See
+        _set_shot_die_id_dialog.
+        """
         shot_rows, shot_cols = self._shot_dims()
         dpx, dpy = self._die_pitch()
         spx, spy = self._shot_pitch()
@@ -720,11 +773,12 @@ class RecipeGenPanel(ttk.Frame):
                     continue
                 key = (sr, sc, slr, slc)
                 info = self._die_status.get(key, {})
+                die_id = info.get("die_id") or cell.get("die_id", "")
                 out.append({
                     "key": key, "x": ox + slc * dpx, "y": oy + slr * dpy,
                     "w": dpx, "h": dpy, "shot_r": sr, "shot_c": sc,
                     "slot_r": slr, "slot_c": slc,
-                    "die_id": info.get("die_id", ""),
+                    "die_id": die_id,
                     "status": info.get("status", "normal"),
                 })
         return out

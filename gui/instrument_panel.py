@@ -3011,14 +3011,24 @@ class MainLayout(ttk.Frame):
         the worker as plain data - a background thread calling .get() on a
         Tk variable can raise "main thread is not in main loop" (the same
         class of bug fixed in pma_wafer_panel.py's workbook loader; see
-        that file's load_workbook_path for the longer explanation)."""
-        origin = self.recipe_panel.get_shot_origin()
-        if origin is None:
-            self._exec2_log("[RUN] Minor Moves: no shot origin set for this "
-                            "recipe — press 📍 Set Shot Origin on the Recipe "
-                            "tab (with the chuck on shot R0C0's die R0C0), "
-                            "then start again.")
+        that file's load_workbook_path for the longer explanation).
+
+        Origin: reuses the Overlay dialog's own confirmed row/col offset
+        (Overlay… button, same bar) instead of a separate manual chuck-
+        position capture. That offset is exactly the translation between
+        Wafer Builder's logical die grid and the Accretech map's real
+        absolute die coordinates - the same information a manual capture
+        would have produced, just already established (and, once Wafer
+        Builder has real IDs anywhere on the wafer, actually VERIFIED
+        against real matches rather than trusted on faith). See the Shot
+        tab's Shift-click naming for the easiest way to get real IDs
+        spread across the wafer without touching every shot by hand."""
+        if not self._exec2_overlay_offset_confirmed:
+            self._exec2_log("[RUN] Minor Moves: no confirmed Overlay alignment — "
+                            "press Overlay… (next to the map path, above) and "
+                            "🖌 Overlay on Map first, then start again.")
             return
+        overlay_offset = (self._exec2_overlay_row_offset, self._exec2_overlay_col_offset)
         gen = getattr(self, "recipe_gen", None)
         if gen is None:
             self._exec2_log("[RUN] Minor Moves: the Wafer Builder tab is not available.")
@@ -3042,16 +3052,16 @@ class MainLayout(ttk.Frame):
                         "visiting only the die(s) the recipe references.")
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_minor_move_thread,
-            args=(shots, my_token, origin, shot_rows, shot_cols, shot_cells),
+            args=(shots, my_token, overlay_offset, shot_rows, shot_cols, shot_cells),
             daemon=True)
         self._exec2_lot_thread.start()
 
-    def _exec2_minor_move_thread(self, shots: list, my_token: int, origin: tuple,
+    def _exec2_minor_move_thread(self, shots: list, my_token: int, overlay_offset: tuple,
                                  shot_rows: int, shot_cols: int, shot_cells: dict):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         error_msg = None
-        origin_x, origin_y = origin
+        row_offset, col_offset = overlay_offset
 
         # Group the loaded steps by the die # they target (default 1, same
         # fallback _is_measurement_step's callers use elsewhere) - this is
@@ -3069,18 +3079,6 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[RUN] Minor Moves: the loaded recipe has no steps.")
             self._exec2_finish_run(my_token, "ERROR: no steps", "#dc2626")
             return
-
-        # Set Shot Origin was captured with the chuck on shot (0,0)'s die
-        # #1 (Wafer Builder Shot-tab numbering), not necessarily grid cell
-        # (0,0) - present_slots()'s "order" can put die #1 anywhere in the
-        # shot. So every absolute coordinate below is offset relative to
-        # die #1's own (row, col) within a shot, not the shot's raw origin.
-        die1_rc = shot_die_rc(shot_cells, shot_rows, shot_cols, 1)
-        if die1_rc is None:
-            self._exec2_log("[RUN] ⚠ Minor Moves: this shot has no die #1 - "
-                            "treating grid cell (0,0) as the reference instead.")
-            die1_rc = (0, 0)
-        r1, c1 = die1_rc
 
         try:
             self._exec2_log("[RUN] >> D  (Separate)")
@@ -3106,8 +3104,13 @@ class MainLayout(ttk.Frame):
                             f"shot R{shot_row}C{shot_col} — skipped.")
                         continue
                     r, c = rc
-                    die_x = origin_x + shot_col * shot_cols + (c - c1)
-                    die_y = origin_y + shot_row * shot_rows + (r - r1)
+                    # Wafer Builder's own logical die grid (shot_row*shot_rows+r,
+                    # shot_col*shot_cols+c - the same quantity
+                    # _exec2_wafer_builder_grid()/_die_positions() compute),
+                    # translated into real absolute die coordinates by the
+                    # Overlay dialog's own confirmed offset.
+                    die_x = shot_col * shot_cols + c + col_offset
+                    die_y = shot_row * shot_rows + r + row_offset
                     die_label = (f"shot R{shot_row}C{shot_col} die #{die_num} "
                                 f"(X{die_x:.0f} Y{die_y:.0f})")
                     self._exec2_safe_after(
