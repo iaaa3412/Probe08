@@ -136,6 +136,27 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas.bind("<ButtonPress-1>", self._on_pick_press, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._on_pick_release, add="+")
 
+        # A tab that has never been switched to (e.g. Results, if a map
+        # redraw happens - via Import CSV, an ATA folder load, ... - while
+        # the operator is still on Run) has a canvas that has not been
+        # mapped onto the screen yet: winfo_width()/height() report a
+        # stale/tiny size, _draw_from_die_list falls back to centering
+        # against a hardcoded 400x400 box, and nothing corrects it once
+        # the canvas gets its real size - every die square (and its real
+        # click hit-box, which is the SAME canvas item) stays laid out
+        # against the wrong dimensions forever. Once, the first time this
+        # canvas reports a real size after a draw like that, redraw for
+        # real. Never fires again after that one correction, so it does
+        # not disturb a deliberate zoom/pan on an ordinary window resize.
+        self._drawn_while_tiny = False
+        self.canvas.bind("<Configure>", self._on_canvas_configure, add="+")
+
+    def _on_canvas_configure(self, event):
+        if not self._drawn_while_tiny or event.width < 50 or event.height < 50:
+            return
+        self._drawn_while_tiny = False
+        self._reset_view()
+
     def enable_picking(self, max_picks=None, on_change=None):
         self._on_pick_change = on_change
         if max_picks == 0:
@@ -286,6 +307,7 @@ class WaferMapPanel(ttk.LabelFrame):
         self.die_ids.clear()
         self.update_idletasks()
         width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        self._drawn_while_tiny = width < 50
         if width < 50:
             width, height = 300, 300
 
@@ -443,6 +465,7 @@ class WaferMapPanel(ttk.LabelFrame):
         self.update_idletasks()
         W = self.canvas.winfo_width()
         H = self.canvas.winfo_height()
+        self._drawn_while_tiny = W < 50
         if W < 50:
             W, H = 400, 400
 
