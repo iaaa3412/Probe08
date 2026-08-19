@@ -122,6 +122,7 @@ class GdsParserPanel(ttk.Frame):
         self.top_cell_combo.bind("<<ComboboxSelected>>", lambda _e: self.reparse_current_file())
         ttk.Button(r1, text="Parse / Refresh",     command=self.reparse_current_file).pack(side="left", padx=4)
         ttk.Button(r1, text="Generate ATA Files",  command=self.export_files).pack(side="left", padx=4)
+        ttk.Button(r1, text="💾 Export App Log",   command=self.export_app_log).pack(side="left", padx=(16, 4))
 
         r2 = ttk.Frame(ctl)
         r2.pack(fill="x", pady=2)
@@ -226,6 +227,34 @@ class GdsParserPanel(ttk.Frame):
         self.nb.add(f, text=title)
         return fig, ax, cv
 
+
+    def export_app_log(self):
+        """Dumps the WHOLE app log panel (every [MAPTRACE]/[MAPDEBUG]/
+        [RUN]/[ERROR]/... line since launch, not just this tab's own GDS
+        parsing log below) to a text file - for sending a full repro
+        trace without having to select/copy out of the log widget by
+        hand."""
+        txt = getattr(getattr(self.controller, "ui", None), "log_text", None)
+        if txt is None:
+            messagebox.showerror("Export App Log", "No active log panel found.")
+            return
+        content = txt.get("1.0", tk.END)
+        path = filedialog.asksaveasfilename(
+            title="Export App Log",
+            defaultextension=".txt",
+            filetypes=[("Text file", "*.txt"), ("All files", "*.*")],
+            initialfile="atomica_app_log.txt",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError as exc:
+            messagebox.showerror("Export App Log", f"Could not write {path}: {exc}")
+            return
+        self._set_status(f"App log exported to {path}")
+        self.controller.log(f"[GDS] App log exported to -> {path}")
 
     def open_gds_file(self):
         path = filedialog.askopenfilename(
