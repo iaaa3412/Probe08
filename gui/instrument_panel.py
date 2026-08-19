@@ -2616,12 +2616,43 @@ class MainLayout(ttk.Frame):
         self._exec2_overlay_die_ids = ids
         self._exec2_redraw_overlay_on_run_map()
 
+    def _new_results_wafer_map(self):
+        """(Re)create the Results tab's own WaferMapPanel from scratch, on
+        a brand new Canvas.
+
+        Reusing the SAME long-lived canvas for every redraw (the previous
+        approach - a plain rwm._draw_from_die_list(dies) call) is what
+        actually produced the broken layout every "die packed with no
+        gaps, overlay labels off their square" report traced back to -
+        the very first draw on a canvas was always the correct one, every
+        later one on that same canvas was not, for a Tk-geometry reason
+        that resisted every attempt to pin down and fix in place. A fresh
+        widget makes every draw the "first, always-good" one instead of
+        chasing what state a long-lived canvas accumulates - see the
+        session's git history for the abandoned attempts.
+        """
+        old = getattr(self, "_results_wafer_map", None)
+        wm = WaferMapPanel(self._results_map_frame)
+        wm.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
+        wm.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
+        wm.on_redraw = self._exec2_redraw_overlay_on_results_map
+        wm.on_zoom = self._exec2_debounced(
+            "_exec2_results_zoom_debounce_id", self._exec2_redraw_overlay_on_results_map)
+        self._results_wafer_map = wm
+        if old is not None:
+            try:
+                old.destroy()
+            except tk.TclError:
+                pass
+        return wm
+
     def _sync_results_wafer_map(self):
         rwm = getattr(self, "_results_wafer_map", None)
         if rwm is None:
             return
         dies = self._exec2_wafer_map._last_dies
         if dies:
+            rwm = self._new_results_wafer_map()
             rwm._last_dies = dies
             rwm._draw_from_die_list(dies)  # triggers on_redraw -> overlay labels
         else:
@@ -5637,12 +5668,8 @@ class MainLayout(ttk.Frame):
                   command=lambda: self._results_wafer_map._reset_view()).pack(
                   side="left", padx=(6, 0))
 
-        self._results_wafer_map = WaferMapPanel(map_frame)
-        self._results_wafer_map.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
-        self._results_wafer_map.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
-        self._results_wafer_map.on_redraw = self._exec2_redraw_overlay_on_results_map
-        self._results_wafer_map.on_zoom = self._exec2_debounced(
-            "_exec2_results_zoom_debounce_id", self._exec2_redraw_overlay_on_results_map)
+        self._results_map_frame = map_frame
+        self._new_results_wafer_map()
 
         detail_lf = ttk.LabelFrame(map_frame, text="Selected Die")
         detail_lf.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 8))
