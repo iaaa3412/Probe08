@@ -1092,6 +1092,9 @@ class RecipePanel(ttk.Frame):
         rec = self._recipes.get(self._current)
         if rec is not None:
             rec["minor_moves"] = self._minor_moves_var.get()
+            card = self._get_active_card()
+            if card:
+                self._save_recipes(card, self._recipes)
         self._shot_origin_btn.config(
             state="normal" if self._minor_moves_var.get() else "disabled")
         self._refresh_shot_origin_label()
