@@ -1199,7 +1199,27 @@ class AtomicaDashboard(tk.Tk):
         ui = self.ui
 
         folder = (meta.get("ata_folder") or "").strip()
-        if folder and os.path.isdir(folder):
+
+        def _same_folder(a: str, b: str) -> bool:
+            if not a or not b:
+                return False
+            return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+        # If this ATA folder is ALREADY the one loaded, the wafer map on
+        # screen right now is already correct (it is exactly what
+        # load_ata_folder itself would draw) - do not touch it at all.
+        # Reloading it anyway, or forcing the CSV's own saved map_source
+        # on top of it, was a second pass over the same data that kept
+        # coming out looking wrong (dies packed with no gaps, overlay
+        # labels no longer centered on their square) instead of
+        # identical - not worth chasing why when simply not re-doing
+        # already-correct work sidesteps it entirely. Only load/redraw
+        # here for the genuine "all I have left is this CSV" recovery
+        # case this whole function exists for - a different folder, or
+        # none loaded yet.
+        if folder and _same_folder(folder, getattr(ui, "_ata_folder", "")):
+            pass
+        elif folder and os.path.isdir(folder):
             try:
                 n_dies = ui.load_ata_folder(folder)
                 self.total_dies = n_dies
@@ -1210,31 +1230,22 @@ class AtomicaDashboard(tk.Tk):
                 ui.exec_panel.set_wafer_map(ui.wafer_map, wafer_id=os.path.basename(folder))
             except Exception as e:
                 ui.exec_panel.log(f"[IMPORT] Could not load ATA folder {folder!r}: {e}")
+
+            map_source = (meta.get("map_source") or "").strip()
+            current_source = (ui._exec2_map_source_var.get()
+                              if hasattr(ui, "_exec2_map_source_var") else "")
+            if map_source and hasattr(ui, "_exec2_map_source_var") and map_source != current_source:
+                try:
+                    ui._exec2_map_source_var.set(map_source)
+                    ui._exec2_map_folder = folder or ui._exec2_map_folder
+                    ui._exec2_draw_wafer_map(quiet_if_missing=True)
+                except Exception as e:
+                    ui.exec_panel.log(f"[IMPORT] Could not draw wafer map source "
+                                      f"{map_source!r}: {e}")
         elif folder:
             ui.exec_panel.log(
                 f"[IMPORT] ATA folder {folder!r} not found on this machine - "
                 "continuing without it (results/pass-fail will still load).")
-
-        # load_ata_folder() above already drew a correct map (same call it
-        # makes on every ATA folder load/relaunch, gaps between dies and
-        # all). Only redraw here if the saved run actually used a
-        # DIFFERENT map source than that default - redrawing again even
-        # when it already matches was a second, redundant pass over the
-        # same data that came out looking different (dies packed with no
-        # gaps, overlay labels no longer centered on their square) instead
-        # of identical, for reasons that were not worth chasing further
-        # when simply not re-doing needless work sidesteps it entirely.
-        map_source = (meta.get("map_source") or "").strip()
-        current_source = (ui._exec2_map_source_var.get()
-                          if hasattr(ui, "_exec2_map_source_var") else "")
-        if map_source and hasattr(ui, "_exec2_map_source_var") and map_source != current_source:
-            try:
-                ui._exec2_map_source_var.set(map_source)
-                ui._exec2_map_folder = folder or ui._exec2_map_folder
-                ui._exec2_draw_wafer_map(quiet_if_missing=True)
-            except Exception as e:
-                ui.exec_panel.log(f"[IMPORT] Could not draw wafer map source "
-                                  f"{map_source!r}: {e}")
 
         probe_card = (meta.get("probe_card") or "").strip()
         if probe_card and hasattr(ui, "pin_wiring"):
