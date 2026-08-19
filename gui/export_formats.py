@@ -468,7 +468,22 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
         dmm_voltage_row = next(
             (r for r in rows if r.get("type") == "voltage" and r.get("mode") == "measure"
              and r.get("instrument") == "DMM"), None)
-        resistance_row = next((r for r in rows if r.get("type") == "resistance"), None)
+        # A step's own type stays whatever it was configured as
+        # (voltage/current) even when its Target combines it with an
+        # earlier apply step into a resistance - see
+        # instrument_panel._exec2_apply_target/recipe_panel.
+        # compute_target_derived. That combination changes the UNIT to
+        # "ohm", not the step's type, so a plain type == "resistance"
+        # check misses every Target-derived resistance and falls through
+        # to voltage_val / current_val - the wrong pair of readings
+        # (typically the FORCE step's own voltage readback divided by its
+        # own current, not the actual sense measurement) once a project
+        # actually uses Target this way. Recognizing the unit directly
+        # catches both a genuine "resistance" step type and a Target-
+        # combined one.
+        resistance_row = next(
+            (r for r in rows if r.get("type") == "resistance"
+             or (r.get("unit") or "").strip().lower() in ("ohm", "ohms", "Ω".lower())), None)
         connection = _combined_connection(rows)
 
         current_val = current_row.get("value") if current_row else ""
