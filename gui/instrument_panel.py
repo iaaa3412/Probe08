@@ -28,7 +28,7 @@ from recipe_panel import RecipePanel, load_default_recipe, compute_target_derive
 from pma_wafer_panel import PmaWaferPanel, centroid_offset
 from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
-from recipe_gen_panel import RecipeGenPanel, shot_die_rc
+from recipe_gen_panel import RecipeGenPanel, shot_die_rc, present_slots
 import export_formats as xfmt
 import mdb_export
 import app_settings
@@ -3133,6 +3133,42 @@ class MainLayout(ttk.Frame):
         class _Stop(Exception):
             pass
 
+        def shot_rc_for(pick_row, pick_col):
+            """Which (shot_row, shot_col) a real absolute die coordinate
+            falls in - same floor-division Next Shot/Previous Shot use
+            (_exec2_go_to_shot/_exec2_current_shot_index)."""
+            wb_row = pick_row - row_offset
+            wb_col = pick_col - col_offset
+            return wb_row // shot_rows, wb_col // shot_cols
+
+        def publish_die_slots(shot_row, shot_col):
+            """Tell _exec2_run_steps_once/_exec2_slot_identity where each
+            die # in THIS shot really sits, and what its real die ID is -
+            same publish-before-run pattern
+            eg_pma_run_panel._advance_touchdown already uses for
+            Electroglas quads, so every measurement is filed against the
+            die it actually measured (matched by real XY position + the
+            step's own Die # field) instead of the shot's landing square
+            for all of them. Cleared after the shot in the caller."""
+            present = present_slots(shot_cells, shot_rows, shot_cols)
+            max_die = max(present.values()) if present else 1
+            rcs, ids = [], []
+            wm = self._exec2_wafer_map
+            for die_num in range(1, max_die + 1):
+                rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+                if rc is None:
+                    rcs.append(None)
+                    ids.append("")
+                    continue
+                r, c = rc
+                real_row = shot_row * shot_rows + r + row_offset
+                real_col = shot_col * shot_cols + c + col_offset
+                rcs.append((real_row, real_col))
+                ids.append(self._exec2_overlay_die_ids.get((real_row, real_col))
+                          or wm.die_ids.get((real_row, real_col), ""))
+            self._exec2_die_rc_by_slot = rcs
+            self._exec2_die_ids_by_slot = ids
+
         def goto_shot_die(pick_row, pick_col, die_num):
             """Separate, jump to (shot, die #), contact. Used both for the
             automatic die-#1 landing and for every in-recipe "move" step -
@@ -3141,14 +3177,9 @@ class MainLayout(ttk.Frame):
             (pick_row, pick_col) is a real absolute die coordinate that
             belongs to the target shot - not necessarily die #1's own
             cell (it may be whatever square the picker/shot-window
-            highlighted). Same as Next Shot/Previous Shot
-            (_exec2_go_to_shot/_exec2_current_shot_index): floor-divide by
-            the shot dimensions (after removing the Overlay offset) to
-            find WHICH shot that is, then shot_die_rc() gives any die #'s
-            cell to land on within it."""
-            wb_row = pick_row - row_offset
-            wb_col = pick_col - col_offset
-            shot_row, shot_col = wb_row // shot_rows, wb_col // shot_cols
+            highlighted). shot_rc_for() finds WHICH shot that is, then
+            shot_die_rc() gives any die #'s cell to land on within it."""
+            shot_row, shot_col = shot_rc_for(pick_row, pick_col)
             rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
             if rc is None:
                 raise RuntimeError(f"die #{die_num} is not on shot "
@@ -3208,19 +3239,42 @@ class MainLayout(ttk.Frame):
                 except _Stop:
                     break
 
+                shot_row, shot_col = shot_rc_for(land_row, land_col)
+                publish_die_slots(shot_row, shot_col)
                 self._exec2_move_fn = (
                     lambda die_num, lr=land_row, lc=land_col: goto_shot_die(lr, lc, die_num))
                 try:
                     shot_ok = self._exec2_run_steps_once()
                 finally:
                     self._exec2_move_fn = None
+                    self._exec2_die_rc_by_slot = []
+                    self._exec2_die_ids_by_slot = []
 
                 self._exec2_log("[RUN] >> D  (Separate)")
                 if not sim:
                     prober.z_down()
-                self._exec2_safe_after(
-                    self._exec2_add_pass if shot_ok else self._exec2_add_fail)
-                self._exec2_update_die_color(land_row, land_col, shot_ok)
+
+                # Each die in the shot passes or fails on its OWN square,
+                # not the shot's landing square for all of them - a shot's
+                # dies are independent devices. Falls back to the single
+                # combined verdict on the landing square only when the
+                # recipe never tagged a passfail step with a Die #.
+                slot_verdicts = dict(getattr(self, "_exec2_slot_verdicts", None) or {})
+                if slot_verdicts:
+                    for die_num, passed in sorted(slot_verdicts.items()):
+                        rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+                        if rc is None:
+                            continue
+                        r, c = rc
+                        real_row = shot_row * shot_rows + r + row_offset
+                        real_col = shot_col * shot_cols + c + col_offset
+                        self._exec2_safe_after(
+                            self._exec2_add_pass if passed else self._exec2_add_fail)
+                        self._exec2_update_die_color(real_row, real_col, passed)
+                else:
+                    self._exec2_safe_after(
+                        self._exec2_add_pass if shot_ok else self._exec2_add_fail)
+                    self._exec2_update_die_color(land_row, land_col, shot_ok)
         except Exception as e:
             error_msg = str(e)
             self._exec2_log(f"[RUN] ERROR: {e}")
@@ -4619,11 +4673,13 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    forcing {lvl or 0} A on SMU "
                                     f"{s.get('chan') or 'A'}{lim_txt} "
                                     "(output ON until an open step)" + readback_txt)
-                    self.record_result(timestamp=ts, recipe=recipe_name, die=die_label,
+                    slot_die, slot_row, slot_col, slot_sw = self._exec2_slot_identity(
+                        s.get("die"), die_label, (cur_row, cur_col))
+                    self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{actual_current:.6g}",
                                        unit="A", voltage=actual_voltage, die_id=die_id or None,
-                                       connection=conn_str, instrument=instrument,
-                                       die_row=cur_row, die_col=cur_col)
+                                       switch=slot_sw, connection=conn_str, instrument=instrument,
+                                       die_row=slot_row, die_col=slot_col)
                     last_reading = (name, actual_current, "A")
                     readings_by_name[name] = (actual_current, "A")
                 elif t == "current":
