@@ -46,7 +46,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(2, weight=1)
 
         self._build_bench_selector()
         self._build_addresses()
@@ -130,14 +130,17 @@ class InstrumentsEgPanel(ttk.Frame):
         self._build_addresses()
 
     def _build_addresses(self):
+        # Sits below the instrument control panels (SMU/PS/DMM), not above -
+        # the ping/address section is a diagnostic, not the first thing an
+        # operator needs.
         self._addr_panel = build_address_panel(
             self, _eg_instruments(), self._log, self.controller.init_hardware_eg)
-        self._addr_panel.grid(row=1, column=0, columnspan=2, sticky="new",
-                              padx=8, pady=(8, 0))
+        self._addr_panel.grid(row=3, column=0, columnspan=2, sticky="new",
+                              padx=8, pady=8)
 
     def _build_smu(self):
         lf = ttk.LabelFrame(self, text="SMU — Keithley 2400", padding=8)
-        lf.grid(row=2, column=0, sticky="new", padx=8, pady=8)
+        lf.grid(row=1, column=0, sticky="new", padx=8, pady=8)
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)
@@ -214,7 +217,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_dmm(self):
         lf = ttk.LabelFrame(self, text="DMM — HP 3458A", padding=8)
-        lf.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+        lf.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
         lf.rowconfigure(0, weight=1)
         lf.columnconfigure(0, weight=1)
         self.dmm_debug = HP3458ADebugPanel(lf, controller=self.controller)
@@ -222,7 +225,7 @@ class InstrumentsEgPanel(ttk.Frame):
 
     def _build_ps(self):
         lf = ttk.LabelFrame(self, text="Power Supply — Agilent 6634B", padding=8)
-        lf.grid(row=2, column=1, sticky="new", padx=8, pady=8)
+        lf.grid(row=1, column=1, sticky="new", padx=8, pady=8)
 
         row = ttk.Frame(lf)
         row.pack(fill="x", pady=2)

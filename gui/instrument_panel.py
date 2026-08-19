@@ -491,13 +491,11 @@ class MainLayout(ttk.Frame):
     def _tab_instruments(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Instruments")
-        tab.rowconfigure(3, weight=1)
+        tab.rowconfigure(2, weight=1)
         tab.columnconfigure(0, weight=1)
 
-        self._build_addresses_accretech(tab, row=0)
-
         rst = tk.Frame(tab, bg="#7f1d1d")
-        rst.grid(row=1, column=0, sticky="ew")
+        rst.grid(row=0, column=0, sticky="ew")
         tk.Button(
             rst,
             text="⚠  Global Reset — All Outputs OFF + Open All Switches",
@@ -517,7 +515,7 @@ class MainLayout(ttk.Frame):
         ).pack(side="left", padx=4, pady=4)
 
         sbar = tk.Frame(tab, bg="#0f172a")
-        sbar.grid(row=2, column=0, sticky="ew")
+        sbar.grid(row=1, column=0, sticky="ew")
         for key, lbl in [("smua", "SMU A"), ("smub", "SMU B"),
                           ("wg1", "WG CH1"), ("wg2", "WG CH2"),
                           ("dmm", "DMM"), ("prober", "Prober")]:
@@ -528,7 +526,7 @@ class MainLayout(ttk.Frame):
                      font=("Consolas", 8), padx=10, pady=2).pack(side="left")
 
         pane = ttk.PanedWindow(tab, orient="horizontal")
-        pane.grid(row=3, column=0, sticky="nsew")
+        pane.grid(row=2, column=0, sticky="nsew")
 
         dmm_pane = ttk.Frame(pane)
         pane.add(dmm_pane, weight=1)
@@ -542,6 +540,10 @@ class MainLayout(ttk.Frame):
         self._build_dmm_card(dmm_pane)
         self._build_smu_card(smu_pane)
         self._build_wavegen_card(wg_pane)
+
+        # Ping/address section - a diagnostic, not the first thing an
+        # operator needs - sits below the instrument control panels.
+        self._build_addresses_accretech(tab, row=3)
 
     def _build_dmm_card(self, parent):
         card = ttk.LabelFrame(parent, text="Keysight 34461A  (DMM)")
