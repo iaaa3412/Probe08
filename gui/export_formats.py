@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -104,6 +105,73 @@ MADX_FORMAT: Dict[str, Any] = {
         {"field": "Time_Stamp",  "source": "time_stamp"},
     ],
 }
+
+
+_lookup_cache: Dict[tuple, Dict[tuple, Dict[str, str]]] = {}
+
+
+def load_lookup_table(folder: str, filename: str,
+                      lookup_row_col: str, lookup_col_col: str) -> Dict[tuple, Dict[str, str]]:
+    """A generic per-die reference table any project can supply - a plain
+    CSV with its own header row and whatever extra columns that project's
+    own siting/ID convention needs, keyed by two of its own columns that
+    hold this app's real (row, col) (see an export format's own "lookup"
+    key - {file, lookup_row_col, lookup_col_col, our_row_field,
+    our_col_field}). Exists so a project's own authoritative die-numbering
+    table (which this app cannot re-derive on its own - it may be an
+    arbitrary, historical convention) drives an export's columns directly,
+    without teaching this file anything about that convention.
+
+    Cached per (path, lookup_row_col, lookup_col_col) for the process
+    lifetime - an export run reads it once per row otherwise, and the
+    table does not change while the GUI is open."""
+    path = os.path.join(folder, filename)
+    cache_key = (path, lookup_row_col, lookup_col_col)
+    if cache_key in _lookup_cache:
+        return _lookup_cache[cache_key]
+    table: Dict[tuple, Dict[str, str]] = {}
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                try:
+                    key = (int(float(row[lookup_row_col])), int(float(row[lookup_col_col])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                table[key] = row
+    except OSError:
+        pass
+    _lookup_cache[cache_key] = table
+    return table
+
+
+def apply_lookup(fmt: Dict[str, Any], folder: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    """`row` (a per-reading SQL row, or a per-die CSV group) with its
+    matching lookup-table row's columns merged in, matched by this app's
+    own real (row, col) - a CSV-type row already carries that under
+    "abs_row"/"abs_col" (see group_results_by_die), a SQL-type one under
+    "row"/"col" directly. Unchanged (no lookup configured, no folder, or
+    no match found) is returned as-is - a column sourced from the lookup
+    table just resolves blank the same as any other missing source."""
+    lookup = fmt.get("lookup")
+    if not lookup or not folder:
+        return row
+    our_row = row.get(lookup.get("our_row_field", "abs_row"))
+    our_col = row.get(lookup.get("our_col_field", "abs_col"))
+    if our_row in (None, "") or our_col in (None, ""):
+        return row
+    try:
+        key = (int(float(our_row)), int(float(our_col)))
+    except (TypeError, ValueError):
+        return row
+    table = load_lookup_table(folder, lookup.get("file", ""),
+                              lookup.get("lookup_row_col", "row"),
+                              lookup.get("lookup_col_col", "col"))
+    match = table.get(key)
+    if not match:
+        return row
+    merged = dict(row)
+    merged.update(match)
+    return merged
 
 
 def compute_test_serial(lot_id: str, wafer_id: str) -> int:
@@ -288,13 +356,15 @@ def rows_for_format(fmt: Dict[str, Any],
 
 
 def build_insert_statements(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
-                            lot_id: str, wafer_id: str) -> List[str]:
+                            lot_id: str, wafer_id: str, folder: str = "") -> List[str]:
     rows = rows_for_format(fmt, results_data)
-    context = {"test_serial": compute_test_serial(lot_id, wafer_id)}
+    context = {"test_serial": compute_test_serial(lot_id, wafer_id),
+              "lot_id": lot_id, "wafer_id": wafer_id}
     cols = fmt["columns"]
     field_list = ", ".join(c["field"] for c in cols)
     out = []
     for r in rows:
+        r = apply_lookup(fmt, folder, r)
         vals = []
         for c in cols:
             raw = resolve_column_value(c, r, context)
@@ -453,13 +523,14 @@ def _first(rows: List[Dict[str, Any]], key: str):
 
 
 def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
-                   lot_id: str, wafer_id: str) -> List[Dict[str, Any]]:
+                   lot_id: str, wafer_id: str, folder: str = "") -> List[Dict[str, Any]]:
     context = {"lot_id": lot_id, "wafer_id": wafer_id,
               "test_serial": compute_test_serial(lot_id, wafer_id)}
     out = []
     for g in group_results_by_die(results_data):
         if not g["current"] and not g["resistance"]:
             continue
+        g = apply_lookup(fmt, folder, g)
         out.append({c["field"]: resolve_column_value(c, g, context) for c in fmt["columns"]})
     return out
 

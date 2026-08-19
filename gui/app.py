@@ -1344,9 +1344,10 @@ class AtomicaDashboard(tk.Tk):
             name_parts.append(dt.date.today().strftime("%Y%m%d"))
         filepath = os.path.join(export_dir, "_".join(name_parts) + f".{ext}")
 
+        ata_folder = getattr(self.ui, "_ata_folder", "") or ""
         try:
             if fmt_type == "csv":
-                rows = xfmt.build_csv_rows(fmt, last_run_results, current_lot, wafer_id)
+                rows = xfmt.build_csv_rows(fmt, last_run_results, current_lot, wafer_id, ata_folder)
                 fieldnames = [c["field"] for c in fmt["columns"]]
                 # Explicit utf-8: without it Python uses the Windows locale
                 # encoding (cp1252 here), which wrote an em-dash as a lone
@@ -1358,7 +1359,8 @@ class AtomicaDashboard(tk.Tk):
                 self.ui.exec_panel.log(
                     f"[SYSTEM] Success! {len(rows)} '{fmt['name']}' row(s) saved to -> {filepath}")
             else:
-                statements = xfmt.build_insert_statements(fmt, last_run_results, current_lot, wafer_id)
+                statements = xfmt.build_insert_statements(
+                    fmt, last_run_results, current_lot, wafer_id, ata_folder)
                 # Explicit utf-8: without it Python uses the Windows locale
                 # encoding (cp1252 here), which wrote an em-dash as a lone
                 # 0x97 byte - not valid UTF-8, so the export would not reopen.

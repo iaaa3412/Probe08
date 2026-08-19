@@ -139,7 +139,7 @@ def preflight(path: str, table: str) -> Dict[str, Any]:
 
 
 def build_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
-               lot_id: str, wafer_id: str) -> Tuple[List[str], List[tuple]]:
+               lot_id: str, wafer_id: str, folder: str = "") -> Tuple[List[str], List[tuple]]:
     """(field names, one value tuple per row) for a parameterised INSERT.
 
     Values are passed to the driver as parameters rather than pasted into
@@ -153,6 +153,7 @@ def build_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
     fields = [c["field"] for c in cols]
     out = []
     for r in rows:
+        r = xfmt.apply_lookup(fmt, folder, r)
         vals = []
         for c in cols:
             raw = xfmt.resolve_column_value(c, r, context)
@@ -170,7 +171,8 @@ def build_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
 
 
 def push(path: str, fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
-         lot_id: str, wafer_id: str, driver: Optional[str] = None) -> Dict[str, Any]:
+         lot_id: str, wafer_id: str, driver: Optional[str] = None,
+         folder: str = "") -> Dict[str, Any]:
     """Insert the rows, all or nothing.
 
     One transaction: a push that fails halfway would otherwise leave a
@@ -178,7 +180,7 @@ def push(path: str, fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
     it, and re-pushing would double the ones that did.
     """
     table = fmt["table"]
-    fields, rows = build_rows(fmt, results_data, lot_id, wafer_id)
+    fields, rows = build_rows(fmt, results_data, lot_id, wafer_id, folder)
     if not rows:
         return {"ok": False, "inserted": 0, "error": "No matching results to push."}
     placeholders = ",".join("?" for _ in fields)

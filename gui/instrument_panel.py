@@ -5588,7 +5588,8 @@ class MainLayout(ttk.Frame):
         # The last run only, matching what "💾 Export" writes - so the file
         # and the database always describe the same run.
         results = self.get_last_run_results()
-        fields, rows = mdb_export.build_rows(fmt, results, lot, wafer)
+        ata_folder = getattr(self, "_ata_folder", "") or ""
+        fields, rows = mdb_export.build_rows(fmt, results, lot, wafer, ata_folder)
         if not rows:
             self._mdb_say(
                 "✖  No rows from the last run match this format "
@@ -5602,7 +5603,7 @@ class MainLayout(ttk.Frame):
                 "shared copy on the network, everyone reading it sees these "
                 "rows straight away — there is no undo."):
             return
-        res = mdb_export.push(path, fmt, results, lot, wafer)
+        res = mdb_export.push(path, fmt, results, lot, wafer, folder=ata_folder)
         if res["ok"]:
             msg = (f"✔  Pushed {res['inserted']} row(s) into "
                   f"[{res['table']}] — lot {lot}"
@@ -5868,7 +5869,12 @@ class MainLayout(ttk.Frame):
         ttk.Entry(add_row, textvariable=field_var, width=14).pack(side="left", padx=(2, 8))
         ttk.Label(add_row, text="Source:").pack(side="left")
         source_var = tk.StringVar()
-        source_cb = ttk.Combobox(add_row, textvariable=source_var, state="readonly", width=14)
+        # Not readonly: a "lookup" table's own column headers (e.g.
+        # Cenfire's DIE_ID/ABS_ROW/COLUMN_RETICLE - see the "Lookup Table"
+        # row below) are project-specific and cannot all be listed here,
+        # so a source name can be typed directly as well as picked from
+        # the documented list.
+        source_cb = ttk.Combobox(add_row, textvariable=source_var, width=14)
         source_cb.pack(side="left", padx=(2, 8))
         quote_var = tk.BooleanVar(value=False)
         quote_chk = ttk.Checkbutton(add_row, text="Quote", variable=quote_var)
@@ -5893,6 +5899,40 @@ class MainLayout(ttk.Frame):
         template_var = tk.StringVar()
         ttk.Entry(add_row3, textvariable=template_var, width=44).pack(
             side="left", padx=(4, 0))
+
+        lookup_lf = ttk.LabelFrame(
+            frm, text="Lookup Table (optional) — a project's own per-die "
+                     "reference CSV, in the ATA folder, keyed by this app's "
+                     "real (row, col)")
+        lookup_lf.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        _lu = (existing_fmt or {}).get("lookup") or {}
+        lu_file_var = tk.StringVar(value=_lu.get("file", ""))
+        lu_row_col_var = tk.StringVar(value=_lu.get("lookup_row_col", ""))
+        lu_col_col_var = tk.StringVar(value=_lu.get("lookup_col_col", ""))
+        lu_our_row_var = tk.StringVar(value=_lu.get("our_row_field", "abs_row"))
+        lu_our_col_var = tk.StringVar(value=_lu.get("our_col_field", "abs_col"))
+        lu_row1 = ttk.Frame(lookup_lf)
+        lu_row1.pack(fill="x", padx=6, pady=(4, 2))
+        ttk.Label(lu_row1, text="CSV filename:").pack(side="left")
+        ttk.Entry(lu_row1, textvariable=lu_file_var, width=28).pack(
+            side="left", padx=(2, 12))
+        ttk.Label(lu_row1, text="Its row/col columns:").pack(side="left")
+        ttk.Entry(lu_row1, textvariable=lu_row_col_var, width=14).pack(
+            side="left", padx=(2, 4))
+        ttk.Entry(lu_row1, textvariable=lu_col_col_var, width=14).pack(
+            side="left", padx=(2, 0))
+        lu_row2 = ttk.Frame(lookup_lf)
+        lu_row2.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(lu_row2, text="Matched against this format's own:").pack(side="left")
+        ttk.Entry(lu_row2, textvariable=lu_our_row_var, width=14).pack(
+            side="left", padx=(2, 4))
+        ttk.Entry(lu_row2, textvariable=lu_our_col_var, width=14).pack(
+            side="left", padx=(2, 0))
+        ttk.Label(lookup_lf, text="Leave CSV filename blank for no lookup table. "
+                                  "A column can then use any of that CSV's own "
+                                  "headers as its Source above.",
+                 foreground="#6b7280", font=("Segoe UI", 8), wraplength=520,
+                 justify="left").pack(anchor="w", padx=6, pady=(0, 4))
 
         _NICE = {"dmm": "DMM", "id": "ID", "num": "Num"}
 
@@ -6010,8 +6050,10 @@ class MainLayout(ttk.Frame):
             iid = sel[0]
             f, src, q, tr = cols_tree.item(iid, "values")
             field_var.set(f)
-            if src in _fields_for_type():
-                source_var.set(src)
+            # Not just the documented list - a "lookup" table's own column
+            # (see the Source combobox note above) is a perfectly valid
+            # source that would otherwise silently vanish on re-edit.
+            source_var.set(src)
             quote_var.set(q == "yes")
             parsed = _parse_transform(tr)
             multiply_var.set(str(parsed["multiply"]) if "multiply" in parsed else "")
@@ -6051,6 +6093,15 @@ class MainLayout(ttk.Frame):
             fmt = {"name": name, "table": table, "type": type_var.get(),
                   "requires_die_id": only_pma_var.get(), "append_date": append_date_var.get(),
                   "columns": columns}
+            lu_file = lu_file_var.get().strip()
+            if lu_file:
+                fmt["lookup"] = {
+                    "file": lu_file,
+                    "lookup_row_col": lu_row_col_var.get().strip() or "row",
+                    "lookup_col_col": lu_col_col_var.get().strip() or "col",
+                    "our_row_field": lu_our_row_var.get().strip() or "abs_row",
+                    "our_col_field": lu_our_col_var.get().strip() or "abs_col",
+                }
             xfmt.add_format(self._ata_folder, fmt, system=self._system)
             self._refresh_export_formats(select_name=name)
             self.controller.log(f"[RESULTS] Saved export format '{name}' ({table}, "
@@ -6058,7 +6109,7 @@ class MainLayout(ttk.Frame):
             dlg.destroy()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        btns.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Save Format", command=save).pack(side="left")
         ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right")
 
