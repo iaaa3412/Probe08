@@ -3774,6 +3774,22 @@ class MainLayout(ttk.Frame):
                    textvariable=col_var).grid(row=3, column=3, sticky="w", padx=(4, 0))
 
         state = {"grid": [], "matched": []}
+        # What was actually on the map before this dialog opened - restored
+        # if it's closed without pressing Overlay on Map or Clear Overlay,
+        # so just previewing offsets while looking for the right one does
+        # not leave an unconfirmed preview sitting on screen.
+        prior_die_ids = dict(self._exec2_overlay_die_ids)
+        prior_picks = list(self._exec2_wafer_map.get_picked())
+        confirmed_this_session = {"value": False}
+
+        # Debounced, not immediate: every spinbox keystroke/arrow-click
+        # would otherwise redraw picks/labels on its own - fine for a
+        # single click, but a held-down arrow or fast typing fires several
+        # a second. Same pattern _exec2_redraw_overlay_on_run_map's caller
+        # uses for zoom/pan bursts.
+        schedule_live_draw = self._exec2_debounced(
+            "_exec2_overlay_dialog_draw_pending",
+            lambda: self._exec2_draw_overlay(state["matched"]))
 
         def recompute(*_a):
             grid = self._exec2_wafer_builder_grid()
@@ -3799,6 +3815,7 @@ class MainLayout(ttk.Frame):
                    "\n\nNo Wafer Builder map loaded - selecting the Accretech "
                    "map's own squares with no ID labels.")
             )
+            schedule_live_draw()
 
         row_var.trace_add("write", recompute)
         col_var.trace_add("write", recompute)
@@ -3815,6 +3832,7 @@ class MainLayout(ttk.Frame):
         center_overlay()
 
         def do_overlay():
+            confirmed_this_session["value"] = True
             self._exec2_overlay_row_offset = row_var.get()
             self._exec2_overlay_col_offset = col_var.get()
             self._exec2_overlay_offset_confirmed = True
@@ -3824,6 +3842,7 @@ class MainLayout(ttk.Frame):
                             "Wafer Builder map onto the wafer map.")
 
         def do_clear():
+            confirmed_this_session["value"] = True
             self._exec2_clear_overlay()
             self._exec2_wafer_map.clear_picks()
             self._exec2_on_sites_changed([])
@@ -3831,12 +3850,28 @@ class MainLayout(ttk.Frame):
             self._exec2_persist_overlay_offset()
             self._exec2_log("[RUN] Overlay cleared.")
 
+        def close_dialog():
+            if not confirmed_this_session["value"]:
+                self._exec2_clear_overlay()
+                self._exec2_overlay_die_ids = prior_die_ids
+                self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
+                    self._exec2_wafer_map, prior_die_ids)
+                rwm = getattr(self, "_results_wafer_map", None)
+                if rwm is not None:
+                    self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
+                        rwm, prior_die_ids)
+                self._exec2_wafer_map.set_picked(prior_picks)
+                self._exec2_on_sites_changed(prior_picks)
+                self._exec2_update_overlay_visibility()
+            dlg.destroy()
+
         btns = ttk.Frame(frm)
         btns.grid(row=4, column=0, columnspan=5, sticky="ew", pady=(12, 0))
         ttk.Button(btns, text="🖌 Overlay on Map", command=do_overlay).pack(side="left")
         ttk.Button(btns, text="✕ Clear Overlay", command=do_clear).pack(
             side="left", padx=6)
-        ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
+        ttk.Button(btns, text="Close", command=close_dialog).pack(side="right")
+        dlg.protocol("WM_DELETE_WINDOW", close_dialog)
 
         dlg.update_idletasks()
         dlg.grab_set()
