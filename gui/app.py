@@ -1215,8 +1215,19 @@ class AtomicaDashboard(tk.Tk):
                 f"[IMPORT] ATA folder {folder!r} not found on this machine - "
                 "continuing without it (results/pass-fail will still load).")
 
+        # load_ata_folder() above already drew a correct map (same call it
+        # makes on every ATA folder load/relaunch, gaps between dies and
+        # all). Only redraw here if the saved run actually used a
+        # DIFFERENT map source than that default - redrawing again even
+        # when it already matches was a second, redundant pass over the
+        # same data that came out looking different (dies packed with no
+        # gaps, overlay labels no longer centered on their square) instead
+        # of identical, for reasons that were not worth chasing further
+        # when simply not re-doing needless work sidesteps it entirely.
         map_source = (meta.get("map_source") or "").strip()
-        if map_source and hasattr(ui, "_exec2_map_source_var"):
+        current_source = (ui._exec2_map_source_var.get()
+                          if hasattr(ui, "_exec2_map_source_var") else "")
+        if map_source and hasattr(ui, "_exec2_map_source_var") and map_source != current_source:
             try:
                 ui._exec2_map_source_var.set(map_source)
                 ui._exec2_map_folder = folder or ui._exec2_map_folder
