@@ -136,6 +136,53 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas.bind("<ButtonPress-1>", self._on_pick_press, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._on_pick_release, add="+")
 
+        # A tab that has never been switched to (e.g. Results, if a redraw
+        # happens - via Import CSV, an ATA folder load, ... - while the
+        # operator is still on Run) has a canvas that has not been mapped
+        # onto the screen yet: winfo_width()/height() report a stale/tiny
+        # size, the draw below falls back to centering against a
+        # hardcoded box, and every die square (and its real click
+        # hit-box, which is the SAME canvas item) stays laid out against
+        # the wrong dimensions once nothing corrects it. See
+        # _schedule_tiny_draw_check, called from _draw_from_die_list/
+        # draw_map only when that fallback actually had to be used.
+        #
+        # An EARLIER version of this fix reacted to every <Configure>
+        # event live - wrong: Configure fires many times with transitional
+        # sizes while this app's own busy multi-pane/multi-tab layout is
+        # still being built, and reacting to one mid-build re-ran a full
+        # ~14000-die rebuild (plus its overlay-label redraw) against
+        # not-yet-final geometry, which is what actually made dies/labels
+        # land in the wrong place and overlap - the opposite of the fix.
+        # A plain time-delay retry has the same problem in reverse: too
+        # short and it fires before the tab is ever shown (nothing to
+        # fix yet, and nothing left watching after that one try); too
+        # long and it is a guess.
+        #
+        # <Map> is the canonical, one-shot signal for "this widget just
+        # became genuinely visible on screen" - exactly the moment (and
+        # the ONLY moment) a hidden notebook tab's canvas gets its real
+        # size for the first time. Bound once, per affected draw, and
+        # unbound immediately after it fires once, so it cannot repeat
+        # or react to anything else that happens to remap the widget
+        # later (e.g. switching tabs back and forth).
+        self._tiny_draw_map_bind = None
+
+    def _schedule_tiny_draw_check(self):
+        if self._tiny_draw_map_bind is not None:
+            return
+        self._tiny_draw_map_bind = self.canvas.bind("<Map>", self._fix_tiny_draw_once, add="+")
+
+    def _fix_tiny_draw_once(self, _event=None):
+        if self._tiny_draw_map_bind is not None:
+            try:
+                self.canvas.unbind("<Map>", self._tiny_draw_map_bind)
+            except tk.TclError:
+                pass
+            self._tiny_draw_map_bind = None
+        if self.canvas.winfo_width() >= 50:
+            self._reset_view()
+
     def enable_picking(self, max_picks=None, on_change=None):
         self._on_pick_change = on_change
         if max_picks == 0:
@@ -288,6 +335,7 @@ class WaferMapPanel(ttk.LabelFrame):
         width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
         if width < 50:
             width, height = 300, 300
+            self._schedule_tiny_draw_check()
 
         cx, cy = width / 2, height / 2
         radius = min(width, height) / 2.2
@@ -445,6 +493,7 @@ class WaferMapPanel(ttk.LabelFrame):
         H = self.canvas.winfo_height()
         if W < 50:
             W, H = 400, 400
+            self._schedule_tiny_draw_check()
 
         xs = [d["x_um"] for d in dies]
         ys = [d["y_um"] for d in dies]
