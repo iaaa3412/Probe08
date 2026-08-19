@@ -1286,7 +1286,10 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         # existed to be written.
         self._card_recipes[card] = {
             name: {"steps": [dict(s) for s in rec.get("steps", [])],
-                   "sites": [dict(s) for s in rec.get("sites", [])]}
+                   "sites": [dict(s) for s in rec.get("sites", [])],
+                   "bench": rec.get("bench", ""),
+                   "minor_moves": bool(rec.get("minor_moves")),
+                   "shot_origin": rec.get("shot_origin")}
             for name, rec in recipes.items()}
         path = self._card_src.get(card)
         if not path:
