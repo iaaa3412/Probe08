@@ -496,8 +496,20 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas.create_line(ccx - arm, ccy, ccx + arm, ccy, fill="#ccc", dash=(2, 2))
         self.canvas.create_line(ccx, ccy - arm, ccx, ccy + arm, fill="#ccc", dash=(2, 2))
 
-        dw = max(2, min(pitch_x * scale * 0.85, 26))
-        dh = max(2, min(pitch_y * scale * 0.85, 26))
+        # The lower bound used to be a flat 2px, with no upper limit tying
+        # it back to the actual on-screen spacing between die centers
+        # (pitch * scale) - on a wafer dense enough that spacing comes out
+        # BELOW 2px (Cenfire's ~14600 dies: measured 1.74px), that floor
+        # forced boxes wider than the gap between them, baking in a
+        # fraction-of-a-pixel overlap. Invisible at the tiny fit-to-window
+        # scale it was drawn at, but canvas.scale() (zoom in/out) magnifies
+        # every coordinate by the same factor, including that overlap, so
+        # it became obvious - dies "packed with no gaps" - the moment the
+        # operator zoomed in to actually look at one. Including pitch*scale
+        # itself in the min() makes exceeding the real available space
+        # structurally impossible, whatever the floor/cap are.
+        dw = max(1.0, min(pitch_x * scale * 0.85, 26, pitch_x * scale))
+        dh = max(1.0, min(pitch_y * scale * 0.85, 26, pitch_y * scale))
         ol = "#4a7090" if dw > 5 else ""
         for d in dies:
             cx_ = to_cx(d["x_um"])
