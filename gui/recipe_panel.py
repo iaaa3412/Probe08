@@ -2376,16 +2376,24 @@ class RecipePanel(ttk.Frame):
             self._update_validity_label()
 
     def validate_all_recipes(self) -> dict:
+        # validate_recipe() reads self._minor_moves_var (a single shared
+        # checkbox var, not per-recipe) for its 'move' step check - swap it
+        # to each recipe's OWN saved minor_moves while validating, or every
+        # recipe but whichever one currently matches the checkbox's on-
+        # screen value comes back invalid regardless of what was saved.
         saved_steps = self._steps
+        saved_minor_moves = self._minor_moves_var.get()
         results = {}
         try:
             for name, rec in self._recipes.items():
                 self._steps = rec.get("steps", [])
+                self._minor_moves_var.set(bool(rec.get("minor_moves")))
                 issues = self.validate_recipe()
                 self._store_validity(name, issues)
                 results[name] = rec.get("valid", False)
         finally:
             self._steps = saved_steps
+            self._minor_moves_var.set(saved_minor_moves)
         return results
 
     def _update_validity_label(self):
