@@ -2242,6 +2242,14 @@ class MainLayout(ttk.Frame):
         # Accretech's equivalent of NanoZ's 1x20 window / Electroglas's 2x2
         # quad window - see _exec2_update_shot_window.
         self._exec2_shot_window_items: list = []
+        # ➡ Move to Selected's own arm/target state - see
+        # _exec2_move_selected_button. Deliberately separate from the
+        # normal pick system (_exec2_wafer_map._picked/get_picked()).
+        self._exec2_move_armed = False
+        self._exec2_move_target_rc = None
+        self._exec2_move_target_prev_fill = None
+        self._exec2_move_prev_click_handler = None
+        self._exec2_move_prev_picking_enabled = True
 
         ctrl = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
         ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
@@ -2412,12 +2420,12 @@ class MainLayout(ttk.Frame):
             ttk.Button(pos_lf, text="⏭⏭ Next Shot",
                        command=self._exec2_manual_next_shot).grid(
                        row=7, column=1, sticky="ew", padx=(1, 0), pady=1)
-            # Only meaningful with exactly one die picked - Test Selected
-            # already covers "several" - so it starts (and stays) disabled
-            # otherwise; see _exec2_on_sites_changed for the state toggle.
+            # Its own separate arm/target system - see
+            # _exec2_move_selected_button's docstring - deliberately not
+            # tied to the normal pick system (Test Selected's picks) at all.
             self._exec2_move_selected_btn = ttk.Button(
                 pos_lf, text="➡ Move to Selected",
-                command=self._exec2_move_to_selected, state="disabled")
+                command=self._exec2_move_selected_button)
             self._exec2_move_selected_btn.grid(
                 row=8, column=0, columnspan=2, sticky="ew", pady=1)
             # Manual, fire-and-forget version of the same Q read
@@ -3204,9 +3212,6 @@ class MainLayout(ttk.Frame):
             all_rc = {(d["row"], d["col"]) for d in dies}
             is_all = bool(all_rc) and set(picks) == all_rc
             btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
-        move_btn = getattr(self, "_exec2_move_selected_btn", None)
-        if move_btn is not None:
-            move_btn.config(state="normal" if len(picks) == 1 else "disabled")
 
     def _exec2_sites_label(self, picks) -> str:
         """Header over the map. One pick names what sits on that square.
@@ -4951,23 +4956,92 @@ class MainLayout(ttk.Frame):
         self._exec2_go_to_shot(prober, gen, shot_row, shot_col, shot_rows, shot_cols,
                                row_off, col_off, "Previous Shot")
 
-    def _exec2_move_to_selected(self):
-        """Move straight to whichever single die is picked on the map - Z
-        down first (never travel in X/Y while contacted), then the absolute
-        die-coordinate move. Deliberately does NOT Z up afterward - this is
-        a positioning aid (e.g. lining up before a manual Z Up/Measure),
-        not a touchdown of its own.
+    _EXEC2_MOVE_TARGET_COLOR = "#1e3a8a"  # dark blue - distinct from the pick color
+
+    def _exec2_move_selected_button(self):
+        """➡ Move to Selected is a self-contained arm/target toggle, NOT a
+        reader of the normal pick system (_exec2_wafer_map.get_picked(),
+        which Test Selected/Save Selected Map/Overlay all share and which
+        this must never disturb):
+
+          IDLE ("➡ Move to Selected") --click--> ARMED, no target
+              ("✕ Cancel Move") --click a die--> ARMED, one target,
+              highlighted dark blue ("➡ Move")
+
+        While armed, clicking dies is intercepted via set_click_handler
+        (see _exec2_move_target_click) instead of going through picking -
+        picking itself is suspended (not cleared) for the duration, so any
+        real Test Selected picks are exactly as they were once this is
+        done. Clicking the target again deselects it (back to "Cancel
+        Move"); clicking a different die just moves the highlight - only
+        one target at a time. Pressing the button with a target executes
+        the move and returns to idle; with no target, it cancels.
         """
+        wm = self._exec2_wafer_map
+        if not self._exec2_move_armed:
+            self._exec2_move_armed = True
+            self._exec2_move_target_rc = None
+            self._exec2_move_prev_click_handler = wm._click_handler
+            self._exec2_move_prev_picking_enabled = wm._picking_enabled
+            wm._picking_enabled = False
+            wm.set_click_handler(self._exec2_move_target_click)
+            self._exec2_move_selected_btn.config(text="✕ Cancel Move")
+            return
+        target = self._exec2_move_target_rc
+        self._exec2_disarm_move_selected()
+        if target is None:
+            self._exec2_log("[EXEC2] Move to Selected: cancelled.")
+            return
+        self._exec2_do_move_to(*target)
+
+    def _exec2_move_target_click(self, row: int, col: int):
+        if not self._exec2_move_armed:
+            return
+        wm = self._exec2_wafer_map
+        rc = (row, col)
+        if rc not in wm.dies:
+            return
+        if rc == self._exec2_move_target_rc:
+            self._exec2_restore_move_target_color()
+            self._exec2_move_target_rc = None
+            self._exec2_move_selected_btn.config(text="✕ Cancel Move")
+            return
+        self._exec2_restore_move_target_color()
+        item = wm.dies[rc]
+        self._exec2_move_target_prev_fill = wm.canvas.itemcget(item, "fill")
+        wm.canvas.itemconfig(item, fill=self._EXEC2_MOVE_TARGET_COLOR)
+        self._exec2_move_target_rc = rc
+        self._exec2_move_selected_btn.config(text="➡ Move")
+
+    def _exec2_restore_move_target_color(self):
+        wm = self._exec2_wafer_map
+        rc = self._exec2_move_target_rc
+        if rc is not None and rc in wm.dies and self._exec2_move_target_prev_fill is not None:
+            try:
+                wm.canvas.itemconfig(wm.dies[rc], fill=self._exec2_move_target_prev_fill)
+            except tk.TclError:
+                pass
+
+    def _exec2_disarm_move_selected(self):
+        self._exec2_restore_move_target_color()
+        self._exec2_move_target_rc = None
+        self._exec2_move_target_prev_fill = None
+        wm = self._exec2_wafer_map
+        wm.set_click_handler(self._exec2_move_prev_click_handler)
+        wm._picking_enabled = self._exec2_move_prev_picking_enabled
+        self._exec2_move_armed = False
+        self._exec2_move_selected_btn.config(text="➡ Move to Selected")
+
+    def _exec2_do_move_to(self, row: int, col: int):
+        """Move straight to (row, col) - Z down first (never travel in X/Y
+        while contacted), then the absolute die-coordinate move.
+        Deliberately does NOT Z up afterward - this is a positioning aid
+        (e.g. lining up before a manual Z Up/Measure), not a touchdown of
+        its own."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self._exec2_log("[EXEC2] Move to Selected: prober not connected.")
             return
-        sites = self._exec2_wafer_map.get_picked()
-        if len(sites) != 1:
-            self._exec2_log("[EXEC2] Move to Selected: pick exactly one die "
-                            "on the map first.")
-            return
-        row, col = sites[0]
         def _run():
             try:
                 self.after(0, lambda: self._exec2_log("[EXEC2] >> D  (Separate)"))
