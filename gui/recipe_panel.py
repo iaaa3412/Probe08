@@ -2323,6 +2323,7 @@ class RecipePanel(ttk.Frame):
                 _HI_ROWS = set("ACFGH")
                 for ch in conn.split(","):
                     pin_key = (ch[0], ch[2:])
+                    bus_key = ch[:2]
                     for other, other_tag in closed.items():
                         if ((other[0], other[2:]) == pin_key and other[1] != ch[1]
                                 and ch[1] in _HI_ROWS and other[1] in _HI_ROWS):
@@ -2330,6 +2331,18 @@ class RecipePanel(ttk.Frame):
                                 f"WARN {tag}: {ch} puts a second instrument HI row on "
                                 f"the same pin as {other} (closed by {other_tag}) — "
                                 "intended bias, or missing open step?")
+                        # A row is one shared electrical bus (e.g. row A =
+                        # SMU-A HI). Closing two channels on that SAME row
+                        # but DIFFERENT pins ties those two pins directly
+                        # together for as long as both stay closed - an
+                        # actual short, not just a bias question, whichever
+                        # instrument/steps put them there.
+                        if other[:2] == bus_key and other[2:] != ch[2:]:
+                            issues.append(
+                                f"ERROR {tag}: {ch} shares a row (bus) with "
+                                f"{other} (closed by {other_tag}) but a "
+                                f"different pin — this shorts pin {ch[2:]} to "
+                                f"pin {other[2:]} together until one is opened")
                     closed[ch] = tag
 
         for idx in sorted(outputs_on):
