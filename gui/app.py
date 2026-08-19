@@ -1120,7 +1120,14 @@ class AtomicaDashboard(tk.Tk):
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + ["results"]
         filepath = os.path.join(export_dir, "_".join(name_parts) + ".csv")
         try:
-            with open(filepath, mode='w', newline='') as file:
+            # Explicit utf-8: without it Python uses the Windows locale
+            # encoding (cp1252 here), which wrote an em-dash (used as a die
+            # placeholder) as a lone 0x97 byte - not valid UTF-8, so
+            # cmd_import_results_csv's own explicit utf-8 read failed on
+            # it and the whole import silently came back empty. Same class
+            # of bug cmd_export_sql's CSV path already carries this fix
+            # for - this path just never got it.
+            with open(filepath, mode='w', newline='', encoding='utf-8') as file:
                 writer = csv.DictWriter(file, fieldnames=self._RESULTS_CSV_FIELDS,
                                         extrasaction="ignore")
                 writer.writeheader()
