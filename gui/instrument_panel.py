@@ -3152,13 +3152,14 @@ class MainLayout(ttk.Frame):
             for all of them. Cleared after the shot in the caller."""
             present = present_slots(shot_cells, shot_rows, shot_cols)
             max_die = max(present.values()) if present else 1
-            rcs, ids = [], []
+            rcs, ids, shotpos = [], [], []
             wm = self._exec2_wafer_map
             for die_num in range(1, max_die + 1):
                 rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
                 if rc is None:
                     rcs.append(None)
                     ids.append("")
+                    shotpos.append(None)
                     continue
                 r, c = rc
                 real_row = shot_row * shot_rows + r + row_offset
@@ -3166,8 +3167,15 @@ class MainLayout(ttk.Frame):
                 rcs.append((real_row, real_col))
                 ids.append(self._exec2_overlay_die_ids.get((real_row, real_col))
                           or wm.die_ids.get((real_row, real_col), ""))
+                # (reticle row, reticle col, row WITHIN the shot, col WITHIN
+                # the shot) - generic reticle/shot-position bookkeeping any
+                # export format can read (see export_formats.py's
+                # shot_row/shot_col/intra_row/intra_col source fields),
+                # not tied to any one project's naming.
+                shotpos.append((shot_row, shot_col, r, c))
             self._exec2_die_rc_by_slot = rcs
             self._exec2_die_ids_by_slot = ids
+            self._exec2_die_shotpos_by_slot = shotpos
 
         def goto_shot_die(pick_row, pick_col, die_num):
             """Separate, jump to (shot, die #), contact. Used both for the
@@ -3249,6 +3257,7 @@ class MainLayout(ttk.Frame):
                     self._exec2_move_fn = None
                     self._exec2_die_rc_by_slot = []
                     self._exec2_die_ids_by_slot = []
+                    self._exec2_die_shotpos_by_slot = []
 
                 self._exec2_log("[RUN] >> D  (Separate)")
                 if not sim:
@@ -4438,6 +4447,16 @@ class MainLayout(ttk.Frame):
         #      corner's ID made the row claim the wrong device.
         die_id = (getattr(self, "_exec2_die_id_override", "")
                   or overlay_die_id or map_die_id)
+        # Whichever probe card is loaded right now, generic to any system/
+        # project - "pin_wiring" is each system's own ProbeCardWiringFrame
+        # instance, built the same way on both.
+        probe_card = (self.pin_wiring.get_active_card()
+                     if hasattr(self, "pin_wiring") else "")
+
+        def _shotpos_kwargs(shotpos):
+            sr, sc, ir, ic = shotpos or (None, None, None, None)
+            return {"shot_row": sr, "shot_col": sc,
+                    "intra_row": ir, "intra_col": ic, "probe_card": probe_card}
         last_set_voltage_by_ch = {}
 
         overall_ok = True
@@ -4597,13 +4616,14 @@ class MainLayout(ttk.Frame):
                     r, r_unit, note = self._exec2_apply_target(s, r_raw, "ohm", readings_by_name)
                     self._exec2_log(f"[MEASURE]    R = {r_raw:.4g} Ω  (via {instrument})"
                                     f"{avg_txt}{note}")
-                    slot_die, slot_row, slot_col, slot_sw = self._exec2_slot_identity(
+                    slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
                     self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{r:.6g}",
                                        unit=r_unit, die_id=die_id or None, switch=slot_sw,
                                        connection=conn_str, instrument=instrument,
-                                       die_row=slot_row, die_col=slot_col)
+                                       die_row=slot_row, die_col=slot_col,
+                                       **_shotpos_kwargs(slot_shotpos))
                     last_reading = (name, r, r_unit)
                     readings_by_name[name] = (r, r_unit)
                 elif t == "voltage" and mode == "measure":
@@ -4625,13 +4645,14 @@ class MainLayout(ttk.Frame):
                     v, v_unit, note = self._exec2_apply_target(s, v_raw, "V", readings_by_name)
                     self._exec2_log(f"[MEASURE]    V = {v_raw:.4g} V  (via {instrument})"
                                     f"{avg_txt}{note}")
-                    slot_die, slot_row, slot_col, slot_sw = self._exec2_slot_identity(
+                    slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
                     self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{v:.6g}",
                                        unit=v_unit, die_id=die_id or None, switch=slot_sw,
                                        connection=conn_str, instrument=instrument,
-                                       die_row=slot_row, die_col=slot_col)
+                                       die_row=slot_row, die_col=slot_col,
+                                       **_shotpos_kwargs(slot_shotpos))
                     last_reading = (name, v, v_unit)
                     readings_by_name[name] = (v, v_unit)
                 elif t == "voltage":
@@ -4673,13 +4694,14 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    forcing {lvl or 0} A on SMU "
                                     f"{s.get('chan') or 'A'}{lim_txt} "
                                     "(output ON until an open step)" + readback_txt)
-                    slot_die, slot_row, slot_col, slot_sw = self._exec2_slot_identity(
+                    slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
                     self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{actual_current:.6g}",
                                        unit="A", voltage=actual_voltage, die_id=die_id or None,
                                        switch=slot_sw, connection=conn_str, instrument=instrument,
-                                       die_row=slot_row, die_col=slot_col)
+                                       die_row=slot_row, die_col=slot_col,
+                                       **_shotpos_kwargs(slot_shotpos))
                     last_reading = (name, actual_current, "A")
                     readings_by_name[name] = (actual_current, "A")
                 elif t == "current":
@@ -4739,7 +4761,7 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[MEASURE]    I = {i_raw:.4g} A{bias_txt}{avg_txt}{note}")
                     if actual_voltage is None:
                         actual_voltage = set_voltage
-                    slot_die, slot_row, slot_col, slot_sw = self._exec2_slot_identity(
+                    slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
                     self.record_result(
                         timestamp=ts, recipe=recipe_name, die=slot_die,
@@ -4748,7 +4770,8 @@ class MainLayout(ttk.Frame):
                         switch=slot_sw,
                         die_row=slot_row, die_col=slot_col,
                         set_voltage=set_voltage, voltage=actual_voltage,
-                        connection=conn_str, instrument=instrument)
+                        connection=conn_str, instrument=instrument,
+                        **_shotpos_kwargs(slot_shotpos))
                     last_reading = (name, i_a, i_unit)
                     readings_by_name[name] = (i_a, i_unit)
                 elif t == "wave":
@@ -4772,16 +4795,21 @@ class MainLayout(ttk.Frame):
 
 
     def _exec2_slot_identity(self, die_no, fallback_die, fallback_rc):
-        """(die label, row, col, switch) for a step's own Die # field.
+        """(die label, row, col, switch, shotpos) for a step's own Die #
+        field. shotpos is (shot_row, shot_col, intra_row, intra_col) or
+        None when nothing published one (non-Minor-Moves, or a system/
+        recipe with no shot concept at all).
 
         Replaces the old "... (Die N)" name-suffix convention - a step now
         carries its die number directly (recipe_panel._STEP_FIELDS "die"),
         so this no longer depends on how the step happens to be named.
 
         The Electroglas run publishes the shot's die IDs and map cells in
-        QUAD_ORDER before each touchdown, so a per-die step can be filed
-        against the die it actually measured rather than against the shot's
-        anchor cell.
+        QUAD_ORDER before each touchdown, and Accretech Minor Moves
+        publishes the shot's real per-die coordinates/reticle position
+        (_exec2_minor_move_thread.publish_die_slots), before each
+        touchdown, so a per-die step can be filed against the die it
+        actually measured rather than against the shot's anchor cell.
 
         The test is whether that publication EXISTS, not whether die_no is
         greater than 1. Blank normalizes to "1", so "die 1" and "no die set"
@@ -4798,23 +4826,35 @@ class MainLayout(ttk.Frame):
             switch = 1
         ids = getattr(self, "_exec2_die_ids_by_slot", None) or []
         rcs = getattr(self, "_exec2_die_rc_by_slot", None) or []
+        shotpos_list = getattr(self, "_exec2_die_shotpos_by_slot", None) or []
         slot = switch - 1
         if switch < 1 or not (slot < len(ids) or slot < len(rcs)):
-            return fallback_die, fallback_rc[0], fallback_rc[1], None
+            return fallback_die, fallback_rc[0], fallback_rc[1], None, None
         die = ids[slot] if 0 <= slot < len(ids) and ids[slot] else fallback_die
         rc = rcs[slot] if 0 <= slot < len(rcs) and rcs[slot] else fallback_rc
-        return die, rc[0], rc[1], switch
+        shotpos = shotpos_list[slot] if 0 <= slot < len(shotpos_list) else None
+        return die, rc[0], rc[1], switch, shotpos
 
     def record_result(self, timestamp, recipe, die, step, type, mode, value, unit,
                       die_id=None, switch=None, set_voltage=None, voltage=None,
-                      connection=None, instrument=None, die_row=None, die_col=None):
+                      connection=None, instrument=None, die_row=None, die_col=None,
+                      shot_row=None, shot_col=None, intra_row=None, intra_col=None,
+                      probe_card=None):
         row = {"timestamp": timestamp, "recipe": recipe, "die": die, "step": step,
                "type": type, "mode": mode, "value": value, "unit": unit,
                "die_id": die_id or "", "switch": switch if switch is not None else "",
                "set_voltage": set_voltage if set_voltage is not None else "",
                "voltage": voltage if voltage is not None else "",
                "connection": connection or "", "instrument": instrument or "",
-               "row": die_row, "col": die_col}
+               "row": die_row, "col": die_col,
+               # Blank on any run that never resolved a shot for this die
+               # (non-Minor-Moves, or a system with no shot concept at
+               # all) - see _exec2_slot_identity/_exec2_minor_move_thread.
+               "shot_row": shot_row if shot_row is not None else "",
+               "shot_col": shot_col if shot_col is not None else "",
+               "intra_row": intra_row if intra_row is not None else "",
+               "intra_col": intra_col if intra_col is not None else "",
+               "probe_card": probe_card or ""}
         self.controller.results_data.append(row)
         if hasattr(self, "_results_tree"):
             def _ui():
@@ -5845,6 +5885,15 @@ class MainLayout(ttk.Frame):
         ttk.Button(add_row2, text="+ Add Column", command=lambda: add_col()).pack(
             side="left", padx=(8, 0))
 
+        add_row3 = ttk.Frame(frm)
+        add_row3.grid(row=12, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        ttk.Label(add_row3, text="Or template (combine fields, "
+                                 "e.g. {intra_col}-{intra_row}-{shot_col}-{shot_row}):"
+                 ).pack(side="left")
+        template_var = tk.StringVar()
+        ttk.Entry(add_row3, textvariable=template_var, width=44).pack(
+            side="left", padx=(4, 0))
+
         _NICE = {"dmm": "DMM", "id": "ID", "num": "Num"}
 
         def _default_field_name(source):
@@ -5916,6 +5965,11 @@ class MainLayout(ttk.Frame):
                     return {"multiply": float(txt[1:].strip())}
                 except ValueError:
                     return {}
+            # A template's own braces are the marker - no prefix character
+            # needed, since "={...}" would otherwise read as a literal
+            # constant string containing braces instead.
+            if "{" in txt and "}" in txt:
+                return {"template": txt}
             return {}
 
         def add_col():
@@ -5923,14 +5977,18 @@ class MainLayout(ttk.Frame):
             source = source_var.get().strip()
             constant = constant_var.get().strip()
             mult = multiply_var.get().strip()
-            if not field or (not source and not constant):
+            template = template_var.get().strip()
+            if not field or not (source or constant or template):
                 return
-            transform_txt = f"={constant}" if constant else (f"×{mult}" if mult else "")
+            transform_txt = (template if template else
+                            (f"={constant}" if constant else
+                             (f"×{mult}" if mult else "")))
             cols_tree.insert("", "end", values=(
                 field, source, "yes" if quote_var.get() else "no", transform_txt))
             field_var.set("")
             multiply_var.set("")
             constant_var.set("")
+            template_var.set("")
 
         def remove_col():
             sel = cols_tree.selection()
@@ -5958,6 +6016,7 @@ class MainLayout(ttk.Frame):
             parsed = _parse_transform(tr)
             multiply_var.set(str(parsed["multiply"]) if "multiply" in parsed else "")
             constant_var.set(parsed.get("constant", ""))
+            template_var.set(parsed.get("template", ""))
             cols_tree.delete(iid)
         cols_tree.bind("<Double-Button-1>", _edit_selected)
 
@@ -5966,6 +6025,8 @@ class MainLayout(ttk.Frame):
                 tr = ""
                 if c.get("constant") not in (None, ""):
                     tr = f"={c['constant']}"
+                elif c.get("template"):
+                    tr = c["template"]
                 elif c.get("multiply") not in (None, "", 1, 1.0):
                     tr = f"×{c['multiply']}"
                 cols_tree.insert("", "end", values=(
@@ -5997,7 +6058,7 @@ class MainLayout(ttk.Frame):
             dlg.destroy()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=12, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        btns.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Save Format", command=save).pack(side="left")
         ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right")
 

@@ -25,6 +25,17 @@ SQL_SOURCE_FIELDS = {
     "timestamp":   "Reading timestamp",
     "test_serial": "Computed test serial — see compute_test_serial",
     "iteration":   "Always 1 (one row per die's final averaged reading)",
+    "abs_row":     "Die's real absolute row index on the wafer map (blank if unknown)",
+    "abs_col":     "Die's real absolute column index on the wafer map (blank if unknown)",
+    "shot_row":    "Which reticle/shot row this die's shot is in (Minor Moves recipes "
+                   "only — blank otherwise)",
+    "shot_col":    "Which reticle/shot column this die's shot is in (Minor Moves "
+                   "recipes only — blank otherwise)",
+    "intra_row":   "Die's own row position WITHIN its shot (Minor Moves recipes only "
+                   "— blank otherwise)",
+    "intra_col":   "Die's own column position WITHIN its shot (Minor Moves recipes "
+                   "only — blank otherwise)",
+    "probe_card":  "Probe card that was active when this reading was taken",
 }
 
 CSV_SOURCE_FIELDS = {
@@ -42,6 +53,17 @@ CSV_SOURCE_FIELDS = {
     "compliance":     "Compliance-limit flag (currently always FALSE)",
     "time_stamp":     "Timestamp of the die's first reading",
     "test_serial":    "Computed test serial — see compute_test_serial",
+    "abs_row":        "Die's real absolute row index on the wafer map (blank if unknown)",
+    "abs_col":        "Die's real absolute column index on the wafer map (blank if unknown)",
+    "shot_row":       "Which reticle/shot row this die's shot is in (Minor Moves recipes "
+                      "only — blank otherwise; see the Wafer Builder Shot Map tab)",
+    "shot_col":       "Which reticle/shot column this die's shot is in (Minor Moves "
+                      "recipes only — blank otherwise)",
+    "intra_row":      "Die's own row position WITHIN its shot (Minor Moves recipes only "
+                      "— blank otherwise; see the Wafer Builder Shot tab)",
+    "intra_col":      "Die's own column position WITHIN its shot (Minor Moves recipes "
+                      "only — blank otherwise)",
+    "probe_card":     "Probe card that was active when this die was measured",
 }
 
 SOURCE_FIELDS_BY_TYPE = {"sql": SQL_SOURCE_FIELDS, "csv": CSV_SOURCE_FIELDS}
@@ -186,11 +208,32 @@ def set_default_format_name(folder: str, name: Optional[str], system: str = "acc
         json.dump({"formats": formats, "default": name}, f, indent=2)
 
 
+class _BlankMissing(dict):
+    """dict that formats an unknown/blank {placeholder} as "" instead of
+    raising - a template referencing a field this row/recipe never set
+    (e.g. shot_row on a non-Minor-Moves run) should produce a blank
+    piece of the string, not fail the whole export."""
+    def __missing__(self, key):
+        return ""
+    def __getitem__(self, key):
+        val = dict.get(self, key)
+        return "" if val in (None, "") else val
+
+
 def resolve_source(source: str, row: Dict[str, Any], context: Dict[str, Any]):
     if source == "test_serial":
         return context.get("test_serial", 0)
     if source == "iteration":
         return 1
+    # A raw (SQL-type) results_data row stores these under "row"/"col" -
+    # "abs_row"/"abs_col" are the documented, less ambiguous names offered
+    # in the format editor; a CSV-type row (from group_results_by_die) has
+    # them under the "abs_row"/"abs_col" keys directly already, so this
+    # only ever fires for the SQL path.
+    if source == "abs_row" and "abs_row" not in row:
+        return row.get("row", "")
+    if source == "abs_col" and "abs_col" not in row:
+        return row.get("col", "")
     if source in context:
         return context[source]
     return row.get(source, "")
@@ -199,6 +242,19 @@ def resolve_source(source: str, row: Dict[str, Any], context: Dict[str, Any]):
 def resolve_column_value(col: Dict[str, Any], row: Dict[str, Any], context: Dict[str, Any]):
     if "constant" in col and col["constant"] not in (None, ""):
         return col["constant"]
+    if col.get("template"):
+        # Composes several already-available source/context fields into one
+        # string (e.g. a composite die ID, or a timestamp with a fixed
+        # suffix) - "{intra_col}-{intra_row}-{shot_col}-{shot_row}" reads
+        # straight off row/context the same way a plain "source" column
+        # would, just several of them at once. A referenced name with no
+        # value resolves to "" rather than raising, so a template does not
+        # blow up a whole export over one blank field.
+        values = {**context, **row}
+        try:
+            return col["template"].format_map(_BlankMissing(values))
+        except (KeyError, ValueError, IndexError):
+            return col["template"]
     raw = resolve_source(col.get("source", ""), row, context)
     mult = col.get("multiply")
     if mult not in (None, "", 1, 1.0) and raw not in (None, ""):
@@ -292,20 +348,44 @@ def _combined_connection(rows: List[Dict[str, Any]]) -> str:
     return "_".join(seen)
 
 
+def _die_group_key(r: Dict[str, Any]):
+    """Group readings by real physical identity (row, col) when known,
+    falling back to the "die" text label only when it is not (an older
+    export, or a system/step that never resolved a real position).
+
+    Grouping by label alone broke as soon as two DIFFERENT dies shared
+    the same fallback label (e.g. both blank/"—" because neither had a
+    real ID yet) - their readings silently merged into one row. Real
+    (row, col) is the one thing that is always unique per physical die,
+    now that every measurement is attributed to the die it actually
+    measured (see instrument_panel._exec2_slot_identity / the Minor
+    Moves per-die attribution fix) rather than a shot's landing square
+    for all of them."""
+    row, col = r.get("row"), r.get("col")
+    if row is not None and col is not None:
+        return ("rc", row, col)
+    return ("label", r.get("die") or "")
+
+
 def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    order: List[str] = []
-    rows_by_die: Dict[str, List[Dict[str, Any]]] = {}
+    order: List[Any] = []
+    rows_by_key: Dict[Any, List[Dict[str, Any]]] = {}
     for r in results_data:
-        die = r.get("die") or ""
-        if die not in rows_by_die:
-            rows_by_die[die] = []
-            order.append(die)
-        rows_by_die[die].append(r)
+        key = _die_group_key(r)
+        if key not in rows_by_key:
+            rows_by_key[key] = []
+            order.append(key)
+        rows_by_key[key].append(r)
 
     out = []
-    for die in order:
-        rows = rows_by_die[die]
-        row_num, col_num = _parse_die_rc(die)
+    for key in order:
+        rows = rows_by_key[key]
+        # The display/export "die" label still comes from whichever row
+        # actually carries one (they should all agree, since they share
+        # a group key) - a blank/placeholder label is fine to keep as
+        # the label even though it is no longer what grouped them.
+        die = next((r.get("die") for r in rows if r.get("die")), rows[0].get("die") or "")
+        row_num, col_num = ((key[1], key[2]) if key[0] == "rc" else _parse_die_rc(die))
         # Prefer the real overlay die ID (same field the SQL "die_id" source
         # reads) over the synthesized row/col label, so CSV exports' ChipID
         # matches what the wafer map overlay actually shows for this die.
@@ -354,8 +434,22 @@ def group_results_by_die(results_data: List[Dict[str, Any]]) -> List[Dict[str, A
             "voltage_dmm": dmm_voltage_row.get("value") if dmm_voltage_row else "",
             "compliance": "FALSE",
             "time_stamp": rows[0].get("timestamp", "") if rows else "",
+            # Blank on any run that never set them (non-Minor-Moves, or a
+            # system/recipe with no shot concept at all) - _first below
+            # just takes whichever row in this die's group has a value.
+            "abs_row": _first(rows, "row"),
+            "abs_col": _first(rows, "col"),
+            "shot_row": _first(rows, "shot_row"),
+            "shot_col": _first(rows, "shot_col"),
+            "intra_row": _first(rows, "intra_row"),
+            "intra_col": _first(rows, "intra_col"),
+            "probe_card": _first(rows, "probe_card"),
         })
     return out
+
+
+def _first(rows: List[Dict[str, Any]], key: str):
+    return next((r.get(key) for r in rows if r.get(key) not in (None, "")), "")
 
 
 def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
