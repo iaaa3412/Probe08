@@ -512,6 +512,20 @@ class WaferMapPanel(ttk.LabelFrame):
         dw = max(1.0, min(pitch_x * scale * 0.85, 26, pitch_x * scale))
         dh = max(1.0, min(pitch_y * scale * 0.85, 26, pitch_y * scale))
         ol = "#4a7090" if dw > 5 else ""
+        # Self-check for the exact class of bug that produced the
+        # "packed together, no gaps" reports: a die box must never be
+        # wider than the real on-screen spacing between die centers. A
+        # tiny epsilon (float rounding, not a real violation) is allowed;
+        # anything past that means whatever touched this formula next
+        # reintroduced an overlap - flagged here instead of waiting for
+        # another round of screenshots to notice it.
+        overlap_w = dw - pitch_x * scale
+        overlap_h = dh - pitch_y * scale
+        warning = None
+        if overlap_w > 0.01 or overlap_h > 0.01:
+            warning = (f"die box ({dw:.3f}x{dh:.3f}) exceeds on-screen pitch "
+                      f"({pitch_x * scale:.3f}x{pitch_y * scale:.3f}) by "
+                      f"({overlap_w:.3f}, {overlap_h:.3f})px - dies will overlap")
         # Diagnostic snapshot of this draw's own numbers - read by
         # instrument_panel.py's redraw hooks and logged, so a report of
         # "still bad" from a real session comes with the actual computed
@@ -519,7 +533,7 @@ class WaferMapPanel(ttk.LabelFrame):
         self.last_draw_debug = {
             "n_dies": len(dies), "W": W, "H": H,
             "pitch_x": pitch_x, "pitch_y": pitch_y, "scale": scale,
-            "dw": dw, "dh": dh,
+            "dw": dw, "dh": dh, "warning": warning,
         }
         for d in dies:
             cx_ = to_cx(d["x_um"])

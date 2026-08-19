@@ -2584,6 +2584,8 @@ class MainLayout(ttk.Frame):
         n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
         run_dbg = self._exec2_wafer_map.last_draw_debug or {}
         self._exec2_log(f"[MAPDEBUG] Run map redrawn — {run_dbg}")
+        if run_dbg.get("warning"):
+            self._exec2_log(f"[ERROR] Run wafer map: {run_dbg['warning']}")
         self._exec2_wafer_map.clear_picks()
         name = os.path.basename(folder)
         self._exec2_map_path_var.set(
@@ -2666,6 +2668,8 @@ class MainLayout(ttk.Frame):
             rwm._draw_from_die_list(dies)  # triggers on_redraw -> overlay labels
             dbg = rwm.last_draw_debug or {}
             self._exec2_log(f"[MAPDEBUG] Results map redrawn — {dbg}")
+            if dbg.get("warning"):
+                self._exec2_log(f"[ERROR] Results wafer map: {dbg['warning']}")
         else:
             rwm.canvas.delete("all")
             rwm.dies.clear()
