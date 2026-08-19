@@ -2572,19 +2572,12 @@ class MainLayout(ttk.Frame):
 
     def _exec2_draw_wafer_map(self, quiet_if_missing: bool = False):
         folder = self._exec2_map_folder
-        # Minor Moves: the map represents wafer builder SHOTS (several
-        # real dies each), not individual dies read from a CSV - see
-        # RecipeGenPanel.shots_as_die_list(). Accretech only for now (see
-        # the Minor Moves plan) - Electroglas keeps its own PMA-driven
-        # map even once its checkbox exists.
-        if self._system == "accretech" and self._exec2_minor_moves_active():
-            gen = getattr(self, "recipe_gen", None)
-            dies = gen.shots_as_die_list() if gen is not None else []
-            n = self._exec2_wafer_map.load_die_list(dies, label="shots")
-            filename = "(Wafer Builder shots)"
-        else:
-            filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
-            n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
+        # The Run tab map is always the real per-die Accretech/Wafer
+        # Builder map, Minor Moves on or off - a shot is drawn as an
+        # OUTLINE over that die map (see _exec2_update_shot_window), never
+        # by swapping the map itself to one square per shot.
+        filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
+        n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
         self._exec2_wafer_map.clear_picks()
         name = os.path.basename(folder)
         self._exec2_map_path_var.set(
