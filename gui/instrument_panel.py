@@ -2407,24 +2407,31 @@ class MainLayout(ttk.Frame):
             ttk.Button(pos_lf, text="⏮ Back",
                        command=lambda: self._exec2_manual_step_site(-1)).grid(
                        row=6, column=0, sticky="ew", padx=(0, 1), pady=1)
+            # Plain native J - the prober's own "next die" per its internal
+            # wafer map, nothing to do with shots or the picked-sites list
+            # (Back has no native reverse, so it stays a site-list walk -
+            # see _exec2_manual_step_site's own docstring).
             ttk.Button(pos_lf, text="⏭ Next",
-                       command=lambda: self._exec2_manual_step_site(+1)).grid(
+                       command=self._exec2_manual_next_die).grid(
                        row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
+            ttk.Button(pos_lf, text="⏭⏭ Next Shot",
+                       command=self._exec2_manual_next_shot).grid(
+                       row=7, column=0, columnspan=2, sticky="ew", pady=1)
             # Only meaningful with exactly one die picked - Test Selected's
-            # own list-walking (Back/Next above) already covers "several" -
-            # so it starts (and stays) disabled otherwise; see
+            # own list-walking (Back above) already covers "several" - so
+            # it starts (and stays) disabled otherwise; see
             # _exec2_on_sites_changed for the state toggle.
             self._exec2_move_selected_btn = ttk.Button(
                 pos_lf, text="➡ Move to Selected",
                 command=self._exec2_move_to_selected, state="disabled")
             self._exec2_move_selected_btn.grid(
-                row=7, column=0, columnspan=2, sticky="ew", pady=1)
+                row=8, column=0, columnspan=2, sticky="ew", pady=1)
             # Manual, fire-and-forget version of the same Q read
             # _exec2_refresh_xy_blocking runs automatically (and blocking)
             # right before Full Die/Test Die/Test Selected/Minor Moves'
             # first move - see that method.
             ttk.Button(pos_lf, text="↻ Refresh XY", command=self._exec2_get_xy).grid(
-                row=8, column=0, columnspan=2, sticky="ew", pady=1)
+                row=9, column=0, columnspan=2, sticky="ew", pady=1)
 
         # Recipe Steps is the one that grows, so it takes the weighted row on
         # both systems - Chuck Position/Pass-Fail (row 0, above) is fixed
@@ -4810,19 +4817,20 @@ class MainLayout(ttk.Frame):
             self._exec2_log(f"[EXEC2] Unload error: {e}")
 
     def _exec2_manual_step_site(self, delta: int):
-        """Back/Next: move by one entry, either way, through the currently
-        picked test sites - the same list Test Selected walks - via an
-        absolute die-coordinate move (J). Position persists across clicks
-        (_exec2_manual_site_idx) so repeated Back/Next presses walk the list
-        in order instead of bouncing off site 0/1 every time.
+        """Back (Accretech has no native "previous die" GPIB command, only
+        "J" Next Die - see _exec2_manual_next_die): move by one entry
+        through the currently picked test sites - the same list Test
+        Selected walks - via an absolute die-coordinate move (J). Position
+        persists across clicks (_exec2_manual_site_idx) so repeated presses
+        walk the list in order instead of bouncing off site 0/1 every time.
         """
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
-            self._exec2_log("[EXEC2] Back/Next: prober not connected.")
+            self._exec2_log("[EXEC2] Back: prober not connected.")
             return
         sites = self._exec2_wafer_map.get_picked()
         if not sites:
-            self._exec2_log("[EXEC2] Back/Next: no test sites picked — click "
+            self._exec2_log("[EXEC2] Back: no test sites picked — click "
                             "dies on the map, or pick one from the Recipe "
                             "dropdown, first.")
             return
@@ -4839,7 +4847,90 @@ class MainLayout(ttk.Frame):
                 self.after(0, self._exec2_get_xy)
                 self.after(0, lambda: self._exec2_highlight_current(row, col))
             except Exception as e:
-                self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Back/Next error: {e}"))
+                self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Back error: {e}"))
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _exec2_manual_next_die(self):
+        """Next: plain native J - the prober's own "next die" per its
+        internal wafer map. Nothing to do with shots, the picked-sites
+        list, or Minor Moves - just the bare hardware command, same as
+        Electroglas's Next (eg_pma_run_panel._step_once) is the bare .PMA
+        step, not a shot-aware move."""
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            self._exec2_log("[EXEC2] Next: prober not connected.")
+            return
+        def _run():
+            try:
+                self.after(0, lambda: self._exec2_log("[EXEC2] >> J  (next die)"))
+                stb = prober.next_die()
+                self.after(0, lambda: self._exec2_log(f"[EXEC2] << STB={stb}"))
+                self.after(0, self._exec2_get_xy)
+            except Exception as e:
+                self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Next error: {e}"))
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _exec2_manual_next_shot(self):
+        """Advance to die #1 of the NEXT shot (Wafer Builder Shot Map tab's
+        shots, row-major order) - an absolute die-coordinate move computed
+        the same way Minor Moves' own landing-on-die-#1 does (see
+        _exec2_minor_move_thread's goto_shot_die), not a native command -
+        Accretech has none that understands "shot". Needs a confirmed
+        Overlay alignment to translate Wafer Builder's shot grid into real
+        die coordinates.
+        """
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            self._exec2_log("[EXEC2] Next Shot: prober not connected.")
+            return
+        gen = getattr(self, "recipe_gen", None)
+        if gen is None:
+            self._exec2_log("[EXEC2] Next Shot: the Wafer Builder tab is not available.")
+            return
+        if not self._exec2_overlay_offset_confirmed:
+            self._exec2_log("[EXEC2] Next Shot: no confirmed Overlay alignment — "
+                            "press Overlay… (above) and confirm it first.")
+            return
+        try:
+            shot_rows, shot_cols = gen._shot_dims()
+        except Exception:
+            self._exec2_log("[EXEC2] Next Shot: could not read the Wafer Builder shot size.")
+            return
+        shots = sorted((sr, sc) for (sr, sc), present in gen._shotmap_cells.items() if present)
+        if not shots:
+            self._exec2_log("[EXEC2] Next Shot: no shots on the Wafer Builder Shot Map tab.")
+            return
+        row_off = self._exec2_overlay_row_offset
+        col_off = self._exec2_overlay_col_offset
+        idx = 0
+        if self._exec2_current_rc is not None:
+            wb_row = self._exec2_current_rc[0] - row_off
+            wb_col = self._exec2_current_rc[1] - col_off
+            cur_shot = (wb_row // shot_rows, wb_col // shot_cols)
+            try:
+                idx = shots.index(cur_shot) + 1
+            except ValueError:
+                idx = 0
+        if idx >= len(shots):
+            self._exec2_log("[EXEC2] Next Shot: already at the last shot.")
+            return
+        shot_row, shot_col = shots[idx]
+        r, c = shot_die_rc(dict(gen._shot_cells), shot_rows, shot_cols, 1) or (0, 0)
+        die_x = shot_col * shot_cols + c + col_off
+        die_y = shot_row * shot_rows + r + row_off
+        def _run():
+            try:
+                self.after(0, lambda: self._exec2_log("[EXEC2] >> D  (Separate)"))
+                prober.z_down()
+                self.after(0, lambda: self._exec2_log(
+                    f"[EXEC2] >> J  (Next Shot -> shot R{shot_row}C{shot_col}, "
+                    f"die #1, X={die_x} Y={die_y})"))
+                stb = prober.move_to_die_xy(die_x, die_y)
+                self.after(0, lambda: self._exec2_log(f"[EXEC2] << STB={stb}"))
+                self.after(0, self._exec2_get_xy)
+                self.after(0, lambda: self._exec2_highlight_current(die_y, die_x))
+            except Exception as e:
+                self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Next Shot error: {e}"))
         threading.Thread(target=_run, daemon=True).start()
 
     def _exec2_move_to_selected(self):
@@ -4979,6 +5070,19 @@ class MainLayout(ttk.Frame):
                 for r in range(shot_rows) for c in range(shot_cols)]
         boxes = [wm.canvas.coords(wm.dies[rc]) for rc in cells if rc in wm.dies]
         boxes = [b for b in boxes if len(b) >= 4]
+        # Diagnostic (temporary) - if the box turns out misaligned with the
+        # overlay's own die-ID labels, this line has everything needed to
+        # tell whether it's the offset, the shot dims, or the current
+        # position that's wrong. Deduped against the last logged inputs so
+        # a zoom/pan burst (which also calls this) doesn't flood the log.
+        diag_key = (cur_row, cur_col, row_off, col_off, shot_rows, shot_cols)
+        if getattr(self, "_exec2_shot_window_last_diag", None) != diag_key:
+            self._exec2_shot_window_last_diag = diag_key
+            self._exec2_log(
+                f"[SHOT WINDOW] die R{cur_row}C{cur_col} -> WB R{wb_row}C{wb_col} "
+                f"-> shot block R{shot_r0}..{shot_r0 + shot_rows - 1}"
+                f"C{shot_c0}..{shot_c0 + shot_cols - 1} (real, offset row{row_off:+d} "
+                f"col{col_off:+d}) — {len(boxes)}/{len(cells)} cells on screen")
         if not boxes:
             return
         box = (min(b[0] for b in boxes), min(b[1] for b in boxes),
