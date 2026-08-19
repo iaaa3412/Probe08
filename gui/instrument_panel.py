@@ -2233,9 +2233,6 @@ class MainLayout(ttk.Frame):
         self._exec2_last_run_start_idx = 0
         self._exec2_steps    = []
         self._exec2_current_rc = None
-        # Accretech Back/Next's position in the currently picked test-site
-        # list (see _exec2_manual_step_site).
-        self._exec2_manual_site_idx = None
         self._exec2_overlay_row_offset = 0
         self._exec2_overlay_col_offset = 0
         self._exec2_overlay_offset_confirmed = False
@@ -2399,28 +2396,25 @@ class MainLayout(ttk.Frame):
                        row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
         else:
             # Accretech has no native "previous die" GPIB command (only "J"
-            # Next Die) - Back/Next here instead step through the CURRENTLY
-            # PICKED test sites on the wafer map (the same list Test
-            # Selected walks), via an absolute die-coordinate move, so both
-            # directions use the same well-defined list rather than Next
-            # sending a raw hardware nudge and Back not existing at all.
+            # Next Die) - Back is a plain relative die-index step backward
+            # instead (S command), the closest "die mode" equivalent to
+            # Next's bare J. Neither touches the picked-sites list or shots
+            # - see _exec2_manual_prev_die/_exec2_manual_next_die.
             ttk.Button(pos_lf, text="⏮ Back",
-                       command=lambda: self._exec2_manual_step_site(-1)).grid(
+                       command=self._exec2_manual_prev_die).grid(
                        row=6, column=0, sticky="ew", padx=(0, 1), pady=1)
-            # Plain native J - the prober's own "next die" per its internal
-            # wafer map, nothing to do with shots or the picked-sites list
-            # (Back has no native reverse, so it stays a site-list walk -
-            # see _exec2_manual_step_site's own docstring).
             ttk.Button(pos_lf, text="⏭ Next",
                        command=self._exec2_manual_next_die).grid(
                        row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
+            ttk.Button(pos_lf, text="⏮⏮ Previous Shot",
+                       command=self._exec2_manual_prev_shot).grid(
+                       row=7, column=0, sticky="ew", padx=(0, 1), pady=1)
             ttk.Button(pos_lf, text="⏭⏭ Next Shot",
                        command=self._exec2_manual_next_shot).grid(
-                       row=7, column=0, columnspan=2, sticky="ew", pady=1)
-            # Only meaningful with exactly one die picked - Test Selected's
-            # own list-walking (Back above) already covers "several" - so
-            # it starts (and stays) disabled otherwise; see
-            # _exec2_on_sites_changed for the state toggle.
+                       row=7, column=1, sticky="ew", padx=(1, 0), pady=1)
+            # Only meaningful with exactly one die picked - Test Selected
+            # already covers "several" - so it starts (and stays) disabled
+            # otherwise; see _exec2_on_sites_changed for the state toggle.
             self._exec2_move_selected_btn = ttk.Button(
                 pos_lf, text="➡ Move to Selected",
                 command=self._exec2_move_to_selected, state="disabled")
@@ -4816,36 +4810,24 @@ class MainLayout(ttk.Frame):
         except Exception as e:
             self._exec2_log(f"[EXEC2] Unload error: {e}")
 
-    def _exec2_manual_step_site(self, delta: int):
-        """Back (Accretech has no native "previous die" GPIB command, only
-        "J" Next Die - see _exec2_manual_next_die): move by one entry
-        through the currently picked test sites - the same list Test
-        Selected walks - via an absolute die-coordinate move (J). Position
-        persists across clicks (_exec2_manual_site_idx) so repeated presses
-        walk the list in order instead of bouncing off site 0/1 every time.
-        """
+    def _exec2_manual_prev_die(self):
+        """Back: no native "previous die" GPIB command exists on this
+        hardware (only "J" Next Die - see _exec2_manual_next_die), so this
+        is the closest die-mode equivalent - a plain relative die-index
+        step backward (S command, X-1), not a walk through any GUI-side
+        site list. Bounded/verified the same way every other relative
+        Accretech move in this file is (see move_xy_relative's own STB
+        handling in instruments/accretech_uf200r.py)."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self._exec2_log("[EXEC2] Back: prober not connected.")
             return
-        sites = self._exec2_wafer_map.get_picked()
-        if not sites:
-            self._exec2_log("[EXEC2] Back: no test sites picked — click "
-                            "dies on the map, or pick one from the Recipe "
-                            "dropdown, first.")
-            return
-        idx = getattr(self, "_exec2_manual_site_idx", None) or 0
-        idx = max(0, min(len(sites) - 1, idx + delta))
-        self._exec2_manual_site_idx = idx
-        row, col = sites[idx]
         def _run():
             try:
-                self.after(0, lambda: self._exec2_log(
-                    f"[EXEC2] >> J  (site {idx + 1}/{len(sites)} — X={col} Y={row})"))
-                stb = prober.move_to_die_xy(col, row)
+                self.after(0, lambda: self._exec2_log("[EXEC2] >> S  (X-1, previous die)"))
+                stb = prober.move_xy_relative(-1, 0)
                 self.after(0, lambda: self._exec2_log(f"[EXEC2] << STB={stb}"))
                 self.after(0, self._exec2_get_xy)
-                self.after(0, lambda: self._exec2_highlight_current(row, col))
             except Exception as e:
                 self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Back error: {e}"))
         threading.Thread(target=_run, daemon=True).start()
@@ -4870,51 +4852,41 @@ class MainLayout(ttk.Frame):
                 self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Next error: {e}"))
         threading.Thread(target=_run, daemon=True).start()
 
-    def _exec2_manual_next_shot(self):
-        """Advance to die #1 of the NEXT shot (Wafer Builder Shot Map tab's
-        shots, row-major order) - an absolute die-coordinate move computed
-        the same way Minor Moves' own landing-on-die-#1 does (see
-        _exec2_minor_move_thread's goto_shot_die), not a native command -
-        Accretech has none that understands "shot". Needs a confirmed
-        Overlay alignment to translate Wafer Builder's shot grid into real
-        die coordinates.
-        """
+    def _exec2_shot_step_setup(self, label: str):
+        """Shared preflight for Next Shot/Previous Shot: the prober, Wafer
+        Builder, confirmed Overlay alignment, shot size, and the sorted
+        (row-major) shot list all need to exist before either can compute
+        anything. Returns (prober, gen, shots, shot_rows, shot_cols,
+        row_off, col_off) or None (already logged why) if not."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
-            self._exec2_log("[EXEC2] Next Shot: prober not connected.")
-            return
+            self._exec2_log(f"[EXEC2] {label}: prober not connected.")
+            return None
         gen = getattr(self, "recipe_gen", None)
         if gen is None:
-            self._exec2_log("[EXEC2] Next Shot: the Wafer Builder tab is not available.")
-            return
+            self._exec2_log(f"[EXEC2] {label}: the Wafer Builder tab is not available.")
+            return None
         if not self._exec2_overlay_offset_confirmed:
-            self._exec2_log("[EXEC2] Next Shot: no confirmed Overlay alignment — "
+            self._exec2_log(f"[EXEC2] {label}: no confirmed Overlay alignment — "
                             "press Overlay… (above) and confirm it first.")
-            return
+            return None
         try:
             shot_rows, shot_cols = gen._shot_dims()
         except Exception:
-            self._exec2_log("[EXEC2] Next Shot: could not read the Wafer Builder shot size.")
-            return
+            self._exec2_log(f"[EXEC2] {label}: could not read the Wafer Builder shot size.")
+            return None
         shots = sorted((sr, sc) for (sr, sc), present in gen._shotmap_cells.items() if present)
         if not shots:
-            self._exec2_log("[EXEC2] Next Shot: no shots on the Wafer Builder Shot Map tab.")
-            return
-        row_off = self._exec2_overlay_row_offset
-        col_off = self._exec2_overlay_col_offset
-        idx = 0
-        if self._exec2_current_rc is not None:
-            wb_row = self._exec2_current_rc[0] - row_off
-            wb_col = self._exec2_current_rc[1] - col_off
-            cur_shot = (wb_row // shot_rows, wb_col // shot_cols)
-            try:
-                idx = shots.index(cur_shot) + 1
-            except ValueError:
-                idx = 0
-        if idx >= len(shots):
-            self._exec2_log("[EXEC2] Next Shot: already at the last shot.")
-            return
-        shot_row, shot_col = shots[idx]
+            self._exec2_log(f"[EXEC2] {label}: no shots on the Wafer Builder Shot Map tab.")
+            return None
+        return (prober, gen, shots, shot_rows, shot_cols,
+               self._exec2_overlay_row_offset, self._exec2_overlay_col_offset)
+
+    def _exec2_go_to_shot(self, prober, gen, shot_row: int, shot_col: int,
+                          shot_rows: int, shot_cols: int, row_off: int, col_off: int,
+                          label: str):
+        """Separate, jump to (shot_row, shot_col)'s die #1, same as Minor
+        Moves' own landing (_exec2_minor_move_thread's goto_shot_die)."""
         r, c = shot_die_rc(dict(gen._shot_cells), shot_rows, shot_cols, 1) or (0, 0)
         die_x = shot_col * shot_cols + c + col_off
         die_y = shot_row * shot_rows + r + row_off
@@ -4923,15 +4895,61 @@ class MainLayout(ttk.Frame):
                 self.after(0, lambda: self._exec2_log("[EXEC2] >> D  (Separate)"))
                 prober.z_down()
                 self.after(0, lambda: self._exec2_log(
-                    f"[EXEC2] >> J  (Next Shot -> shot R{shot_row}C{shot_col}, "
+                    f"[EXEC2] >> J  ({label} -> shot R{shot_row}C{shot_col}, "
                     f"die #1, X={die_x} Y={die_y})"))
                 stb = prober.move_to_die_xy(die_x, die_y)
                 self.after(0, lambda: self._exec2_log(f"[EXEC2] << STB={stb}"))
                 self.after(0, self._exec2_get_xy)
                 self.after(0, lambda: self._exec2_highlight_current(die_y, die_x))
             except Exception as e:
-                self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] Next Shot error: {e}"))
+                self.after(0, lambda e=e: self._exec2_log(f"[EXEC2] {label} error: {e}"))
         threading.Thread(target=_run, daemon=True).start()
+
+    def _exec2_current_shot_index(self, shots: list, shot_rows: int, shot_cols: int,
+                                  row_off: int, col_off: int) -> "int | None":
+        """Index into `shots` of whichever shot the current real die
+        position falls in, or None if unknown/not on the list."""
+        if self._exec2_current_rc is None:
+            return None
+        wb_row = self._exec2_current_rc[0] - row_off
+        wb_col = self._exec2_current_rc[1] - col_off
+        cur_shot = (wb_row // shot_rows, wb_col // shot_cols)
+        try:
+            return shots.index(cur_shot)
+        except ValueError:
+            return None
+
+    def _exec2_manual_next_shot(self):
+        """Advance to die #1 of the NEXT shot (Wafer Builder Shot Map tab's
+        shots, row-major order) - an absolute die-coordinate move, not a
+        native command - Accretech has none that understands "shot"."""
+        setup = self._exec2_shot_step_setup("Next Shot")
+        if setup is None:
+            return
+        prober, gen, shots, shot_rows, shot_cols, row_off, col_off = setup
+        cur_idx = self._exec2_current_shot_index(shots, shot_rows, shot_cols, row_off, col_off)
+        idx = 0 if cur_idx is None else cur_idx + 1
+        if idx >= len(shots):
+            self._exec2_log("[EXEC2] Next Shot: already at the last shot.")
+            return
+        shot_row, shot_col = shots[idx]
+        self._exec2_go_to_shot(prober, gen, shot_row, shot_col, shot_rows, shot_cols,
+                               row_off, col_off, "Next Shot")
+
+    def _exec2_manual_prev_shot(self):
+        """Same as Next Shot, one shot back instead."""
+        setup = self._exec2_shot_step_setup("Previous Shot")
+        if setup is None:
+            return
+        prober, gen, shots, shot_rows, shot_cols, row_off, col_off = setup
+        cur_idx = self._exec2_current_shot_index(shots, shot_rows, shot_cols, row_off, col_off)
+        idx = (len(shots) - 1) if cur_idx is None else cur_idx - 1
+        if idx < 0:
+            self._exec2_log("[EXEC2] Previous Shot: already at the first shot.")
+            return
+        shot_row, shot_col = shots[idx]
+        self._exec2_go_to_shot(prober, gen, shot_row, shot_col, shot_rows, shot_cols,
+                               row_off, col_off, "Previous Shot")
 
     def _exec2_move_to_selected(self):
         """Move straight to whichever single die is picked on the map - Z
