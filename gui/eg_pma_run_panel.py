@@ -1385,24 +1385,24 @@ class EgPmaRunPanel(ttk.Frame):
         self._log(f"[PMA] ▶ Run (Minor Moves) — {len(shots)} shot(s).")
         threading.Thread(
             target=self._minor_move_thread,
-            args=(shots, steps, origin, shot_rows, shot_cols, shot_cells),
+            args=(shots, origin, shot_rows, shot_cols, shot_cells),
             daemon=True).start()
 
-    def _minor_move_thread(self, shots: list, steps: list, origin: tuple,
+    def _minor_move_thread(self, shots: list, origin: tuple,
                            shot_rows: int, shot_cols: int, shot_cells: dict):
+        """One touchdown per shot, exactly like the .PMA-driven path above -
+        the difference is what happens AT that touchdown. A shot lands on
+        die #1 automatically, then the loaded recipe's steps run flat, top
+        to bottom, once: a "move" step (recipe_panel._STEP_TYPES) is what
+        repositions to any OTHER die # within that same shot. Mirrors
+        instrument_panel.py's _exec2_minor_move_thread (Accretech) using
+        goto_die() instead of move_to_die_xy() - see that method for the
+        fuller design note.
+        """
         drv = self._prober()
         origin_x, origin_y = origin
-        run_steps = getattr(self._main_layout, "_exec2_run_steps_once", None)
+        layout = self._main_layout
         error_msg = None
-
-        steps_by_die: dict = {}
-        for s in steps:
-            try:
-                die_num = int(float(s.get("die") or 1))
-            except (TypeError, ValueError):
-                die_num = 1
-            steps_by_die.setdefault(die_num, []).append(s)
-        needed = sorted(steps_by_die)
 
         # Set Shot Origin was captured with the chuck on shot (0,0)'s die
         # #1 (Wafer Builder Shot-tab numbering), not necessarily grid cell
@@ -1417,36 +1417,48 @@ class EgPmaRunPanel(ttk.Frame):
             die1_rc = (0, 0)
         r1, c1 = die1_rc
 
-        try:
+        class _Stop(Exception):
+            pass
+
+        def goto_shot_die(shot_row, shot_col, die_num):
+            rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+            if rc is None:
+                raise RuntimeError(f"die #{die_num} is not on shot "
+                                   f"R{shot_row}C{shot_col}")
+            r, c = rc
+            die_x = origin_x + shot_col * shot_cols + (c - c1)
+            die_y = origin_y + shot_row * shot_rows + (r - r1)
+            label = f"shot R{shot_row}C{shot_col} die #{die_num} (X{die_x} Y{die_y})"
+            self._ui(lambda lab=label: self._status_var.set(f"moving to {lab}"))
             drv.z_down()
+            self._ui(lambda lab=label: self._log(f"[PMA] >> goto_die X={die_x} Y={die_y}"))
+            drv.goto_die(die_x, die_y)
+            drv.z_up()
+
+        try:
             for shot_row, shot_col in shots:
                 if self._abort:
                     break
-                for die_num in needed:
-                    if self._abort:
-                        break
-                    rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
-                    if rc is None:
-                        self._ui(lambda sr=shot_row, sc=shot_col, dn=die_num: self._log(
-                            f"[PMA] ⚠ Minor Moves: die #{dn} is not on shot "
-                            f"R{sr}C{sc} — skipped."))
-                        continue
-                    r, c = rc
-                    die_x = origin_x + shot_col * shot_cols + (c - c1)
-                    die_y = origin_y + shot_row * shot_rows + (r - r1)
-                    label = f"shot R{shot_row}C{shot_col} die #{die_num} (X{die_x} Y{die_y})"
-                    self._ui(lambda lab=label: self._status_var.set(f"moving to {lab}"))
-                    self._ui(lambda lab=label: self._log(f"[PMA] >> goto_die X={die_x} Y={die_y}"))
-                    drv.goto_die(die_x, die_y)
-                    drv.z_up()
-                    ok = bool(run_steps(steps_by_die[die_num])) if run_steps else False
-                    self._ui(lambda p=ok, lab=label: self._log(
-                        f"[RESULT] {'PASS' if p else 'FAIL'}  {lab}"))
-                    drv.z_down()
+                self._ui(lambda sr=shot_row, sc=shot_col: self._log(
+                    f"[PMA] Shot R{sr}C{sc}: landing on die #1"))
+                try:
+                    goto_shot_die(shot_row, shot_col, 1)
+                except _Stop:
+                    break
+                layout._exec2_move_fn = (
+                    lambda die_num, sr=shot_row, sc=shot_col: goto_shot_die(sr, sc, die_num))
+                try:
+                    ok = bool(layout._exec2_run_steps_once())
+                finally:
+                    layout._exec2_move_fn = None
+                drv.z_down()
+                self._ui(lambda p=ok, sr=shot_row, sc=shot_col: self._log(
+                    f"[RESULT] {'PASS' if p else 'FAIL'}  shot R{sr}C{sc}"))
         except Exception as e:
             error_msg = str(e)
             self._ui(lambda: self._log(f"[PMA] ERROR: {e}"))
         finally:
+            layout._exec2_move_fn = None
             self._running = False
             try:
                 self._make_safe(drv)

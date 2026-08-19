@@ -300,9 +300,13 @@ class EgProberDebugPanel(ttk.Frame):
     def _build_jog(self, parent):
         """Arrow-pad jog, the software equivalent of the prober's joystick.
 
-        XY uses MD (relative die), which is the only XY motion verified to work
-        and which ?P tracks exactly. Z uses ZR (relative), because ZU/ZD are
-        no-ops while Z TRAVEL MODE is auto profile.
+        XY defaults to MD (relative die), the only XY motion verified to
+        work and which ?P tracks exactly - a Die/Distance toggle switches
+        the same pad over to MM (relative microns, via move_relative_um -
+        see that method and the MM_UNIT_UM measurement note in
+        electroglas_2001x.py for the 2.5 um/count conversion this rests on).
+        Z uses ZR (relative), because ZU/ZD are no-ops while Z TRAVEL MODE
+        is auto profile.
 
         Step sizes are read on the main thread before the worker starts -
         Tkinter is not thread-safe.
@@ -311,9 +315,21 @@ class EgProberDebugPanel(ttk.Frame):
                             padding=6)
         lf.pack(fill="x", padx=4, pady=(4, 6))
 
+        mode_row = ttk.Frame(lf)
+        mode_row.pack(fill="x")
+        ttk.Label(mode_row, text="XY mode:").pack(side="left")
+        self._jog_xy_mode = tk.StringVar(value="die")
+        ttk.Radiobutton(mode_row, text="Die (MD)", value="die",
+                        variable=self._jog_xy_mode,
+                        command=self._jog_xy_mode_changed).pack(side="left", padx=(4, 8))
+        ttk.Radiobutton(mode_row, text="Distance (MM)", value="um",
+                        variable=self._jog_xy_mode,
+                        command=self._jog_xy_mode_changed).pack(side="left")
+
         row = ttk.Frame(lf)
-        row.pack(fill="x")
-        ttk.Label(row, text="XY step (dies):").pack(side="left")
+        row.pack(fill="x", pady=(2, 0))
+        self._jog_xy_step_lbl = tk.StringVar(value="XY step (dies):")
+        ttk.Label(row, textvariable=self._jog_xy_step_lbl).pack(side="left")
         self._jog_xy_step = tk.StringVar(value="1")
         ttk.Entry(row, textvariable=self._jog_xy_step, width=4).pack(side="left", padx=(2, 8))
         ttk.Label(row, text="Z step (0.1 mil):").pack(side="left")
@@ -368,6 +384,61 @@ class EgProberDebugPanel(ttk.Frame):
         for key, (dx, dy) in (("<Up>", _JOG_UP), ("<Down>", _JOG_DOWN),
                               ("<Left>", _JOG_LEFT), ("<Right>", _JOG_RIGHT)):
             self.bind_all(key, lambda e, x=dx, y=dy: self._jog_xy(x, y))
+
+        self._build_theta(parent)
+
+    def _build_theta(self, parent):
+        """MT (relative rotation) - see electroglas_2001x.py's module
+        docstring for what MT is actually verified to do: the command and
+        ?T's one-for-one tracking are real, but the UNIT is not established
+        in degrees, and normal operation drives rotation through AA (Auto
+        Align), not by hand. CW/CCW here just means "increases ?T" /
+        "decreases ?T" - which physical direction that is has not been
+        checked against the machine.
+        """
+        lf = ttk.LabelFrame(parent, text="Theta (rotation)", padding=6)
+        lf.pack(fill="x", padx=4, pady=(0, 6))
+
+        row = ttk.Frame(lf)
+        row.pack(fill="x")
+        ttk.Label(row, text="Theta step (MT units):").pack(side="left")
+        self._jog_theta_step = tk.StringVar(value="100")
+        ttk.Entry(row, textvariable=self._jog_theta_step, width=6).pack(
+            side="left", padx=(2, 0))
+
+        btn_row = ttk.Frame(lf)
+        btn_row.pack(pady=(6, 0))
+
+        def mk(text, cmd):
+            b = ttk.Button(btn_row, text=text, width=10, command=cmd)
+            b.pack(side="left", padx=3)
+            self._jog_buttons.append(b)
+            return b
+
+        mk("↻ CW", lambda: self._jog_theta(1))
+        mk("↺ CCW", lambda: self._jog_theta(-1))
+
+        ttk.Label(lf, text="MT's unit is NOT confirmed to be degrees, and "
+                           "CW/CCW here just means +MT/-MT — verify against "
+                           "?T (and by eye) before trusting the direction. "
+                           "Rotation is normally left to Auto Align (AA).",
+                  foreground="#aa5500", font=("Arial", 8), wraplength=380,
+                  justify="left").pack(anchor="w", pady=(4, 0))
+
+    def _jog_theta(self, direction):
+        try:
+            step = abs(int(self._jog_theta_step.get()))
+        except ValueError:
+            messagebox.showerror("Jog", "Theta step must be a whole number (MT units).")
+            return
+        dtheta = direction * step
+
+        def work(drv):
+            ack = drv.move_theta_relative(dtheta)
+            t = drv.query("?T")
+            self._log(f"[JOG] MT{dtheta:+d} -> {t}")
+            return f"?T = {t}   [{ack}]"
+        self._jog_start(f"MT{dtheta:+d}", work)
 
     def _jog_set_busy(self, busy: bool):
         """Lock the jog pad while a move is in flight. Main thread only."""
@@ -425,20 +496,37 @@ class EgProberDebugPanel(ttk.Frame):
             self.after(0, _finish)
         self._run_bg(_run)
 
+    def _jog_xy_mode_changed(self):
+        die_mode = self._jog_xy_mode.get() == "die"
+        self._jog_xy_step_lbl.set(
+            "XY step (dies):" if die_mode else "XY step (um):")
+
     def _jog_xy(self, sx, sy):
+        die_mode = self._jog_xy_mode.get() == "die"
         try:
-            step = abs(int(self._jog_xy_step.get()))
+            step = (abs(int(self._jog_xy_step.get())) if die_mode
+                   else abs(float(self._jog_xy_step.get())))
         except ValueError:
-            messagebox.showerror("Jog", "XY step must be a whole number of dies.")
+            messagebox.showerror(
+                "Jog", "XY step must be a whole number of dies."
+                if die_mode else "XY step must be a number of microns.")
             return
         dx, dy = sx * step, sy * step
 
-        def work(drv):
-            ack = drv.move_relative_die(dx, dy)
-            pos = drv.get_xy_position()
-            self._log(f"[JOG] MD {dx:+d},{dy:+d} -> {pos}")
-            return f"?P = {pos}   [{ack}]"
-        self._jog_start(f"MD {dx:+d},{dy:+d}", work)
+        if die_mode:
+            def work(drv):
+                ack = drv.move_relative_die(dx, dy)
+                pos = drv.get_xy_position()
+                self._log(f"[JOG] MD {dx:+d},{dy:+d} -> {pos}")
+                return f"?P = {pos}   [{ack}]"
+            self._jog_start(f"MD {dx:+d},{dy:+d}", work)
+        else:
+            def work(drv):
+                ack = drv.move_relative_um(dx, dy)
+                pos = drv.get_xy_position()
+                self._log(f"[JOG] MM {dx:+.0f},{dy:+.0f} um -> {pos}")
+                return f"?P = {pos}   [{ack}]"
+            self._jog_start(f"MM {dx:+.0f},{dy:+.0f} um", work)
 
     def _jog_z(self, direction):
         try:

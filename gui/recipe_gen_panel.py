@@ -1142,6 +1142,14 @@ class RecipeGenPanel(ttk.Frame):
     def _state_to_dict(self) -> dict:
         def kstr(k):
             return f"{k[0]},{k[1]}"
+        # The Run tab's Overlay alignment (row/col offset between this map's
+        # logical die grid and the real Accretech extraction) lives on the
+        # OTHER panel (instrument_panel.py's Run tab, self._main_layout) -
+        # saved here anyway because it is meaningless without the map it was
+        # confirmed against, and there is nowhere else it survives a
+        # relaunch. See _state_from_dict / instrument_panel._exec2_reapply_
+        # overlay for the restore side.
+        ml = self._main_layout
         return {
             "shot_rows": self._shot_rows_var.get(), "shot_cols": self._shot_cols_var.get(),
             "die_pitch_x": self._die_pitch_x_var.get(), "die_pitch_y": self._die_pitch_y_var.get(),
@@ -1152,6 +1160,9 @@ class RecipeGenPanel(ttk.Frame):
             "shotmap_cells": {kstr(k): v for k, v in self._shotmap_cells.items()},
             "die_status": {",".join(str(x) for x in k): v
                           for k, v in self._die_status.items()},
+            "overlay_row_offset": getattr(ml, "_exec2_overlay_row_offset", 0),
+            "overlay_col_offset": getattr(ml, "_exec2_overlay_col_offset", 0),
+            "overlay_confirmed": bool(getattr(ml, "_exec2_overlay_offset_confirmed", False)),
         }
 
     def _state_from_dict(self, data: dict):
@@ -1179,6 +1190,19 @@ class RecipeGenPanel(ttk.Frame):
         self._draw_shot()
         self._draw_shotmap()
         self._redraw_diemap()
+        # Restore (or, for a map/folder that never had one, correctly clear)
+        # the Run tab's Overlay alignment - see _state_to_dict. Only stores
+        # the numbers here; the Accretech map for THIS folder may not be
+        # loaded yet at this point in a folder switch, so the actual re-draw
+        # is instrument_panel.load_ata_folder's job, after its own map load.
+        ml = self._main_layout
+        if hasattr(ml, "_exec2_overlay_offset_confirmed"):
+            try:
+                ml._exec2_overlay_row_offset = int(data.get("overlay_row_offset", 0) or 0)
+                ml._exec2_overlay_col_offset = int(data.get("overlay_col_offset", 0) or 0)
+            except (TypeError, ValueError):
+                ml._exec2_overlay_row_offset = ml._exec2_overlay_col_offset = 0
+            ml._exec2_overlay_offset_confirmed = bool(data.get("overlay_confirmed", False))
 
     def _current_folder(self) -> Optional[str]:
         return getattr(self._main_layout, "_exec2_map_folder", None) or \

@@ -14,8 +14,14 @@ except ImportError:
     _pma_xlrd = None
 
 
+# "move" only appears in the editor's Type dropdown when a recipe's Minor
+# Moves checkbox (RecipePanel._minor_moves_var) is checked - see
+# RecipePanel._refresh_type_values. It repositions the chuck to a specific
+# die WITHIN the shot the current touchdown is already sitting on (Die #
+# names which one, Wafer Builder Shot-tab order) - meaningless without
+# Minor Moves' shot geometry, so it's hidden rather than just disabled.
 _STEP_TYPES    = ("resistance", "ohmf", "voltage", "current", "wave", "passfail",
-                  "delay", "open", "picture")
+                  "delay", "open", "picture", "move")
 _STEP_MODES    = ("measure", "apply")
 _INSTRUMENTS   = ("DMM", "SMU", "WGEN")
 _SMU_CHANNELS  = ("A", "B")
@@ -109,6 +115,52 @@ def _is_measurement_step(step: dict) -> bool:
     return False
 
 
+def _step_unit(step: dict) -> str:
+    """The physical unit a step's own value carries - "" for step types
+    that don't produce/force a plain V/A/ohm quantity (delay, open,
+    passfail, picture, wave)."""
+    t = step.get("type")
+    if t in ("resistance", FOUR_WIRE_TYPE):
+        return "ohm"
+    if t == "voltage":
+        return "V"
+    if t == "current":
+        return "A"
+    return ""
+
+
+def describe_target_calc(measured_step: dict, applied_step: dict) -> str:
+    """Grey hint text: what combining a measure step's own reading with its
+    Target step's forced quantity will compute - e.g. force current
+    elsewhere, measure voltage here, and the two combine into a resistance.
+    "" means there's no known calculation for this pair of units - the
+    Target is still kept as a reference (so a passfail after it can still
+    name it), but the step's raw reading is what gets reported/checked."""
+    a_unit = _step_unit(applied_step)
+    m_unit = _step_unit(measured_step)
+    if not (a_unit and m_unit and {a_unit, m_unit} == {"V", "A"}):
+        return ""
+    applied_name = applied_step.get("name") or "target"
+    if m_unit == "V":
+        return f"→ resistance: R = this reading (V) ÷ '{applied_name}' (I)  →  Ω"
+    return f"→ resistance: R = '{applied_name}' (V) ÷ this reading (I)  →  Ω"
+
+
+def compute_target_derived(measured_value: float, measured_unit: str,
+                           applied_value: float, applied_unit: str):
+    """(value, unit) derived from a measure step's own reading plus its
+    Target step's value, or None when no known calculation applies to this
+    pair of units - the caller should keep the raw measured value in that
+    case (blank divide-by-zero also returns None, for the same reason)."""
+    if {measured_unit, applied_unit} != {"V", "A"}:
+        return None
+    v = measured_value if measured_unit == "V" else applied_value
+    i = measured_value if measured_unit == "A" else applied_value
+    if not i:
+        return None
+    return v / i, "ohm"
+
+
 def _instrument_options(step_type: str, mode: str) -> tuple:
     if step_type == "resistance":
         return ("DMM", "SMU")
@@ -176,12 +228,19 @@ def _normalize_step(step: dict) -> dict:
     t = step["type"]
     # Blank/unparsable (old recipes, or a hand-edited CSV with no "die"
     # column at all) defaults to 1 - the common single-die-per-shot case
-    # then needs nothing set. Applies to every step type, including
-    # passfail/delay/open, which the branches below return out of early.
-    try:
-        step["die"] = str(max(1, int(float(step.get("die") or "1"))))
-    except (TypeError, ValueError):
-        step["die"] = "1"
+    # then needs nothing set. Passfail still carries its own die number (it
+    # tracks a per-die verdict for shot coloring - see
+    # instrument_panel._exec2_run_steps_once's _exec2_slot_verdicts), so it
+    # defaults the same way. Delay/open/picture touch no die at all - a wait,
+    # a channel release, and a not-yet-implemented photo aren't "of" any
+    # die - so they get no number rather than a misleading "1".
+    if t in ("delay", "open", "picture"):
+        step["die"] = ""
+    else:
+        try:
+            step["die"] = str(max(1, int(float(step.get("die") or "1"))))
+        except (TypeError, ValueError):
+            step["die"] = "1"
     # Blank means switch-routed, NOT "work out the default from the
     # instrument". Every recipe written before this field existed was
     # switch-routed, and quietly re-reading one as direct would stop it
@@ -226,7 +285,21 @@ def _normalize_step(step: dict) -> dict:
         step["min"] = step["max"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
         return step
+    if t == "move":
+        # Die # is the one field that matters - see _STEP_TYPES - everything
+        # else here routes/measures nothing.
+        step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
+        step["hi"] = step["lo"] = step["conn"] = step["level"] = ""
+        step["limit"] = step["shape"] = step["freq"] = ""
+        step["min"] = step["max"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        try:
+            step["die"] = str(max(1, int(float(step.get("die") or "1"))))
+        except (TypeError, ValueError):
+            step["die"] = "1"
+        return step
 
+    saved_target = step.get("target", "")
     step["target"] = ""
     step["min"] = step["max"] = ""
     if t in ("resistance", FOUR_WIRE_TYPE):
@@ -235,6 +308,14 @@ def _normalize_step(step: dict) -> dict:
         step["mode"] = "apply"
     elif step["mode"] not in _STEP_MODES:
         step["mode"] = "measure"
+    if step["mode"] == "measure":
+        # A measure step's Target names an earlier APPLY step whose forced
+        # quantity combines with this step's own reading into a derived
+        # value (usually resistance - see compute_target_derived /
+        # instrument_panel._exec2_run_steps_once). Blank is legitimate -
+        # most measurements (2-wire, 4-wire ohms) need nothing applied
+        # elsewhere to already mean what they say.
+        step["target"] = saved_target
 
     options = _instrument_options(t, step["mode"])
     # Blank is now a legitimate state, not just "not yet set" - see
@@ -898,7 +979,7 @@ class RecipePanel(ttk.Frame):
         """
         blank = [s.get("name") or f"step {i}" for i, s in enumerate(steps, 1)
                  if not s.get("instrument")
-                 and s.get("type") not in ("delay", "open", "passfail", "picture")]
+                 and s.get("type") not in ("delay", "open", "passfail", "picture", "move")]
         if not blank:
             return
         self.controller.log(
@@ -1113,6 +1194,8 @@ class RecipePanel(ttk.Frame):
         bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 4))
         ttk.Button(bar, text="⬅ Take from map selection",
                    command=self._sites_from_map).pack(side="left")
+        ttk.Button(bar, text="🏷 Take die IDs",
+                   command=self._sites_from_die_ids).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="➡ Push to map",
                    command=self._sites_to_map).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="✕ Remove selected",
@@ -1185,6 +1268,39 @@ class RecipePanel(ttk.Frame):
         self.controller.log(
             f"[RECIPE] '{self._current}': touchdown list set to {len(sites)} "
             f"die(s) from the map selection"
+            + (f" and saved to probe card '{card}'." if saved
+               else " — NOT saved (no probe card); press 💾 Save."))
+
+    def _sites_from_die_ids(self):
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        overlay = getattr(ui, "_exec2_overlay_die_ids", None) or {}
+        ided = {}
+        for rc in wm.dies:
+            die_id = overlay.get(rc) or wm.die_ids.get(rc, "")
+            if die_id:
+                ided[rc] = die_id
+        if not ided:
+            messagebox.showinfo(
+                "Touchdowns",
+                "No dies on the loaded map carry a die ID.\n\n"
+                "Overlay the map (Run tab) or load a map that has real IDs, "
+                "then press this again.")
+            return
+        picks = sorted(ided.keys())
+        wm.set_picked(picks)
+        sites = [{"die_id": ided[rc], "row": rc[0], "col": rc[1]} for rc in picks]
+        self._sites[:] = sites
+        self._store_form()
+        self._refresh_sites()
+        card = self._get_active_card()
+        saved = bool(card) and bool(self._save_recipes(card, self._recipes))
+        self.controller.log(
+            f"[RECIPE] '{self._current}': touchdown list set to {len(sites)} "
+            f"die(s) with an ID from the map"
             + (f" and saved to probe card '{card}'." if saved
                else " — NOT saved (no probe card); press 💾 Save."))
 
@@ -1328,10 +1444,11 @@ class RecipePanel(ttk.Frame):
         ttk.Entry(editor, textvariable=self._ed_vars["name"], width=12).grid(
             row=0, column=1, sticky="w")
         _lbl(0, 2, "Type:")
-        type_cb = ttk.Combobox(editor, textvariable=self._ed_vars["type"],
-                               values=self._step_type_choices, state="readonly", width=10)
-        type_cb.grid(row=0, column=3, sticky="w")
-        type_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
+        self._type_cb = ttk.Combobox(editor, textvariable=self._ed_vars["type"],
+                                     values=self._step_type_choices, state="readonly", width=10,
+                                     postcommand=self._refresh_type_values)
+        self._type_cb.grid(row=0, column=3, sticky="w")
+        self._type_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
         _lbl(0, 4, "Mode:")
         self._mode_cb = ttk.Combobox(editor, textvariable=self._ed_vars["mode"],
                                      values=_STEP_MODES, state="readonly", width=8)
@@ -1352,6 +1469,16 @@ class RecipePanel(ttk.Frame):
                                        values=("all",), width=13,
                                        postcommand=self._refresh_target_values)
         self._target_cb.grid(row=1, column=3, sticky="w")
+        self._target_cb.bind("<<ComboboxSelected>>", lambda _e: self._update_target_calc_hint())
+        self._target_cb.bind("<KeyRelease>", lambda _e: self._update_target_calc_hint())
+        # Grey, computed-on-the-fly explanation of what a measure step's
+        # Target will combine into (e.g. force current elsewhere + measure
+        # voltage here -> resistance) - see describe_target_calc. Placed
+        # under the Direct checkbox, in the columns it doesn't use.
+        self._target_calc_var = tk.StringVar(value="")
+        ttk.Label(editor, textvariable=self._target_calc_var, foreground="#6b7280",
+                 font=("Arial", 8, "italic"), wraplength=420, justify="left").grid(
+                 row=6, column=4, columnspan=4, sticky="w", padx=(6, 2), pady=(2, 0))
         _lbl(1, 4, "HI:")
         # readonly - a step can only pick a pin actually on the active probe
         # card, which itself can now only carry pins the active bench really
@@ -1474,15 +1601,57 @@ class RecipePanel(ttk.Frame):
             tokens = [v for v, _label in self._get_pins()]
         cb.config(values=tokens)
 
+    def _refresh_type_values(self):
+        # "move" needs Minor Moves' shot geometry to mean anything - see
+        # _STEP_TYPES - so it's only offered while that recipe's checkbox is
+        # on. A step already saved as "move" still shows/loads fine if the
+        # box later gets unchecked; it just can't be freshly picked again
+        # until it's back on.
+        choices = self._step_type_choices
+        if not self._minor_moves_var.get():
+            choices = tuple(t for t in choices if t != "move")
+        self._type_cb.config(values=choices)
+
     def _refresh_target_values(self):
-        if self._ed_vars["type"].get() == "passfail":
+        t = self._ed_vars["type"].get()
+        mode = self._ed_vars["mode"].get()
+        if t == "passfail":
             names = [s.get("name", "") for s in self._steps
                      if _is_measurement_step(s) and s.get("name")]
+        elif mode == "measure":
+            # A measure step's Target is an earlier APPLY step (force
+            # current/voltage), not "all"/any-step like open's - it's naming
+            # what to divide this reading by, not what to release. Blank
+            # (first, so it's the easy pick) clears a Target set by mistake -
+            # the step then just reports its own raw reading, same as if
+            # Target had never been touched.
+            names = [""] + [s.get("name", "") for s in self._steps
+                            if s.get("mode") == "apply" and s.get("type") in ("voltage", "current")
+                            and s.get("name")]
         else:
             names = ["all"] + [s.get("name", "") for s in self._steps
-                               if s.get("type") not in ("delay", "open", "passfail", "picture")
+                               if s.get("type") not in ("delay", "open", "passfail", "picture", "move")
                                and s.get("name")]
         self._target_cb.config(values=names)
+
+    def _update_target_calc_hint(self):
+        if not hasattr(self, "_target_calc_var"):
+            return
+        t = self._ed_vars["type"].get()
+        mode = self._ed_vars["mode"].get()
+        tgt = self._ed_vars["target"].get().strip()
+        if mode != "measure" or not tgt or tgt.lower() == "all":
+            self._target_calc_var.set("")
+            return
+        applied = self._find_step(tgt)
+        if applied is None:
+            self._target_calc_var.set(f"target '{tgt}' not found among the earlier steps")
+            return
+        desc = describe_target_calc({"type": t, "mode": mode}, applied)
+        self._target_calc_var.set(
+            desc or f"no known calculation for a {t} reading + "
+                    f"'{applied.get('name')}' ({applied.get('type')}) — will "
+                    "record the raw measurement unchanged")
 
     def _on_type_change(self):
         t = self._ed_vars["type"].get()
@@ -1512,11 +1681,19 @@ class RecipePanel(ttk.Frame):
         self._avg_count_ent.config(state="disabled")
         self._avg_delay_ent.config(state="disabled")
         self._nplc_ent.config(state="disabled")
+        # Die # means nothing for a wait or a channel release - see
+        # _normalize_step - so it's greyed out and cleared for those, same
+        # as every other field that type doesn't use.
+        if t in ("delay", "open", "picture"):
+            self._ed_vars["die"].set("")
+            self._die_ent.config(state="disabled")
+        else:
+            self._die_ent.config(state="normal")
         # delay/open/passfail/picture route nothing and return early below,
         # so settle the Direct box here rather than in each branch. Only
         # "open" can carry channels, and those are the target step's, not
         # its own - none of the four is a thing you cable up by hand.
-        if t in ("delay", "open", "passfail", "picture"):
+        if t in ("delay", "open", "passfail", "picture", "move"):
             self._ed_vars["route"].set(ROUTE_SWITCH)
             self._route_defaulted_for = None
             self._direct_var.set(False)
@@ -1524,12 +1701,23 @@ class RecipePanel(ttk.Frame):
         else:
             self._direct_chk.config(state="normal")
 
+        if t == "move":
+            self._ed_vars["mode"].set("")
+            self._ed_vars["chan"].set("")
+            self._ed_vars["instrument"].set("")
+            self._mode_cb.config(state="disabled")
+            _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
+            self._update_target_calc_hint()
+            return
         if t == "delay":
             self._ed_vars["mode"].set("")
             self._ed_vars["chan"].set("")
             self._ed_vars["instrument"].set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets, "disabled")
+            if not self._ed_vars["level"].get():
+                self._ed_vars["level"].set("200")
+            self._update_target_calc_hint()
             return
         if t == "picture":
             self._ed_vars["mode"].set("")
@@ -1537,6 +1725,7 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["instrument"].set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
+            self._update_target_calc_hint()
             return
         if t == "open":
             self._ed_vars["mode"].set("")
@@ -1546,6 +1735,7 @@ class RecipePanel(ttk.Frame):
             self._target_cb.config(state="normal")
             self._refresh_target_values()
             _set(self._pin_widgets + [self._level_ent], "disabled")
+            self._update_target_calc_hint()
             return
         if t == "passfail":
             self._ed_vars["mode"].set("")
@@ -1557,6 +1747,7 @@ class RecipePanel(ttk.Frame):
             _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
             self._pf_min_ent.config(state="normal")
             self._pf_max_ent.config(state="normal")
+            self._update_target_calc_hint()
             return
 
         if t in ("resistance", FOUR_WIRE_TYPE):
@@ -1614,12 +1805,22 @@ class RecipePanel(ttk.Frame):
             if not self._ed_vars["nplc"].get():
                 self._ed_vars["nplc"].set("1")
 
+        # A measure step's Target names an earlier apply step to combine
+        # with (see _normalize_step / describe_target_calc) - open/passfail
+        # already enabled it for their own, different, meaning above.
+        if mode == "measure":
+            self._target_cb.config(state="normal")
+            self._refresh_target_values()
+        else:
+            self._ed_vars["target"].set("")
+
         # Last, so it can override the pin/conn states the branches above
         # just set: a direct step disables them whatever its type wanted.
         if instrument != self._route_defaulted_for:
             self._ed_vars["route"].set(self._default_route_for(instrument))
             self._route_defaulted_for = instrument
         self._apply_route_state()
+        self._update_target_calc_hint()
 
     # ------------------------------------------------------------------
     # DIRECT vs SWITCH
@@ -1742,12 +1943,15 @@ class RecipePanel(ttk.Frame):
         # Before every type check: a directly-cabled step closes nothing
         # whatever it measures, because the operator has already made the
         # connection by hand at the probe card.
-        if step.get("route") == ROUTE_DIRECT and t not in ("delay", "picture"):
+        if step.get("route") == ROUTE_DIRECT and t not in ("delay", "picture", "move"):
             return [], ["direct wiring — no switchbox, nothing to close"], []
         if t == "delay":
             return [], ["no switching — wait"], []
         if t == "picture":
             return [], ["no switching — take picture (not yet implemented)"], []
+        if t == "move":
+            return [], [f"no switching — move chuck to die {step.get('die') or '?'} "
+                        "of this shot"], []
         if t == "passfail":
             tgt = (step.get("target") or "").strip()
             return [], [f"no switching — checks '{tgt}' against Min/Max" if tgt
@@ -1758,7 +1962,7 @@ class RecipePanel(ttk.Frame):
                 return [], ["open ALL channels (channel.open('allslots')) "
                             "+ reset all instrument outputs"], []
             ref = self._find_step(tgt)
-            if ref is None or ref.get("type") in ("delay", "open", "passfail", "picture"):
+            if ref is None or ref.get("type") in ("delay", "open", "passfail", "picture", "move"):
                 return [], [], [tgt or "(no target)"]
             channels = [c for c in (ref.get("conn") or "").replace(" ", "").split(",")
                         if c]
@@ -1846,6 +2050,10 @@ class RecipePanel(ttk.Frame):
                 mn, mx = step.get("min") or "—", step.get("max") or "—"
                 lines.append(f"{label}  check '{tgt}' in [{mn}, {mx}] — no switching")
                 continue
+            if step.get("type") == "move":
+                lines.append(f"{label}  move to die {step.get('die') or '?'} "
+                             "of this shot — no switching")
+                continue
             verb = "open" if step.get("type") == "open" else "close"
             body = f"{verb} {stored}" if stored else "no closures stored"
             if stored != computed:
@@ -1893,6 +2101,17 @@ class RecipePanel(ttk.Frame):
             if t == "picture":
                 continue
 
+            if t == "move":
+                if not self._minor_moves_var.get():
+                    issues.append(f"ERROR {tag}: 'move' steps need this recipe's "
+                                  "Minor Moves checkbox on")
+                try:
+                    if int(float(s.get("die") or "")) < 1:
+                        raise ValueError
+                except ValueError:
+                    issues.append(f"ERROR {tag}: Die # must be a whole number ≥ 1")
+                continue
+
             if t == "passfail":
                 tgt = (s.get("target") or "").strip()
                 if tgt:
@@ -1938,7 +2157,7 @@ class RecipePanel(ttk.Frame):
                 elif idx >= i - 1:
                     issues.append(f"ERROR {tag}: target '{tgt}' comes at/after this "
                                   "open step — open must follow the step it opens")
-                elif self._steps[idx].get("type") in ("delay", "open", "passfail", "picture"):
+                elif self._steps[idx].get("type") in ("delay", "open", "passfail", "picture", "move"):
                     issues.append(f"ERROR {tag}: target '{tgt}' is a "
                                   f"{self._steps[idx].get('type')} step (nothing to open)")
                 else:
@@ -1954,6 +2173,21 @@ class RecipePanel(ttk.Frame):
                 issues.append(f"ERROR {tag}: instrument '{instrument or '(none)'}' is "
                               f"not valid for {t}{'/' + mode if mode else ''} "
                               f"(expected {' or '.join(valid_instruments)})")
+
+            if mode == "measure":
+                tgt = (s.get("target") or "").strip()
+                if tgt:
+                    idx = self._step_index(tgt)
+                    if idx is None:
+                        issues.append(f"ERROR {tag}: target '{tgt}' not found")
+                    elif idx >= i - 1:
+                        issues.append(f"ERROR {tag}: target '{tgt}' comes at/after this "
+                                      "step — the applied step must come first")
+                    elif (self._steps[idx].get("mode") != "apply"
+                          or self._steps[idx].get("type") not in ("voltage", "current")):
+                        issues.append(f"ERROR {tag}: target '{tgt}' is a "
+                                      f"{self._steps[idx].get('type')} step (not a "
+                                      "voltage/current APPLY step to combine with)")
 
             # A directly-cabled step routes through no switch, so its pins
             # name nothing the GUI can act on. They are not required, and a
@@ -2186,7 +2420,7 @@ class RecipePanel(ttk.Frame):
                 "Hand-edited connections will be replaced."):
             return
         for step in self._steps:
-            if step.get("type") not in ("delay", "open", "passfail", "picture"):
+            if step.get("type") not in ("delay", "open", "passfail", "picture", "move"):
                 step["conn"] = self._computed_conn_string(step)
         for step in self._steps:
             if step.get("type") == "open":
@@ -2233,11 +2467,25 @@ class RecipePanel(ttk.Frame):
             return True
         if step["type"] == "picture":
             return True
+        if step["type"] == "move":
+            if not self._minor_moves_var.get():
+                messagebox.showerror(
+                    "Invalid Step",
+                    "'move' steps need this recipe's Minor Moves checkbox "
+                    "on first.")
+                return False
+            try:
+                if int(float(step.get("die") or "")) < 1:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid Step", "Die # must be a whole number ≥ 1.")
+                return False
+            return True
         if step["type"] == "open":
             tgt = step["target"].strip()
             if tgt.lower() != "all":
                 ref = self._find_step(tgt)
-                if ref is None or ref.get("type") in ("delay", "open", "passfail", "picture"):
+                if ref is None or ref.get("type") in ("delay", "open", "passfail", "picture", "move"):
                     messagebox.showerror(
                         "Invalid Step",
                         "Open steps need a Target: a previous measurement/wave\n"
