@@ -1617,6 +1617,16 @@ class NanoZPanel(ttk.Frame):
         self._btn_manual_next_die = ttk.Button(pos_lf, text="▶▶ Next Die (Recipe)",
                                                command=self._manual_next_die)
         self._btn_manual_next_die.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(1, 0))
+        # Only meaningful with exactly one die picked on the wafer map (see
+        # _on_sites_changed for that toggle) - mirrors Accretech's Run tab
+        # button of the same name. Deliberately NOT in _LOCKABLE_WIDGETS:
+        # that list's blanket state="normal" on unlock would fight the
+        # pick-count toggle: _manual_move_to_selected's own _run_guard
+        # check covers "no run in progress" instead.
+        self._btn_manual_move_selected = ttk.Button(
+            pos_lf, text="➡ Move to Selected",
+            command=self._manual_move_to_selected, state="disabled")
+        self._btn_manual_move_selected.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(1, 0))
         # Not gridded - Measure is no longer a separate manual control. Kept
         # unpacked, not deleted, since _LOCKABLE_WIDGETS still toggles its
         # state alongside the rest of Manual Control.
@@ -2023,6 +2033,15 @@ class NanoZPanel(ttk.Frame):
             messagebox.showerror("Export Failed", str(e))
             return
         rows = self._raw_latest_cycle_only(rows)
+        n_before = len(rows)
+        # A row with no die_id came from a board+chip with no slot assigned
+        # (see _die_provider) - we don't know which of the 20 physical
+        # positions it actually measured, so it has nothing meaningful to
+        # export here. It is NOT dropped from the raw CSV log itself, and
+        # Save CSV still keeps it (with a blank die ID) - only Export Raw,
+        # which is meant to be one row per real, identified die, excludes it.
+        rows = [r for r in rows if (r.get("die_id") or "").strip()]
+        n_unassigned = n_before - len(rows)
         env_by_port = self._load_env_by_port()
 
         kept_fields = [c for c in src_fields if c not in self._RAW_EXPORT_DROP_FIELDS]
@@ -2055,9 +2074,11 @@ class NanoZPanel(ttk.Frame):
         except OSError as e:
             messagebox.showerror("Export Failed", str(e))
             return
+        skipped_note = (f", {n_unassigned} unassigned-slot sample(s) skipped (no die ID)"
+                        if n_unassigned else "")
         self._log_main(f"NanoZ Export Raw: {len(rows)} raw sample(s) — every settled SPL "
-                       f"reading since the current run started, tagged with its die — "
-                       f"saved to {dest}")
+                       f"reading since the current run started, tagged with its die"
+                       f"{skipped_note} — saved to {dest}")
 
     def _nz_save_results_csv(self):
         folder = self._nz_export_path_var.get().strip() or self._nanoz_ata_folder
@@ -3904,6 +3925,28 @@ class NanoZPanel(ttk.Frame):
         self._do_manual_call("First Die", lambda p: p.move_to_start_die(),
                              ">> G  (Position start die)", refresh_xy=True)
 
+    def _manual_move_to_selected(self):
+        if self._run_guard("Move to Selected"):
+            return
+        sites = self.wafer_map.get_picked()
+        if len(sites) != 1:
+            self._log_main("Move to Selected: pick exactly one die on the map first.")
+            return
+        threading.Thread(target=self._manual_move_to_selected_thread,
+                         args=(sites[0],), daemon=True).start()
+
+    def _manual_move_to_selected_thread(self, rc):
+        """Separate, jump straight to the one picked die, contact NOT
+        restored afterward - a positioning aid, same contract as
+        Accretech's Run tab button of the same name (see
+        instrument_panel._exec2_move_to_selected)."""
+        row, col = rc
+        if not self._do_manual_call("Separate", lambda p: p.z_down(), ">> D  (Separate)"):
+            return
+        self._do_manual_call(
+            "Move to Selected", lambda p: p.move_to_die_xy(col, row),
+            f">> J  (X={col} Y={row})", refresh_xy=True)
+
     def _manual_next_die(self):
         if self._run_guard("Next Die"):
             return
@@ -4162,6 +4205,9 @@ class NanoZPanel(ttk.Frame):
             all_rc = {(d["row"], d["col"]) for d in dies}
             is_all = bool(all_rc) and set(picks) == all_rc
             btn.config(text="☐ Deselect All" if is_all else "☑ Select All")
+        move_btn = getattr(self, "_btn_manual_move_selected", None)
+        if move_btn is not None:
+            move_btn.config(state="normal" if len(picks) == 1 else "disabled")
 
     def _toggle_select_all(self):
         dies = self.wafer_map._last_dies
@@ -4446,10 +4492,23 @@ class NanoZPanel(ttk.Frame):
         if row is None or col is None:
             return (None, None, None)
         board = self._boards.get(port)
-        slot = None
-        if board and chip in ("0", "1"):
-            slot = board.identity.slot0 if chip == "0" else board.identity.slot1
-        if slot:
+        # chip is "0"/"1" for a per-chip SPL reading, or None for a board-
+        # wide ENV reading - ENV was never anchored to a SLOT (it isn't of
+        # any one physical die within the window to begin with), so it keeps
+        # using the window anchor's own ID unconditionally, same as always.
+        if chip in ("0", "1"):
+            slot = (board.identity.slot0 if chip == "0" else board.identity.slot1) if board else None
+            if not slot:
+                # No slot assigned for this board+chip - we don't know which
+                # of the 20 physical positions in the window it actually
+                # sits at (slot 1 through 20, top to bottom - see the Setup
+                # tab's Slot columns), so tagging it with the window
+                # ANCHOR's die ID would present a guess as fact. row/col
+                # stay at the anchor (still useful in Save CSV/debugging)
+                # but die_id is left blank - see _nz_export_raw, which
+                # excludes exactly these rows, and the Setup tab's Slot
+                # assignment.
+                return (row, col, None)
             row = row + slot - 1
         return (row, col, self._die_id_for(row, col))
 
