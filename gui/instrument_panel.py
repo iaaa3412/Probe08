@@ -2242,6 +2242,9 @@ class MainLayout(ttk.Frame):
         self._exec2_overlay_items: list = []
         self._exec2_overlay_result_items: list = []
         self._exec2_overlay_die_ids: dict = {}
+        # Accretech's equivalent of NanoZ's 1x20 window / Electroglas's 2x2
+        # quad window - see _exec2_update_shot_window.
+        self._exec2_shot_window_items: list = []
 
         ctrl = tk.Frame(tab, bg="#f1f5f9", relief="solid", bd=1)
         ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
@@ -2370,9 +2373,9 @@ class MainLayout(ttk.Frame):
         ttk.Separator(pos_lf, orient="horizontal").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=3)
 
-        # 3x2 grid: Measure/First Die, Z Up/Z Down, Back/Next. Reset Counts
-        # and ↻ Refresh XY (removed) used to fill out a 4th row here - Reset
-        # Counts moved to the Pass/Fail section, next to what it resets.
+        # 3x2 grid: Measure/First Die, Z Up/Z Down, Back/Next, then (Accretech
+        # only) Move to Selected and ↻ Refresh XY. Reset Counts moved to the
+        # Pass/Fail section, next to what it resets - not here anymore.
         ttk.Button(pos_lf, text="Measure",
                    command=self._exec2_touchdown_measure).grid(
                    row=4, column=0, sticky="ew", padx=(0, 1), pady=1)
@@ -2416,6 +2419,12 @@ class MainLayout(ttk.Frame):
                 command=self._exec2_move_to_selected, state="disabled")
             self._exec2_move_selected_btn.grid(
                 row=7, column=0, columnspan=2, sticky="ew", pady=1)
+            # Manual, fire-and-forget version of the same Q read
+            # _exec2_refresh_xy_blocking runs automatically (and blocking)
+            # right before Full Die/Test Die/Test Selected/Minor Moves'
+            # first move - see that method.
+            ttk.Button(pos_lf, text="↻ Refresh XY", command=self._exec2_get_xy).grid(
+                row=8, column=0, columnspan=2, sticky="ew", pady=1)
 
         # Recipe Steps is the one that grows, so it takes the weighted row on
         # both systems - Chuck Position/Pass-Fail (row 0, above) is fixed
@@ -2947,6 +2956,7 @@ class MainLayout(ttk.Frame):
         sim = not (prober and prober.inst)
         error_msg = None
         try:
+            self._exec2_refresh_xy_blocking(prober, sim)
             self._exec2_log("[RUN] >> D  (Separate)")
             if sim:
                 time.sleep(0.15)
@@ -3146,6 +3156,7 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[RUN] ⚠ Z Up returned STB={stb} (expected 67)")
 
         try:
+            self._exec2_refresh_xy_blocking(prober, sim)
             for shot_row, shot_col in shots:
                 if (not self._exec2_running or self._exec2_aborted
                         or self._exec2_run_token != my_token):
@@ -3458,23 +3469,56 @@ class MainLayout(ttk.Frame):
     def _exec2_overlay_accretech_rc(self):
         return set(self._exec2_wafer_map.dies.keys())
 
+    def _exec2_wafer_builder_footprint(self) -> set:
+        """Every (row, col) Wafer Builder considers part of the wafer -
+        present in a real shot, whether or not that die has been named yet
+        - same row/col units as _exec2_wafer_builder_grid() (which only
+        keeps the NAMED subset, for labeling). This is what bounds
+        Overlay's SELECTION to Wafer Builder's actual footprint - a wafer
+        with fewer real shots than the Accretech extraction has die
+        positions should select fewer squares, not the whole Accretech map.
+        Empty if Wafer Builder has no map/shots defined at all, which
+        _exec2_overlay_all_accretech treats as "nothing to bound by" and
+        falls back to selecting everything (unchanged from before)."""
+        gen = getattr(self, "recipe_gen", None)
+        if gen is None:
+            return set()
+        try:
+            dpx, dpy = gen._die_pitch()
+        except Exception:
+            return set()
+        if not dpx or not dpy:
+            return set()
+        out = set()
+        for d in gen._die_positions():
+            if d["status"] != "normal":
+                continue
+            out.add((round(d["y"] / dpy), round(d["x"] / dpx)))
+        return out
+
     @staticmethod
     def _exec2_overlay_all_accretech(grid: list, accretech_rc, row_offset: int,
-                                     col_offset: int) -> list:
-        """One overlay entry per square the Accretech map actually has -
-        unlike merge_with_accretech (which drops any square the Wafer
-        Builder grid has no real ID for), this always covers the whole
-        real wafer shape. Overlaying is "select every square this wafer
-        really has, and label whichever of them also got a real ID from
-        Wafer Builder" - Save Selected Map wants the former regardless of
-        whether the latter found anything at all, e.g. no Wafer Builder
-        map loaded yet, or one with no die IDs on it."""
+                                     col_offset: int, footprint: "set | None" = None) -> list:
+        """One overlay entry per square the Accretech map actually has AND
+        that falls within Wafer Builder's own footprint (see
+        _exec2_wafer_builder_footprint) once the offset is applied - unlike
+        merge_with_accretech (which drops any square the Wafer Builder grid
+        has no real ID for), this covers every REAL shot Wafer Builder
+        defines, labeling whichever of them also got a real ID. `footprint`
+        empty/None (no Wafer Builder map loaded at all) falls back to
+        selecting the whole Accretech map, same as before - there is
+        nothing to bound by."""
         by_rc: dict = {}
         for p in grid:
             rc = (p["row"] + row_offset, p["col"] + col_offset)
             by_rc.setdefault(rc, []).extend(p["die_ids"])
+        if footprint:
+            selected = sorted(rc for rc in accretech_rc
+                              if (rc[0] - row_offset, rc[1] - col_offset) in footprint)
+        else:
+            selected = sorted(accretech_rc)
         return [{"row": r, "col": c, "die_ids": by_rc.get((r, c), []), "raw_text": ""}
-               for r, c in sorted(accretech_rc)]
+               for r, c in selected]
 
     _EXEC2_OVERLAY_MIN_DIE_PX = 22  # below this on-screen die width, overlay text is unreadable clutter
 
@@ -3544,6 +3588,8 @@ class MainLayout(ttk.Frame):
                 redraw_window()
             except Exception:
                 pass
+        if self._system == "accretech":
+            self._exec2_update_shot_window()
 
     def _exec2_redraw_overlay_on_results_map(self):
         rwm = getattr(self, "_results_wafer_map", None)
@@ -3619,8 +3665,10 @@ class MainLayout(ttk.Frame):
         if not accretech_rc:
             return
         grid = self._exec2_wafer_builder_grid()
+        footprint = self._exec2_wafer_builder_footprint()
         matched = self._exec2_overlay_all_accretech(
-            grid, accretech_rc, self._exec2_overlay_row_offset, self._exec2_overlay_col_offset)
+            grid, accretech_rc, self._exec2_overlay_row_offset,
+            self._exec2_overlay_col_offset, footprint)
         self._exec2_draw_overlay(matched)
         self._exec2_log(
             f"[RUN] Overlay restored from the saved map ({len(matched)} die(s), "
@@ -3693,6 +3741,7 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[RUN] Overlay: no wafer map loaded on this Run tab yet — "
                             "load an ATA folder first.")
             return
+        footprint = self._exec2_wafer_builder_footprint()
 
         dlg = tk.Toplevel(self)
         dlg.title("Overlay Wafer Map")
@@ -3706,14 +3755,23 @@ class MainLayout(ttk.Frame):
         ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
                  justify="left").grid(row=1, column=0, columnspan=5, sticky="w",
                                       pady=(0, 4))
+        # Wide enough for a real whole-wafer offset (Cenfire's is (-66,-83),
+        # a 14,600-die extraction) - +-50 was a leftover from early, much
+        # smaller test data and silently clamped any bigger wafer's real
+        # alignment. Scaled to the actual loaded map's own row/col span
+        # rather than a bigger fixed guess, so it's never too small again.
+        rows_span = [rc[0] for rc in accretech_rc]
+        cols_span = [rc[1] for rc in accretech_rc]
+        row_limit = max(50, max(rows_span) - min(rows_span)) if rows_span else 50
+        col_limit = max(50, max(cols_span) - min(cols_span)) if cols_span else 50
         ttk.Label(frm, text="Row offset:").grid(row=3, column=0, sticky="e")
         row_var = tk.IntVar(value=0)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
-            row=3, column=1, sticky="w", padx=(4, 16))
+        ttk.Spinbox(frm, from_=-row_limit, to=row_limit, width=6,
+                   textvariable=row_var).grid(row=3, column=1, sticky="w", padx=(4, 16))
         ttk.Label(frm, text="Col offset:").grid(row=3, column=2, sticky="e")
         col_var = tk.IntVar(value=0)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
-            row=3, column=3, sticky="w", padx=(4, 0))
+        ttk.Spinbox(frm, from_=-col_limit, to=col_limit, width=6,
+                   textvariable=col_var).grid(row=3, column=3, sticky="w", padx=(4, 0))
 
         state = {"grid": [], "matched": []}
 
@@ -3724,18 +3782,20 @@ class MainLayout(ttk.Frame):
             except tk.TclError:
                 return
             state["grid"] = grid
-            # Every square the Accretech map has is selected regardless of
-            # whether Wafer Builder has a real ID for it - a real ID just
-            # earns that square a text label. See
-            # _exec2_overlay_all_accretech's own docstring.
-            state["matched"] = self._exec2_overlay_all_accretech(grid, accretech_rc, ro, co)
+            # Selection is bounded to Wafer Builder's own footprint (every
+            # real shot it defines, named or not) once the offset is
+            # applied - a real ID just earns that square a text label on
+            # top. See _exec2_overlay_all_accretech's own docstring.
+            state["matched"] = self._exec2_overlay_all_accretech(
+                grid, accretech_rc, ro, co, footprint)
             n_with_id = sum(1 for m in state["matched"] if m["die_ids"])
             summary_var.set(
                 f"Accretech dies on map:   {len(accretech_rc)}\n"
-                f"Wafer Builder dies (real ID): {len(grid)}\n"
+                f"Wafer Builder footprint: {len(footprint)}  "
+                f"(named: {len(grid)})\n"
                 f"Will select: {len(state['matched'])}"
                 f"  ({n_with_id} labeled with a real ID)"
-                + ("" if grid else
+                + ("" if footprint else
                    "\n\nNo Wafer Builder map loaded - selecting the Accretech "
                    "map's own squares with no ID labels.")
             )
@@ -3822,6 +3882,7 @@ class MainLayout(ttk.Frame):
         sim = not (prober and prober.inst)
         error_msg = None
         try:
+            self._exec2_refresh_xy_blocking(prober, sim)
             self._exec2_log("[RUN] >> D  (Separate)")
             if sim:
                 time.sleep(0.15)
@@ -4730,6 +4791,28 @@ class MainLayout(ttk.Frame):
                     f"[EXEC2] Move to Selected error: {e}"))
         threading.Thread(target=_run, daemon=True).start()
 
+    def _exec2_refresh_xy_blocking(self, prober, sim: bool):
+        """The automatic, run-thread version of the ↻ Refresh XY button -
+        called right before a run's first move (Full Die/Test Die/Test
+        Selected/Minor Moves), so the displayed X/Y, the highlighted die,
+        and self._exec2_current_rc are read fresh rather than left over
+        from whatever happened before Start was pressed (a manual jog, the
+        previous run's last die, ...). Runs ON the calling thread (already
+        off the main thread by the time any of those call this) - blocking
+        here is the point, unlike the ↻ Refresh XY button's own fire-and-
+        forget _exec2_get_xy.
+        """
+        if sim:
+            return
+        try:
+            raw = prober.get_xy_position()
+            x, y = _parse_q_response(raw)
+            self._exec2_safe_after(lambda: self._exec2_xy_var.set(f"X: {x:.0f} die\nY: {y:.0f} die"))
+            self._exec2_safe_after(lambda: self._exec2_log(f"[RUN] Q → die X={x:.0f}  Y={y:.0f}"))
+            self._exec2_safe_after(lambda: self._exec2_highlight_current(int(y), int(x)))
+        except Exception as e:
+            self._exec2_log(f"[RUN] Refresh XY before run failed: {e}")
+
     def _exec2_get_xy(self):
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
@@ -4760,6 +4843,66 @@ class MainLayout(ttk.Frame):
         self._exec2_current_rc = (row, col)
         if (row, col) in wm.dies:
             wm.update_die(row, col, "CURRENT")
+        if self._system == "accretech":
+            self._exec2_update_shot_window()
+
+    def _exec2_clear_shot_window(self):
+        wm = getattr(self, "_exec2_wafer_map", None)
+        if wm is not None:
+            for item in self._exec2_shot_window_items:
+                try:
+                    wm.canvas.delete(item)
+                except Exception:
+                    pass
+        self._exec2_shot_window_items = []
+
+    def _exec2_update_shot_window(self):
+        """Outline, on the Run tab's wafer map, the block of REAL dies the
+        current shot spans - the Accretech equivalent of NanoZ's 1x20
+        window and Electroglas's 2x2 quad window (see
+        eg_pma_run_panel._draw_shot_window) - now that a shot can be more
+        than one physical die (Minor Moves), a single highlighted square no
+        longer shows the whole touchdown's footprint.
+
+        Skipped (and cleared) when: the wafer's shots are 1 die each
+        (Cenfire-style multi-die shots are exactly the case this is FOR -
+        nothing to outline beyond the die itself otherwise), the live XY
+        position isn't known yet, or the Wafer Builder<->Accretech
+        alignment (Overlay) was never confirmed - the block's real
+        die-coordinates can't be computed without that offset. Draws
+        against whatever's actually on screen, so a shot corner that's
+        genuinely absent from the real Accretech extraction (wafer edge)
+        just narrows the box instead of guessing.
+        """
+        self._exec2_clear_shot_window()
+        wm = getattr(self, "_exec2_wafer_map", None)
+        gen = getattr(self, "recipe_gen", None)
+        if (wm is None or gen is None or self._exec2_current_rc is None
+                or not self._exec2_overlay_offset_confirmed):
+            return
+        try:
+            shot_rows, shot_cols = gen._shot_dims()
+        except Exception:
+            return
+        if shot_rows <= 1 and shot_cols <= 1:
+            return
+        cur_row, cur_col = self._exec2_current_rc
+        row_off = self._exec2_overlay_row_offset
+        col_off = self._exec2_overlay_col_offset
+        wb_row, wb_col = cur_row - row_off, cur_col - col_off
+        shot_r0 = (wb_row // shot_rows) * shot_rows
+        shot_c0 = (wb_col // shot_cols) * shot_cols
+        cells = [(shot_r0 + r + row_off, shot_c0 + c + col_off)
+                for r in range(shot_rows) for c in range(shot_cols)]
+        boxes = [wm.canvas.coords(wm.dies[rc]) for rc in cells if rc in wm.dies]
+        boxes = [b for b in boxes if len(b) >= 4]
+        if not boxes:
+            return
+        box = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+              max(b[2] for b in boxes), max(b[3] for b in boxes))
+        rect = wm.canvas.create_rectangle(*box, outline="#7c3aed", width=2, dash=(4, 3))
+        wm.canvas.tag_raise(rect)
+        self._exec2_shot_window_items = [rect]
 
     def _exec2_add_pass(self):
         self._exec2_pass_var.set(self._exec2_pass_var.get() + 1)
