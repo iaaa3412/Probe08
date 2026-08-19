@@ -3034,8 +3034,10 @@ class MainLayout(ttk.Frame):
     def _exec2_start_minor_moves(self, shots: list, mode_label: str):
         """Shared Full Die / Test Die startup for Minor Moves - `shots` are
         real absolute (row, col) die coordinates picked on the map, each
-        naming where a shot's die #1 lands; from there only the die(s) the
-        loaded recipe's steps reference by die # are visited.
+        naming a die that belongs to one shot (see goto_shot_die below for
+        how the shot itself, and die #1's own cell within it, are found);
+        from there only the die(s) the loaded recipe's steps reference by
+        die # are visited.
         Same button/lock/state bookkeeping _exec2_start_full_die and
         _exec2_start_test_die already do for the native G/J path.
 
@@ -3046,14 +3048,22 @@ class MainLayout(ttk.Frame):
         class of bug fixed in pma_wafer_panel.py's workbook loader; see
         that file's load_workbook_path for the longer explanation).
 
-        Origin: each (row, col) in `shots` IS the real absolute die
-        coordinate the operator picked on the map - the map only ever
-        shows real dies now (see _exec2_draw_wafer_map), so a picked
-        square already names exactly where die #1 of that shot lands.
-        No Wafer Builder-grid-to-Accretech-grid translation is needed for
-        motion any more; every other die # in the same shot is reached by
-        the LOCAL offset present_slots()/shot_die_rc() give it relative
-        to die #1, added straight onto that landing coordinate."""
+        Origin: each (row, col) in `shots` is a real absolute die
+        coordinate picked on the map (the map only ever shows real dies -
+        see _exec2_draw_wafer_map) - but it may be ANY die belonging to
+        the target shot (whichever square the picker/shot-window
+        highlighted), not necessarily die #1's own cell. Same as Next
+        Shot/Previous Shot (_exec2_go_to_shot/_exec2_current_shot_index):
+        the Overlay dialog's confirmed row/col offset is what tells us
+        WHICH shot a real coordinate falls in (floor-divide by the shot
+        dimensions), then shot_die_rc() gives any die #'s cell within
+        that shot to land on."""
+        if not self._exec2_overlay_offset_confirmed:
+            self._exec2_log("[RUN] Minor Moves: no confirmed Overlay alignment — "
+                            "press Overlay… (next to the map path, above) and "
+                            "🖌 Overlay on Map first, then start again.")
+            return
+        overlay_offset = (self._exec2_overlay_row_offset, self._exec2_overlay_col_offset)
         gen = getattr(self, "recipe_gen", None)
         if gen is None:
             self._exec2_log("[RUN] Minor Moves: the Wafer Builder tab is not available.")
@@ -3077,11 +3087,11 @@ class MainLayout(ttk.Frame):
                         "visiting only the die(s) the recipe references.")
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_minor_move_thread,
-            args=(shots, my_token, shot_rows, shot_cols, shot_cells),
+            args=(shots, my_token, overlay_offset, shot_rows, shot_cols, shot_cells),
             daemon=True)
         self._exec2_lot_thread.start()
 
-    def _exec2_minor_move_thread(self, shots: list, my_token: int,
+    def _exec2_minor_move_thread(self, shots: list, my_token: int, overlay_offset: tuple,
                                  shot_rows: int, shot_cols: int, shot_cells: dict):
         """One touchdown per shot, exactly like the native G/J path - the
         difference is what happens AT that touchdown. A shot lands on die
@@ -3096,35 +3106,35 @@ class MainLayout(ttk.Frame):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         error_msg = None
+        row_offset, col_offset = overlay_offset
 
         class _Stop(Exception):
             pass
 
-        def goto_shot_die(land_row, land_col, die_num):
+        def goto_shot_die(pick_row, pick_col, die_num):
             """Separate, jump to (shot, die #), contact. Used both for the
             automatic die-#1 landing and for every in-recipe "move" step -
             the chuck must never travel in X/Y while contacted.
 
-            (land_row, land_col) is the real absolute die coordinate the
-            operator picked for this shot (= where die #1 lands). Every
-            other die # is reached by adding that die's LOCAL offset
-            (present_slots()/shot_die_rc(), relative to die #1's own local
-            cell) straight onto the landing coordinate - no shot-grid
-            scaling, no Overlay offset, since the picked square already
-            IS a real coordinate."""
+            (pick_row, pick_col) is a real absolute die coordinate that
+            belongs to the target shot - not necessarily die #1's own
+            cell (it may be whatever square the picker/shot-window
+            highlighted). Same as Next Shot/Previous Shot
+            (_exec2_go_to_shot/_exec2_current_shot_index): floor-divide by
+            the shot dimensions (after removing the Overlay offset) to
+            find WHICH shot that is, then shot_die_rc() gives any die #'s
+            cell to land on within it."""
+            wb_row = pick_row - row_offset
+            wb_col = pick_col - col_offset
+            shot_row, shot_col = wb_row // shot_rows, wb_col // shot_cols
             rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
-            rc1 = shot_die_rc(shot_cells, shot_rows, shot_cols, 1)
             if rc is None:
-                raise RuntimeError(f"die #{die_num} is not on this shot "
-                                   f"(landed at R{land_row}C{land_col})")
-            if rc1 is None:
-                raise RuntimeError("this shot has no die #1 (present_slots) — "
-                                   "check the Wafer Builder Shot tab")
+                raise RuntimeError(f"die #{die_num} is not on shot "
+                                   f"R{shot_row}C{shot_col}")
             r, c = rc
-            r1, c1 = rc1
-            die_x = land_col + (c - c1)
-            die_y = land_row + (r - r1)
-            die_label = (f"landed R{land_row}C{land_col} die #{die_num} "
+            die_x = shot_col * shot_cols + c + col_offset
+            die_y = shot_row * shot_rows + r + row_offset
+            die_label = (f"shot R{shot_row}C{shot_col} die #{die_num} "
                         f"(X{die_x:.0f} Y{die_y:.0f})")
             self._exec2_safe_after(lambda d=die_label: self._exec2_die_var.set(f"Die: {d}"))
             self._exec2_safe_after(
@@ -3170,7 +3180,7 @@ class MainLayout(ttk.Frame):
                     break
                 self._exec2_safe_after(
                     lambda r=land_row, c=land_col: self._exec2_highlight_current(r, c))
-                self._exec2_log(f"[RUN] Shot at R{land_row}C{land_col}: landing on die #1")
+                self._exec2_log(f"[RUN] Shot at picked R{land_row}C{land_col}: landing on die #1")
                 try:
                     goto_shot_die(land_row, land_col, 1)
                 except _Stop:
