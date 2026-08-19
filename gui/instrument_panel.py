@@ -2282,29 +2282,29 @@ class MainLayout(ttk.Frame):
         self._exec2_test_selected_btn = ttk.Button(
             ctrl, text="▶  Test Selected", command=self._exec2_start_test_selected)
         self._exec2_test_selected_btn.pack(side="left", padx=2, pady=5)
-        if self._system == "electroglas":
-            # Moved in from the bottom of the .PMA-stepping pane's own "Run"
-            # section, next to the other ways to start something on this bar.
-            # It already walks the recipe's full touchdown list, so Test
-            # Selected here is for ad-hoc/partial runs, not a duplicate.
-            # ⏹ Stop Run below now also stops this - see _exec2_abort.
-            #
-            # Green border, default everything else - this is the button that
-            # starts the wafer, and it sat indistinguishable from Test Die /
-            # Test Selected / Unload, which only ever touch one die.
-            #
-            # Drawn as a frame BEHIND the button rather than a ttk style:
-            # Windows' native button themes paint their own border and ignore
-            # a style's bordercolor entirely, so the only way to get a
-            # coloured edge without switching the whole app to 'clam' is to
-            # let a coloured frame show through around it.
-            run_border = tk.Frame(ctrl, background="#15803d")
-            run_border.pack(side="left", padx=2, pady=5)
-            ttk.Button(run_border, text="▶  Run",
-                       command=lambda: self.eg_pma_run._run_all()).pack(
-                       padx=2, pady=2)
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
+
+        # The real, full-story entry point - recipe steps, the recipe's own
+        # saved touchdown list, Minor Moves (Accretech) and all - unlike
+        # Full Die/Test Selected to its left, which stay the plain
+        # single-die case only (see _exec2_start_run's docstring). To the
+        # RIGHT of the separator, immediately next to Unload: it starts the
+        # wafer, and sitting among Full Die/Test Selected/Unload (which
+        # only ever touch one die) made it indistinguishable from them.
+        #
+        # Green border, default everything else. Drawn as a frame BEHIND
+        # the button rather than a ttk style: Windows' native button themes
+        # paint their own border and ignore a style's bordercolor entirely,
+        # so the only way to get a coloured edge without switching the
+        # whole app to 'clam' is to let a coloured frame show through
+        # around it.
+        run_border = tk.Frame(ctrl, background="#15803d")
+        run_border.pack(side="left", padx=(2, 6), pady=5)
+        ttk.Button(run_border, text="▶  Run",
+                   command=(lambda: self.eg_pma_run._run_all())
+                           if self._system == "electroglas"
+                           else self._exec2_start_run).pack(padx=2, pady=2)
 
         for label, cmd in [
             ("⏏  Unload (U)",  self._exec2_manual_unload),
@@ -2922,18 +2922,21 @@ class MainLayout(ttk.Frame):
             return
         if not self._exec2_can_start():
             return
-        # Minor Moves: every SHOT currently on the map (see
-        # _exec2_draw_wafer_map), not the prober's own native G/J walk -
-        # each shot then gets its own needed-dies-only visit inside
-        # _exec2_minor_move_thread.
+        # Full Die/Test Selected are the plain "walk the dies, measure"
+        # entry points - Minor Moves (multi-die shots, touchdown list, the
+        # whole story) is ▶ Run's job now, not theirs. Refuse rather than
+        # silently doing a native G/J walk that doesn't mean anything on a
+        # wafer where a map square is a multi-die shot.
         if self._system == "accretech" and self._exec2_minor_moves_active():
-            shots = list(self._exec2_wafer_map.dies.keys())
-            if not shots:
-                self._exec2_log("[RUN] Minor Moves: no shots on the map — "
-                                "check the Wafer Builder Shot Map tab.")
-                return
-            self._exec2_start_minor_moves(shots, "Full Die")
+            self._exec2_log("[RUN] Full Die: this recipe has Minor Moves on — "
+                            "use ▶ Run instead (Full Die/Test Selected only "
+                            "handle the plain, one-square-one-die case).")
             return
+        self._exec2_start_full_die_walk("Full Die")
+
+    def _exec2_start_full_die_walk(self, mode_label: str):
+        """The actual native G/J whole-wafer walk - shared by Full Die and
+        ▶ Run's own "no saved touchdowns, do the whole wafer" fallback."""
         self._exec2_reset_counts(total_dies=len(self._exec2_wafer_map._last_dies or []))
         self._exec2_running  = True
         self._exec2_aborted  = False
@@ -2944,8 +2947,8 @@ class MainLayout(ttk.Frame):
         self._exec2_test_btn.config(state="disabled")
         self.recipe_panel.set_locked(True)
         self._exec2_wafer_map.enable_picking(0)
-        self.after(0, lambda: self._exec2_set_state("RUNNING (Full Die)", "#2563eb"))
-        self._exec2_log("[RUN] ▶ Full Die — walking the entire wafer (G/J), "
+        self.after(0, lambda: self._exec2_set_state(f"RUNNING ({mode_label})", "#2563eb"))
+        self._exec2_log(f"[RUN] ▶ {mode_label} — walking the entire wafer (G/J), "
                         "measuring the loaded recipe at every die.")
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_full_die_thread, args=(my_token,), daemon=True)
@@ -3438,6 +3441,43 @@ class MainLayout(ttk.Frame):
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
         self._exec2_start_test_die()
 
+    def _exec2_start_run(self):
+        """The real, full-story entry point: the recipe's own saved
+        touchdown list (Recipe tab's Touchdowns table - the same list ▶
+        Save Selected Map/Take from map selection/Take die IDs build),
+        Minor Moves if the recipe has it on, all of it - unlike Full Die/
+        Test Selected, which are deliberately the plain single-die case
+        only. No saved touchdowns and Minor Moves off falls back to the
+        same native whole-wafer G/J walk Full Die does; no saved
+        touchdowns and Minor Moves on falls back to every shot on the map.
+        """
+        if self._exec2_running:
+            self._exec2_log("[RUN] A run is already active — stop it first.")
+            return
+        if not self._exec2_can_start():
+            return
+        sites = self.recipe_panel.get_sites()
+        if self._system == "accretech" and self._exec2_minor_moves_active():
+            if not sites:
+                sites = list(self._exec2_wafer_map.dies.keys())
+            if not sites:
+                self._exec2_log("[RUN] Run: Minor Moves is on but there are no "
+                                "shots on the map — check the Wafer Builder "
+                                "Shot Map tab.")
+                return
+            self._exec2_start_minor_moves(sites, "Run")
+            return
+        if sites:
+            self._exec2_start_site_list(sites, "Run", "run")
+            return
+        if not (self._exec2_wafer_map._last_dies or []):
+            self._exec2_log("[RUN] Run: no saved touchdowns on this recipe and "
+                            "no wafer map loaded.")
+            return
+        self._exec2_log("[RUN] ▶ Run — no saved touchdowns on this recipe, "
+                        "walking the whole wafer map instead.")
+        self._exec2_start_full_die_walk("Run")
+
     def _exec2_wafer_builder_grid(self) -> list:
         """[{"row","col","die_ids","raw_text"}] from the Wafer Builder's Die
         Map, in die-pitch units - the same shape pma_shots_to_grid produces,
@@ -3889,23 +3929,31 @@ class MainLayout(ttk.Frame):
         if not sites:
             self._exec2_log("[RUN] No dies available to pick test sites from.")
             return
-        # Minor Moves: sites are picked SHOTS (see _exec2_draw_wafer_map),
-        # each visited only at the dies the loaded recipe needs.
+        # Full Die/Test Selected are the plain "walk the dies, measure"
+        # entry points - Minor Moves is ▶ Run's job now, not theirs. See
+        # _exec2_start_full_die's matching refusal.
         if self._system == "accretech" and self._exec2_minor_moves_active():
-            self._exec2_start_minor_moves(sites, "Test Die")
+            self._exec2_log("[RUN] Test Die: this recipe has Minor Moves on — "
+                            "use ▶ Run instead (Full Die/Test Selected only "
+                            "handle the plain, one-square-one-die case).")
             return
+        self._exec2_start_site_list(sites, "Test Die", "test")
+
+    def _exec2_start_site_list(self, sites: list, mode_label: str, run_mode: str):
+        """Shared starter for a fixed list of (row, col) touchdowns - Test
+        Die/Test Selected's picks, or ▶ Run's saved touchdown list."""
         self._exec2_reset_counts(total_dies=len(sites))
         self._exec2_running  = True
         self._exec2_aborted  = False
-        self._exec2_run_mode = "test"
+        self._exec2_run_mode = run_mode
         self._exec2_run_token += 1
         my_token = self._exec2_run_token
         self._exec2_full_btn.config(state="disabled")
         self._exec2_test_btn.config(state="disabled")
         self.recipe_panel.set_locked(True)
         self._exec2_wafer_map.enable_picking(0)
-        self.after(0, lambda: self._exec2_set_state("RUNNING (Test Die)", "#2563eb"))
-        self._exec2_log(f"[RUN] ▶ Test Die — {len(sites)} site(s): "
+        self.after(0, lambda: self._exec2_set_state(f"RUNNING ({mode_label})", "#2563eb"))
+        self._exec2_log(f"[RUN] ▶ {mode_label} — {len(sites)} site(s): "
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_test_die_thread,
