@@ -3071,6 +3071,28 @@ class MainLayout(ttk.Frame):
         shot_rows, shot_cols = gen._shot_dims()
         shot_cells = dict(gen._shot_cells)
 
+        # A saved touchdown list carries one SITE row per DIE the recipe
+        # references (e.g. Cenfire's "first"/"second" pair), not one per
+        # SHOT - two dies of the same physical shot resolve to the same
+        # (shot_row, shot_col) below, and visiting a shot once per row
+        # measured it twice, then a third time, etc. Collapse to one
+        # representative pick per shot, first-seen order, before the
+        # run thread ever starts.
+        row_off, col_off = self._exec2_overlay_row_offset, self._exec2_overlay_col_offset
+        seen_shots = {}
+        deduped = []
+        for row, col in shots:
+            key = ((row - row_off) // shot_rows, (col - col_off) // shot_cols)
+            if key in seen_shots:
+                continue
+            seen_shots[key] = (row, col)
+            deduped.append((row, col))
+        if len(deduped) != len(shots):
+            self._exec2_log(f"[RUN] Minor Moves: {len(shots)} touchdown(s) resolved to "
+                            f"{len(deduped)} distinct shot(s) — collapsed duplicates "
+                            "(a saved touchdown list carries one row per die, not per shot).")
+        shots = deduped
+
         self._exec2_reset_counts(total_dies=len(shots))
         self._exec2_running  = True
         self._exec2_aborted  = False
