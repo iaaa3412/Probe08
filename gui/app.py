@@ -1250,6 +1250,18 @@ class AtomicaDashboard(tk.Tk):
                                     "probe_card", "lot_id", "wafer_id",
                                     "total_dies", "dies_tested", "dies_passed",
                                     "dies_failed", "status") and v != ""}
+                # csv.DictReader hands back every field as a string, but
+                # _results_show_die (the Results tab's per-die click table)
+                # compares "row"/"col" against the wafer map's own integer
+                # row/col with == - a die's readings never matched after an
+                # import, even though the die's PASS/FAIL colour did (that
+                # path already casts to int explicitly below).
+                for key in ("row", "col"):
+                    if key in clean:
+                        try:
+                            clean[key] = int(clean[key])
+                        except (TypeError, ValueError):
+                            pass
                 results.append(clean)
             elif kind == "DIE":
                 try:
