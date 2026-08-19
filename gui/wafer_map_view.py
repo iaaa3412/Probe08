@@ -1270,7 +1270,10 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
         # looked right only by accident: with no sites, _probe_seqs() returns
         # None and the run falls back to the .PMA's own list.
         return {name: {"steps": [dict(s) for s in rec.get("steps", [])],
-                       "sites": [dict(s) for s in rec.get("sites", [])]}
+                       "sites": [dict(s) for s in rec.get("sites", [])],
+                       "bench": rec.get("bench", ""),
+                       "minor_moves": bool(rec.get("minor_moves")),
+                       "shot_origin": rec.get("shot_origin")}
                 for name, rec in self._card_recipes.get(self._current, {}).items()}
 
     def get_recipe_count(self, card: str) -> int:
