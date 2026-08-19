@@ -122,6 +122,7 @@ class WaferMapPanel(ttk.LabelFrame):
         # die silently reverting to its untested fill.
         self._die_status = {}
         self._last_dies = None
+        self.last_draw_debug = None
         self.on_redraw = None  # optional callback() run after any full redraw
         self.on_zoom = None    # optional callback() run after any zoom
         self.canvas.create_text(150, 100, text="Waiting for Wafer Map...", fill="gray")
@@ -511,6 +512,15 @@ class WaferMapPanel(ttk.LabelFrame):
         dw = max(1.0, min(pitch_x * scale * 0.85, 26, pitch_x * scale))
         dh = max(1.0, min(pitch_y * scale * 0.85, 26, pitch_y * scale))
         ol = "#4a7090" if dw > 5 else ""
+        # Diagnostic snapshot of this draw's own numbers - read by
+        # instrument_panel.py's redraw hooks and logged, so a report of
+        # "still bad" from a real session comes with the actual computed
+        # W/H/pitch/scale/dw instead of having to be reproduced blind.
+        self.last_draw_debug = {
+            "n_dies": len(dies), "W": W, "H": H,
+            "pitch_x": pitch_x, "pitch_y": pitch_y, "scale": scale,
+            "dw": dw, "dh": dh,
+        }
         for d in dies:
             cx_ = to_cx(d["x_um"])
             cy_ = to_cy(d["y_um"])

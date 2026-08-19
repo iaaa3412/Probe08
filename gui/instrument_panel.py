@@ -1460,6 +1460,7 @@ class MainLayout(ttk.Frame):
         split.add(self.wafer_map, weight=1)
 
     def load_ata_folder(self, folder_path):
+        self._exec2_log(f"[MAPTRACE] load_ata_folder({folder_path!r}) called")
         self._ata_folder = folder_path
         self._ata_path_lbl.config(text=folder_path, foreground="black")
         self._pad_custom_loaded = False
@@ -2573,6 +2574,7 @@ class MainLayout(ttk.Frame):
         return bool(rp and hasattr(rp, "is_minor_moves") and rp.is_minor_moves())
 
     def _exec2_draw_wafer_map(self, quiet_if_missing: bool = False):
+        self._exec2_log("[MAPTRACE] _exec2_draw_wafer_map() called")
         folder = self._exec2_map_folder
         # The Run tab map is always the real per-die Accretech/Wafer
         # Builder map, Minor Moves on or off - a shot is drawn as an
@@ -2580,6 +2582,8 @@ class MainLayout(ttk.Frame):
         # by swapping the map itself to one square per shot.
         filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
         n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
+        run_dbg = self._exec2_wafer_map.last_draw_debug or {}
+        self._exec2_log(f"[MAPDEBUG] Run map redrawn — {run_dbg}")
         self._exec2_wafer_map.clear_picks()
         name = os.path.basename(folder)
         self._exec2_map_path_var.set(
@@ -2607,10 +2611,13 @@ class MainLayout(ttk.Frame):
         """
         wm = self._exec2_wafer_map
         ids = {rc: text for rc, text in (wm.die_ids or {}).items() if text}
+        self._exec2_log(f"[MAPTRACE] _exec2_adopt_map_die_ids() — {len(ids)} id(s) on the "
+                        f"loaded map, {len(self._exec2_overlay_die_ids)} already in overlay")
         if not ids:
             return
         # Never clobber an overlay the operator built by hand in the dialog.
         if self._exec2_overlay_die_ids and self._system == "accretech":
+            self._exec2_log("[MAPTRACE]   -> skipped: overlay already set (accretech)")
             return
         self._exec2_clear_overlay_labels(wm, self._exec2_overlay_items)
         self._exec2_overlay_die_ids = ids
@@ -2631,6 +2638,7 @@ class MainLayout(ttk.Frame):
         chasing what state a long-lived canvas accumulates - see the
         session's git history for the abandoned attempts.
         """
+        self._exec2_log("[MAPTRACE] _new_results_wafer_map() — recreating Results panel")
         old = getattr(self, "_results_wafer_map", None)
         wm = WaferMapPanel(self._results_map_frame)
         wm.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 8))
@@ -2647,6 +2655,7 @@ class MainLayout(ttk.Frame):
         return wm
 
     def _sync_results_wafer_map(self):
+        self._exec2_log("[MAPTRACE] _sync_results_wafer_map() called")
         rwm = getattr(self, "_results_wafer_map", None)
         if rwm is None:
             return
@@ -2655,6 +2664,8 @@ class MainLayout(ttk.Frame):
             rwm = self._new_results_wafer_map()
             rwm._last_dies = dies
             rwm._draw_from_die_list(dies)  # triggers on_redraw -> overlay labels
+            dbg = rwm.last_draw_debug or {}
+            self._exec2_log(f"[MAPDEBUG] Results map redrawn — {dbg}")
         else:
             rwm.canvas.delete("all")
             rwm.dies.clear()
@@ -3516,6 +3527,7 @@ class MainLayout(ttk.Frame):
         self._exec2_log(f"[RUN] Saved {len(picks)} selected die(s){note} → {path}")
 
     def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
+        self._exec2_log("[MAPTRACE] _exec2_load_selected_map() called")
         # Only ever a recipe's own touchdown list - the standalone
         # "Load Selected Map" button is gone (picking a recipe from the
         # dropdown already does this, via _exec2_apply_recipe_sites/here),
