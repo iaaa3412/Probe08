@@ -105,11 +105,16 @@ class WaferMapPanel(ttk.LabelFrame):
         "CONTACT_FAIL": "#fb923c",
     }
 
-    def __init__(self, parent, show_title: bool = True):
+    def __init__(self, parent, show_title: bool = True, show_axis_grid: bool = False):
         # show_title=False for callers that already wrap this in their own
         # titled LabelFrame (e.g. the Run tab's map_lf "Wafer Map") - two
         # nested "Wafer Map" titles said the same thing twice.
         self._show_title = show_title
+        # show_axis_grid: row/col tick labels along the left/bottom edges -
+        # off by default so every other WaferMapPanel (Results tab, other
+        # systems' panels) keeps its current look; a caller opts in
+        # explicitly rather than this changing everywhere at once.
+        self._show_axis_grid = show_axis_grid
         super().__init__(parent, text="Wafer Map" if show_title else "")
         self.canvas = tk.Canvas(self, bg="white")
         self.canvas.pack(fill="both", expand=True, padx=5, pady=5)
@@ -552,9 +557,47 @@ class WaferMapPanel(ttk.LabelFrame):
                 fill="#7aaec8", outline=ol
             )
             self.dies[(d["row"], d["col"])] = rect
+        if self._show_axis_grid:
+            self._draw_axis_grid(dies, to_cx, to_cy, W, H)
         self._recolor_statuses()
         self._recolor_picks()
         self._run_on_redraw()
+
+    def _draw_axis_grid(self, dies, to_cx, to_cy, W, H):
+        """Row/col tick labels along the left and bottom edges, showing the
+        real ACCR-style row/col address at that position - e.g. for lining
+        up an on-screen die with a coordinate read off the real prober.
+
+        Ticks land on real, existing row/col values (not evenly-spaced
+        round numbers) since the pitch between them is not necessarily
+        uniform once a shot-grid or wafer-builder map is in play - picking
+        an existing value from the data means every tick has a real x_um/
+        y_um to place it at, no interpolation needed.
+        """
+        y_um_by_row = {}
+        x_um_by_col = {}
+        for d in dies:
+            y_um_by_row.setdefault(d["row"], d["y_um"])
+            x_um_by_col.setdefault(d["col"], d["x_um"])
+
+        def _pick_ticks(keys, target=10):
+            uniq = sorted(keys)
+            if len(uniq) <= target:
+                return uniq
+            step = max(1, round(len(uniq) / target))
+            return uniq[::step]
+
+        for row in _pick_ticks(y_um_by_row.keys()):
+            cy = to_cy(y_um_by_row[row])
+            self.canvas.create_line(0, cy, 5, cy, fill="#666")
+            self.canvas.create_text(7, cy, text=str(row), fill="#444",
+                                    anchor="w", font=("TkDefaultFont", 7))
+
+        for col in _pick_ticks(x_um_by_col.keys()):
+            cx = to_cx(x_um_by_col[col])
+            self.canvas.create_line(cx, H, cx, H - 5, fill="#666")
+            self.canvas.create_text(cx, H - 7, text=str(col), fill="#444",
+                                    anchor="s", font=("TkDefaultFont", 7))
 
     def update_die(self, row, col, status):
         self._die_status[(row, col)] = status
