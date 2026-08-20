@@ -509,8 +509,16 @@ class WaferMapPanel(ttk.LabelFrame):
         # operator zoomed in to actually look at one. Including pitch*scale
         # itself in the min() makes exceeding the real available space
         # structurally impossible, whatever the floor/cap are.
-        dw = max(1.0, min(pitch_x * scale * 0.85, 26, pitch_x * scale))
-        dh = max(1.0, min(pitch_y * scale * 0.85, 26, pitch_y * scale))
+        # A plain outer max(1.0, ...) floor undid the guarantee above the
+        # moment pitch*scale itself dropped below 1px (a dense wafer
+        # zoomed out far enough) - caught via a real Cenfire-Maddy-Cenfire
+        # log: pitch*scale=0.827 came out as dw=1.0, 0.173px of overlap,
+        # the exact bug this formula exists to rule out. Clamping the
+        # floor itself to pitch*scale fixes it: the box can shrink below
+        # 1px on a dense-enough map, but can never exceed the real gap
+        # between die centers.
+        dw = max(min(1.0, pitch_x * scale), min(pitch_x * scale * 0.85, 26, pitch_x * scale))
+        dh = max(min(1.0, pitch_y * scale), min(pitch_y * scale * 0.85, 26, pitch_y * scale))
         ol = "#4a7090" if dw > 5 else ""
         # Self-check for the exact class of bug that produced the
         # "packed together, no gaps" reports: a die box must never be
