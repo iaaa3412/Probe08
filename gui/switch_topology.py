@@ -2,11 +2,36 @@ import os
 import string
 import yaml
 
+import workdir
+
 # Real per-machine setup - how this bench's switch matrix is actually wired -
 # lives outside the repo next to app_settings.json/instruments.yaml, not
 # under instruments/. See gui/app_settings.py's module docstring.
-_CONFIG_DIR = "C:/automationproject/GUI System"
-TOPOLOGY_PATH = os.path.join(_CONFIG_DIR, "switch_topology.yaml")
+#
+# This describes a bench's physical wiring, not a per-PC preference, so
+# unlike app_settings.py's defaults it stays ONE shared file - it just now
+# lives inside whichever working directory is active (workdir.gui_system_
+# dir()), since "GUI System" moved to a shared network folder. TOPOLOGY_PATH
+# stays available as a plain attribute (switch_settings_panel.py and
+# app_settings.py read it directly) via module __getattr__ below, so it
+# always reflects the CURRENT working directory instead of being frozen at
+# whatever it was when this module first imported.
+
+
+def _config_dir() -> str:
+    return workdir.gui_system_dir()
+
+
+def _topology_path() -> str:
+    return os.path.join(_config_dir(), "switch_topology.yaml")
+
+
+def __getattr__(name):
+    if name == "TOPOLOGY_PATH":
+        return _topology_path()
+    if name == "_CONFIG_DIR":
+        return _config_dir()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 ROW_LETTERS_POOL = list(string.ascii_uppercase)
 MIN_ROW_COUNT = 1
@@ -48,9 +73,10 @@ def load_topology(force: bool = False) -> dict:
     global _cache
     if _cache is not None and not force:
         return _cache
-    if os.path.exists(TOPOLOGY_PATH):
+    path = _topology_path()
+    if os.path.exists(path):
         try:
-            with open(TOPOLOGY_PATH, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             if data and data.get("slots") and data.get("row_roles"):
                 _cache = data
@@ -63,8 +89,8 @@ def load_topology(force: bool = False) -> dict:
 
 def save_topology(data: dict):
     global _cache
-    os.makedirs(_CONFIG_DIR, exist_ok=True)
-    with open(TOPOLOGY_PATH, "w", encoding="utf-8") as f:
+    os.makedirs(_config_dir(), exist_ok=True)
+    with open(_topology_path(), "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
     _cache = data
 
@@ -79,7 +105,7 @@ def ensure_default_file() -> bool:
     """First-run scaffold - write the built-in default topology if this
     machine has no switch_topology.yaml yet. Returns False if the file
     already existed (left untouched)."""
-    if os.path.exists(TOPOLOGY_PATH):
+    if os.path.exists(_topology_path()):
         return False
     save_topology(_default_copy())
     return True

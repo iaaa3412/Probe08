@@ -1,20 +1,27 @@
 import json
 import os
 
-# Lives next to the project's data folders (LAMPATA, NautATA, ...) rather
-# than next to the exe/script - this machine info (default ATA folder,
-# default prober, channel assignments) belongs to the project on this PC,
-# not to whichever copy of the GUI happens to be running it.
-_SETTINGS_DIR = "C:/automationproject/GUI System"
+import workdir
 
-SETTINGS_PATH = os.path.join(_SETTINGS_DIR, "app_settings.json")
+# "GUI System" now lives inside whichever working directory is active
+# (workdir.gui_system_dir()) rather than at one fixed local path - it's a
+# shared network folder multiple computers can have open at once, not a
+# per-PC folder next to this project anymore. See workdir.py.
+
+
+def _settings_dir() -> str:
+    return workdir.gui_system_dir()
+
+
+def _settings_path() -> str:
+    return os.path.join(_settings_dir(), "app_settings.json")
 
 
 def load_settings() -> dict:
     # If "GUI System" hasn't been created yet, there is nothing to load -
     # start blank rather than creating it just to read from it.
     try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+        with open(_settings_path(), "r", encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
@@ -23,9 +30,22 @@ def load_settings() -> dict:
 def save_settings(data: dict) -> None:
     # Saving is an explicit user action (e.g. "Set as Default"), so it's
     # fine to create the folder here even though loading never does.
-    os.makedirs(_SETTINGS_DIR, exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+    os.makedirs(_settings_dir(), exist_ok=True)
+    with open(_settings_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+
+def _this_machine(data: dict) -> dict:
+    """This computer's own slice of app_settings.json - defaults (ATA
+    folder, prober) are per-machine now that GUI System is a shared network
+    folder several computers can open at once: two stations picking
+    different benches/projects should not overwrite each other's default
+    every time either one saves. Keyed by computer name.
+
+    channel_assignments is NOT in here on purpose - it describes a bench's
+    physical wiring, the same kind of fact switch_topology.yaml records, so
+    it stays one shared value for everyone, same as before."""
+    return data.setdefault("by_computer", {}).setdefault(workdir.computer_name(), {})
 
 
 def machine_config_status() -> dict:
@@ -36,8 +56,8 @@ def machine_config_status() -> dict:
     from instruments import gpib_base
     import switch_topology
     return {
-        "folder": os.path.isdir(_SETTINGS_DIR),
-        "app_settings.json": os.path.isfile(SETTINGS_PATH),
+        "folder": os.path.isdir(_settings_dir()),
+        "app_settings.json": os.path.isfile(_settings_path()),
         "instruments.yaml": os.path.isfile(
             gpib_base.get_machine_config_path("instruments.yaml")),
         "eg_probers.yaml": os.path.isfile(
@@ -53,9 +73,9 @@ def create_basic_machine_config() -> list:
     that already exists untouched. Returns the filenames actually created."""
     from instruments import gpib_base
     import switch_topology
-    os.makedirs(_SETTINGS_DIR, exist_ok=True)
+    os.makedirs(_settings_dir(), exist_ok=True)
     created = []
-    if not os.path.isfile(SETTINGS_PATH):
+    if not os.path.isfile(_settings_path()):
         save_settings({})
         created.append("app_settings.json")
     if gpib_base.create_default_instruments_yaml():
@@ -70,36 +90,39 @@ def create_basic_machine_config() -> list:
 # One default ATA folder for the whole project - not per system. Only one
 # prober is ever actually running against real data at a time, and having
 # Accretech/Electroglas remember different defaults was extra state nobody
-# asked for.
+# asked for. Per-computer (see _this_machine) now that GUI System is shared.
 def get_default_ata_folder() -> "str | None":
-    return load_settings().get("default_ata_folder")
+    return _this_machine(load_settings()).get("default_ata_folder")
 
 
 def set_default_ata_folder(folder: str) -> None:
     data = load_settings()
-    data["default_ata_folder"] = folder
+    _this_machine(data)["default_ata_folder"] = folder
     save_settings(data)
 
 
 # The prober the GUI should come up on. Stored as (system, bench) together
 # rather than just a bench name, because the system is what decides which
 # whole UI is shown and a bench name alone would need a lookup to resolve -
-# one that would break the moment a bench is renamed or removed.
+# one that would break the moment a bench is renamed or removed. Per-
+# computer (see _this_machine) now that GUI System is shared - the physical
+# prober a PC is wired to obviously does not change based on who else has
+# the network folder open.
 def get_default_prober() -> "tuple[str, str] | tuple[None, None]":
-    entry = load_settings().get("default_prober") or {}
+    entry = _this_machine(load_settings()).get("default_prober") or {}
     system, bench = entry.get("system"), entry.get("bench")
     return (system, bench) if system else (None, None)
 
 
 def set_default_prober(system: str, bench: str) -> None:
     data = load_settings()
-    data["default_prober"] = {"system": system, "bench": bench}
+    _this_machine(data)["default_prober"] = {"system": system, "bench": bench}
     save_settings(data)
 
 
 def clear_default_prober() -> None:
     data = load_settings()
-    data.pop("default_prober", None)
+    _this_machine(data).pop("default_prober", None)
     save_settings(data)
 
 
@@ -111,7 +134,10 @@ def clear_default_prober() -> None:
 # future project can claim spare channels without re-deriving which are free.
 #
 # Keyed bench -> "driver_key/NN" -> label, so a channel's meaning survives a
-# card being swapped between secondary addresses.
+# card being swapped between secondary addresses. Deliberately NOT per-
+# computer (unlike the defaults above) - this describes a bench's physical
+# wiring, not a per-PC preference, so every computer sharing the network
+# GUI System folder should see the same assignments.
 
 def get_channel_assignments(bench: str) -> dict:
     data = load_settings().get("channel_assignments", {})

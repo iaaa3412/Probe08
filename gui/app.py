@@ -6,6 +6,7 @@ import csv
 import sys
 import datetime as dt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import workdir
 from instrument_panel import MainLayout
 from probe_routing_panel import scrollable_routing
 from instruments.accretech_uf200r import AccretechUF200R
@@ -88,7 +89,17 @@ class AtomicaDashboard(tk.Tk):
         self._sys_ready_prev = None
         self._prober_ready = None
         self._prober_stb = None
-        self.working_dir_var = tk.StringVar(value="C:/automationproject")
+        # workdir.get_current_working_dir() decides the actual starting
+        # value (temporarily forced to proberautomation - see workdir.py);
+        # this is just the Tk variable the UI reads/writes.
+        self.working_dir_var = tk.StringVar(value=workdir.get_current_working_dir())
+        # Keep workdir's own notion of "current" in sync with the UI,
+        # whatever changes it (preset dropdown, Browse, or code) - every
+        # module that resolves "GUI System" (app_settings, switch_topology,
+        # gpib_base) reads workdir.get_current_working_dir(), not this Tk
+        # variable directly, since they may run before any GUI exists.
+        self.working_dir_var.trace_add(
+            "write", lambda *_: workdir.set_current_working_dir(self.working_dir_var.get()))
         self._build_brand_header()
         self.create_toolbar()
         self._main_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
@@ -1078,6 +1089,29 @@ class AtomicaDashboard(tk.Tk):
             initialdir=self.ui.working_dir_var.get(), title="Select Working Directory")
         if selected_dir:
             self.ui.working_dir_var.set(selected_dir)
+
+    def cmd_pick_working_dir_preset(self, label: str):
+        """The Working Directory dropdown's named presets (see
+        workdir.PRESETS) - a plain label like "proberautomation", not a
+        path, since the dropdown shows names, not full UNC paths."""
+        path = workdir.PRESETS.get(label)
+        if path:
+            self.ui.working_dir_var.set(path)
+
+    def cmd_set_default_working_dir(self):
+        """Persist the CURRENT working directory as this PC's own default -
+        stored next to the app itself (not inside GUI System), since GUI
+        System now lives inside whichever working directory is picked and
+        can't record which one to start with on its own. Applies from the
+        next launch on; does not move anything already loaded this run."""
+        path = self.ui.working_dir_var.get()
+        if not path:
+            return
+        workdir.set_default_working_dir(path)
+        messagebox.showinfo(
+            "Working Directory",
+            f"'{path}' set as this computer's default working directory.\n"
+            "Takes effect the next time the app is launched.")
 
     # kind=META rows use these (one row, none repeated per RESULT/DIE row -
     # see cmd_import_results_csv for the matching read side). kind=RESULT

@@ -1404,10 +1404,25 @@ class MainLayout(ttk.Frame):
                   command=self.controller.cmd_refresh_ata).pack(side="left", padx=(0, 10))
 
         ttk.Label(ctrl, text="Working Directory:").pack(side="left", padx=(0, 4))
+        # Preset picker (automationproject / proberautomation) - the Entry
+        # next to it still shows/accepts the full path either way (a preset
+        # just fills it in), so a one-off custom path via Browse still works.
+        import workdir as _workdir
+        self._workdir_preset_var = tk.StringVar(value="")
+        preset_box = ttk.Combobox(
+            ctrl, textvariable=self._workdir_preset_var, state="readonly",
+            width=16, values=list(_workdir.PRESETS.keys()))
+        preset_box.pack(side="left", padx=(0, 4))
+        preset_box.bind("<<ComboboxSelected>>",
+                        lambda _e: self.controller.cmd_pick_working_dir_preset(
+                            self._workdir_preset_var.get()))
         ttk.Entry(ctrl, textvariable=self.working_dir_var, width=26).pack(
             side="left", padx=(0, 4))
         ttk.Button(
             ctrl, text="Browse...", command=self.controller.cmd_browse_working_dir
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            ctrl, text="⭐ Set Default", command=self.controller.cmd_set_default_working_dir
         ).pack(side="left", padx=(0, 10))
 
         self._ata_path_lbl = ttk.Label(ctrl, text="No folder selected", foreground="gray")

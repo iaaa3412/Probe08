@@ -42,11 +42,19 @@ def get_resource_path(relative_path):
 # the repo, next to app_settings.json (see gui/app_settings.py), not under
 # instruments/. It describes THIS machine, not the program, so it has no
 # business being committed/pushed/reverted along with the code.
-_MACHINE_CONFIG_DIR = "C:/automationproject/GUI System"
+#
+# "GUI System" now lives inside whichever working directory is active (see
+# gui/workdir.py) rather than at one fixed local path, since it's a shared
+# network folder several computers can have open at once.
+import workdir
+
+
+def _machine_config_dir():
+    return workdir.gui_system_dir()
 
 
 def get_machine_config_path(filename):
-    return os.path.join(_MACHINE_CONFIG_DIR, filename)
+    return os.path.join(_machine_config_dir(), filename)
 
 
 # Duplicated from instruments.eg_profiles.EG_KEYS/gui.accretech_setup_panel's
@@ -68,7 +76,7 @@ def create_default_instruments_yaml() -> bool:
     path = get_machine_config_path("instruments.yaml")
     if os.path.exists(path):
         return False
-    os.makedirs(_MACHINE_CONFIG_DIR, exist_ok=True)
+    os.makedirs(_machine_config_dir(), exist_ok=True)
     data = {"instruments": {
         key: {"name": "", "protocol": "GPIB", "address": "", "timeout_ms": 3000}
         for key in _ACCRETECH_KEYS + _EG_KEYS
@@ -86,7 +94,7 @@ def create_default_eg_probers_yaml() -> bool:
     path = get_machine_config_path("eg_probers.yaml")
     if os.path.exists(path):
         return False
-    os.makedirs(_MACHINE_CONFIG_DIR, exist_ok=True)
+    os.makedirs(_machine_config_dir(), exist_ok=True)
     data = {
         "active": "probe02",
         "probers": {
