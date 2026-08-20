@@ -229,11 +229,10 @@ class GdsParserPanel(ttk.Frame):
 
 
     def export_app_log(self):
-        """Dumps the WHOLE app log panel (every [MAPTRACE]/[MAPDEBUG]/
-        [RUN]/[ERROR]/... line since launch, not just this tab's own GDS
-        parsing log below) to a text file - for sending a full repro
-        trace without having to select/copy out of the log widget by
-        hand."""
+        """Dumps the WHOLE app log panel (every [RUN]/[ERROR]/... line
+        since launch, not just this tab's own GDS parsing log below) to a
+        text file - for sending a full repro trace without having to
+        select/copy out of the log widget by hand."""
         txt = getattr(getattr(self.controller, "ui", None), "log_text", None)
         if txt is None:
             messagebox.showerror("Export App Log", "No active log panel found.")
