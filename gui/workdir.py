@@ -20,15 +20,11 @@ PRESETS = {
 _PREF_PATH = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "working_dir_pref.json"))
 
-# TEMPORARY: pinned to automationproject for now - proberautomation is
-# still being populated/updated on the user's end, so nothing should touch
-# it yet. Once the user confirms the move to proberautomation is complete,
-# flip this to PRESETS["proberautomation"] (that was the state as of the
-# request to switch defaults - see conversation history). Overrides any
-# saved preference in the meantime; get_default_working_dir() already falls
-# back to the saved preference / the automationproject preset on its own
-# without this line at all.
-_FORCE_TEMPORARY_DEFAULT = PRESETS["automationproject"]
+# No forced override - proberautomation is confirmed ready, so
+# get_default_working_dir() just uses whatever was last saved via Set
+# Default (falling back to the automationproject preset if nothing has
+# been saved yet on this PC).
+_FORCE_TEMPORARY_DEFAULT = None
 
 
 def computer_name() -> str:
