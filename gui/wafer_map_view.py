@@ -502,6 +502,9 @@ class WaferMapPanel(ttk.LabelFrame):
         self.canvas.create_line(ccx - arm, ccy, ccx + arm, ccy, fill="#ccc", dash=(2, 2))
         self.canvas.create_line(ccx, ccy - arm, ccx, ccy + arm, fill="#ccc", dash=(2, 2))
 
+        if self._show_axis_grid:
+            self._draw_axis_gridlines(dies, to_cx, to_cy, W, H, ccx, ccy, cr)
+
         # The lower bound used to be a flat 2px, with no upper limit tying
         # it back to the actual on-screen spacing between die centers
         # (pitch * scale) - on a wafer dense enough that spacing comes out
@@ -558,15 +561,13 @@ class WaferMapPanel(ttk.LabelFrame):
             )
             self.dies[(d["row"], d["col"])] = rect
         if self._show_axis_grid:
-            self._draw_axis_grid(dies, to_cx, to_cy, W, H)
+            self._draw_axis_ticks(dies, to_cx, to_cy, W, H)
         self._recolor_statuses()
         self._recolor_picks()
         self._run_on_redraw()
 
-    def _draw_axis_grid(self, dies, to_cx, to_cy, W, H):
-        """Row/col tick labels along the left and bottom edges, showing the
-        real ACCR-style row/col address at that position - e.g. for lining
-        up an on-screen die with a coordinate read off the real prober.
+    def _axis_tick_values(self, dies):
+        """(row -> y_um, col -> x_um) for a readable set of tick positions.
 
         Ticks land on real, existing row/col values (not evenly-spaced
         round numbers) since the pitch between them is not necessarily
@@ -580,24 +581,55 @@ class WaferMapPanel(ttk.LabelFrame):
             y_um_by_row.setdefault(d["row"], d["y_um"])
             x_um_by_col.setdefault(d["col"], d["x_um"])
 
-        def _pick_ticks(keys, target=10):
+        def _pick(keys, target=10):
             uniq = sorted(keys)
             if len(uniq) <= target:
                 return uniq
             step = max(1, round(len(uniq) / target))
             return uniq[::step]
 
-        for row in _pick_ticks(y_um_by_row.keys()):
-            cy = to_cy(y_um_by_row[row])
-            self.canvas.create_line(0, cy, 5, cy, fill="#666")
-            self.canvas.create_text(7, cy, text=str(row), fill="#444",
-                                    anchor="w", font=("TkDefaultFont", 7))
+        return ({r: y_um_by_row[r] for r in _pick(y_um_by_row)},
+                {c: x_um_by_col[c] for c in _pick(x_um_by_col)})
 
-        for col in _pick_ticks(x_um_by_col.keys()):
-            cx = to_cx(x_um_by_col[col])
-            self.canvas.create_line(cx, H, cx, H - 5, fill="#666")
-            self.canvas.create_text(cx, H - 7, text=str(col), fill="#444",
-                                    anchor="s", font=("TkDefaultFont", 7))
+    def _draw_axis_gridlines(self, dies, to_cx, to_cy, W, H, ccx, ccy, cr):
+        """Faint dashed lines across the wafer circle at each tick's
+        position - drawn before the dies so the squares sit on top and the
+        lines only show through the gaps between them, not over them."""
+        row_ticks, col_ticks = self._axis_tick_values(dies)
+        self._axis_row_ticks, self._axis_col_ticks = row_ticks, col_ticks
+        for row, y_um in row_ticks.items():
+            cy = to_cy(y_um)
+            half = (cr ** 2 - (cy - ccy) ** 2) ** 0.5 if abs(cy - ccy) < cr else 0
+            if half:
+                self.canvas.create_line(ccx - half, cy, ccx + half, cy,
+                                        fill="#e3e3e3", dash=(2, 3))
+        for col, x_um in col_ticks.items():
+            cx = to_cx(x_um)
+            half = (cr ** 2 - (cx - ccx) ** 2) ** 0.5 if abs(cx - ccx) < cr else 0
+            if half:
+                self.canvas.create_line(cx, ccy - half, cx, ccy + half,
+                                        fill="#e3e3e3", dash=(2, 3))
+
+    def _draw_axis_ticks(self, dies, to_cx, to_cy, W, H):
+        """Row/col tick labels along the left and bottom edges, showing the
+        real ACCR-style row/col address at that position - e.g. for lining
+        up an on-screen die with a coordinate read off the real prober."""
+        row_ticks = getattr(self, "_axis_row_ticks", None)
+        col_ticks = getattr(self, "_axis_col_ticks", None)
+        if row_ticks is None or col_ticks is None:
+            row_ticks, col_ticks = self._axis_tick_values(dies)
+
+        tick_font = ("TkDefaultFont", 8)
+        for row, y_um in row_ticks.items():
+            cy = to_cy(y_um)
+            self.canvas.create_line(0, cy, 6, cy, fill="#999")
+            self.canvas.create_text(9, cy, text=str(row), fill="#555",
+                                    anchor="w", font=tick_font)
+        for col, x_um in col_ticks.items():
+            cx = to_cx(x_um)
+            self.canvas.create_line(cx, H, cx, H - 6, fill="#999")
+            self.canvas.create_text(cx, H - 9, text=str(col), fill="#555",
+                                    anchor="s", font=tick_font)
 
     def update_die(self, row, col, status):
         self._die_status[(row, col)] = status
