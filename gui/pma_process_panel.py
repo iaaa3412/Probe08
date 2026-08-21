@@ -261,6 +261,31 @@ class PmaProcessPanel(ttk.Frame):
         vsb2.pack(side="right", fill="y")
         self._move_tree.pack(fill="both", expand=True, padx=(4, 0), pady=4)
 
+        # The micron pitch "microns (MM)" motion mode (eg_pma_run_panel's
+        # Chuck Position radio button) actually uses at runtime - not a GUI
+        # setting, but whatever the loaded .xls's own MajorMoves header
+        # cells say (pma_wafer_panel.read_moves_grid). Shown here so that
+        # number is visible somewhere instead of only living inside
+        # eg_pma_run._touchdowns[i]["x"/"y"], read straight from there (the
+        # SAME list _move_um walks) rather than re-deriving it, so this
+        # table can never disagree with what a real MM run would do.
+        mm_lf = ttk.LabelFrame(split, text="Move MM (µm, from the .xls)")
+        split.add(mm_lf, weight=1)
+        cols3 = ("step", "seq", "device_ids", "x_um", "y_um", "dx_um", "dy_um")
+        self._move_mm_tree = ttk.Treeview(
+            mm_lf, columns=cols3, show="headings", height=16, selectmode="browse")
+        for cid, text, w in (("step", "#", 40), ("seq", "Seq", 50),
+                             ("device_ids", "Device ID(s)", 110),
+                             ("x_um", "X (µm)", 85), ("y_um", "Y (µm)", 85),
+                             ("dx_um", "ΔX (µm)", 75), ("dy_um", "ΔY (µm)", 75)):
+            self._move_mm_tree.heading(cid, text=text)
+            self._move_mm_tree.column(cid, width=w, anchor="center" if cid in
+                                      ("step", "seq") else "w")
+        vsb3 = ttk.Scrollbar(mm_lf, orient="vertical", command=self._move_mm_tree.yview)
+        self._move_mm_tree.configure(yscrollcommand=vsb3.set)
+        vsb3.pack(side="right", fill="y")
+        self._move_mm_tree.pack(fill="both", expand=True, padx=(4, 0), pady=4)
+
     def _pma_source_dir(self) -> str:
         folder = getattr(self._main_layout, "_ata_folder", "")
         return os.path.join(folder, PMA_SOURCE_SUBDIR) if folder else ""
@@ -797,6 +822,26 @@ class PmaProcessPanel(ttk.Frame):
         except Exception as exc:
             self._log(f"[PMA] Could not hand the recipe to the Run tab: {exc}")
 
+    def _refresh_move_mm_table(self):
+        """Move MM table - reads eg_pma_run._touchdowns directly (after
+        _push_to_run_tab's adopt_from_process, so it is current) rather
+        than re-deriving x_um/y_um here, since that list is the exact one
+        _move_um ("microns (MM)" motion mode) walks at runtime - this table
+        can never show a number a real MM run would not actually use.
+        """
+        self._move_mm_tree.delete(*self._move_mm_tree.get_children())
+        run = getattr(self._main_layout, "eg_pma_run", None)
+        touchdowns = getattr(run, "_touchdowns", None) or []
+        prev = None
+        for i, t in enumerate(touchdowns):
+            x_um, y_um = t.get("x", 0.0), t.get("y", 0.0)
+            dx = "" if prev is None else egpma.fmt_num(x_um - prev[0])
+            dy = "" if prev is None else egpma.fmt_num(y_um - prev[1])
+            self._move_mm_tree.insert("", "end", values=(
+                i + 1, t.get("seq", ""), t.get("device_id", ""),
+                egpma.fmt_num(x_um), egpma.fmt_num(y_um), dx, dy))
+            prev = (x_um, y_um)
+
     def load_path(self, path: str):
         try:
             fields = egpma.parse_pma_file(path)
@@ -830,6 +875,7 @@ class PmaProcessPanel(ttk.Frame):
 
         self.refresh_align_site()
         self._push_to_run_tab()
+        self._refresh_move_mm_table()
 
         move_list = egpma.build_move_list(touchdowns)
         self._move_list = move_list
