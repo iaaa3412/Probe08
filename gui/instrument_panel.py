@@ -21,6 +21,7 @@ from instrument_connection_panel import build_address_panel
 from probe_routing_panel import scrollable_routing
 from prober_debug_panel import ProberDebugPanel
 from eg_prober_debug_panel import EgProberDebugPanel
+from gpib_trace_panel import GpibTracePanel
 from eg_pma_run_panel import EgPmaRunPanel
 from accr_wafer_panel import AccrWaferPanel
 from cassette_panel import CassettePanel
@@ -438,6 +439,7 @@ class MainLayout(ttk.Frame):
         self._tab_gds_parser(debug_nb)
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
+        self._tab_gpib_trace(debug_nb)
 
         self._build_exec_panel()
         self._build_alignment_panel()
@@ -2123,6 +2125,17 @@ class MainLayout(ttk.Frame):
         else:
             self.prober_debug = EgProberDebugPanel(tab, controller=self.controller)
         self.prober_debug.grid(row=0, column=0, sticky="nsew")
+
+    def _tab_gpib_trace(self, nb):
+        """Live view of every GPIB/USB command this app itself sends - see
+        gpib_trace_panel.py/instruments/gpib_trace.py for what it can and
+        can't see (LabVIEW's own traffic needs NI I/O Trace alongside it)."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="GPIB Trace")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        self.gpib_trace_panel = GpibTracePanel(tab, controller=self.controller)
+        self.gpib_trace_panel.grid(row=0, column=0, sticky="nsew")
 
     def _tab_cassette(self, nb):
         tab = ttk.Frame(nb)
@@ -4233,6 +4246,28 @@ class MainLayout(ttk.Frame):
             f"selected {len(on_map)} on the map."
             + (f"  ⚠ {missing} are not on this wafer map; check that the loaded "
                "map matches the recipe." if missing else ""))
+        # A Minor Moves recipe's own SITE table carries one row per DIE it
+        # actually references (Cenfire's "first"/"second" pair), each with
+        # its own real (row, col) AND its own real die_id - the loaded
+        # wafer map file, by contrast, is shot-granularity (one label per
+        # shot square, not per RuOx/Au sub-position), so publish_die_slots'
+        # per-slot lookup missed the second die of every shot and silently
+        # fell back to the shot-level id (the first die's). The recipe's
+        # own site records are the authoritative source for exactly the
+        # dies this recipe is about to measure - always adopt them here,
+        # same as _exec2_load_selected_map does, rather than depending on
+        # that function happening to run again after a recipe is picked
+        # (it does not - it only fires on initial map draw, before a
+        # recipe is normally loaded yet, or as a Test Selected fallback
+        # that never triggers once cells are already highlighted).
+        get_records = getattr(self.recipe_panel, "get_site_records", None)
+        records = list(get_records()) if get_records else []
+        ids = {(s["row"], s["col"]): s["die_id"] for s in records if s.get("die_id")}
+        if ids:
+            self._exec2_clear_overlay()
+            self._exec2_overlay_die_ids = ids
+            self._exec2_redraw_overlay_on_run_map()
+            self._exec2_redraw_overlay_on_results_map()
 
     def _exec2_load_recipe_by_name(self, name: str):
         """Save button on the Recipe tab calls this too, so saving a recipe
@@ -4687,9 +4722,18 @@ class MainLayout(ttk.Frame):
                                     f"{avg_txt}{note}")
                     slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
+                    # slot_die is the die _this step_ actually measured (Minor
+                    # Moves published it per-die) - the shot-level die_id
+                    # computed once above is only the SHOT's own overlay/map
+                    # ID (its anchor cell), so used verbatim it tagged every
+                    # die in the shot with the first die's identity. Prefer
+                    # the resolved per-slot one whenever a publication
+                    # actually happened (slot_sw is not None); fall back to
+                    # the shot-level id otherwise (non-Minor-Moves runs).
+                    slot_die_id = slot_die if slot_sw is not None else (die_id or None)
                     self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{r:.6g}",
-                                       unit=r_unit, die_id=die_id or None, switch=slot_sw,
+                                       unit=r_unit, die_id=slot_die_id, switch=slot_sw,
                                        connection=conn_str, instrument=instrument,
                                        die_row=slot_row, die_col=slot_col,
                                        **_shotpos_kwargs(slot_shotpos))
@@ -4716,9 +4760,12 @@ class MainLayout(ttk.Frame):
                                     f"{avg_txt}{note}")
                     slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
+                    # See the resistance-step case above for why slot_die (not
+                    # the shot-level die_id) is preferred here.
+                    slot_die_id = slot_die if slot_sw is not None else (die_id or None)
                     self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{v:.6g}",
-                                       unit=v_unit, die_id=die_id or None, switch=slot_sw,
+                                       unit=v_unit, die_id=slot_die_id, switch=slot_sw,
                                        connection=conn_str, instrument=instrument,
                                        die_row=slot_row, die_col=slot_col,
                                        **_shotpos_kwargs(slot_shotpos))
@@ -4765,9 +4812,12 @@ class MainLayout(ttk.Frame):
                                     "(output ON until an open step)" + readback_txt)
                     slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
+                    # See the resistance-step case above for why slot_die (not
+                    # the shot-level die_id) is preferred here.
+                    slot_die_id = slot_die if slot_sw is not None else (die_id or None)
                     self.record_result(timestamp=ts, recipe=recipe_name, die=slot_die,
                                        step=name, type=t, mode=mode, value=f"{actual_current:.6g}",
-                                       unit="A", voltage=actual_voltage, die_id=die_id or None,
+                                       unit="A", voltage=actual_voltage, die_id=slot_die_id,
                                        switch=slot_sw, connection=conn_str, instrument=instrument,
                                        die_row=slot_row, die_col=slot_col,
                                        **_shotpos_kwargs(slot_shotpos))
@@ -4832,10 +4882,13 @@ class MainLayout(ttk.Frame):
                         actual_voltage = set_voltage
                     slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
                         s.get("die"), die_label, (cur_row, cur_col))
+                    # See the resistance-step case above for why slot_die (not
+                    # the shot-level die_id) is preferred here.
+                    slot_die_id = slot_die if slot_sw is not None else (die_id or None)
                     self.record_result(
                         timestamp=ts, recipe=recipe_name, die=slot_die,
                         step=name, type=t, mode=mode, value=f"{i_a:.6g}", unit=i_unit,
-                        die_id=die_id or None,
+                        die_id=slot_die_id,
                         switch=slot_sw,
                         die_row=slot_row, die_col=slot_col,
                         set_voltage=set_voltage, voltage=actual_voltage,

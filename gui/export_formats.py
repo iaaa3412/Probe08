@@ -108,6 +108,35 @@ MADX_FORMAT: Dict[str, Any] = {
 
 
 _lookup_cache: Dict[tuple, Dict[tuple, Dict[str, str]]] = {}
+_lookup_cache_by_key: Dict[tuple, Dict[str, Dict[str, str]]] = {}
+
+
+def load_lookup_table_by_field(folder: str, filename: str,
+                               lookup_key_col: str) -> Dict[str, Dict[str, str]]:
+    """Same idea as load_lookup_table, but keyed by one string column (e.g.
+    a die-ID string like "2-7-7-1") instead of a (row, col) coordinate pair.
+    Exists for cases where this app already trusts a per-die ID string
+    coming out of the run itself (see "key_field" on an export format's
+    "lookup") - joining on that directly sidesteps needing this app's own
+    (row, col) grid to agree with the reference table's own coordinate
+    convention (sign, origin, rotation - a project's own table is free to
+    use whatever convention it wants), which a position-based join has no
+    way to verify or correct for on its own."""
+    path = os.path.join(folder, filename)
+    cache_key = (path, lookup_key_col)
+    if cache_key in _lookup_cache_by_key:
+        return _lookup_cache_by_key[cache_key]
+    table: Dict[str, Dict[str, str]] = {}
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                key = (row.get(lookup_key_col) or "").strip()
+                if key:
+                    table[key] = row
+    except OSError:
+        pass
+    _lookup_cache_by_key[cache_key] = table
+    return table
 
 
 def load_lookup_table(folder: str, filename: str,
@@ -146,15 +175,41 @@ def load_lookup_table(folder: str, filename: str,
 
 def apply_lookup(fmt: Dict[str, Any], folder: str, row: Dict[str, Any]) -> Dict[str, Any]:
     """`row` (a per-reading SQL row, or a per-die CSV group) with its
-    matching lookup-table row's columns merged in, matched by this app's
-    own real (row, col) - a CSV-type row already carries that under
-    "abs_row"/"abs_col" (see group_results_by_die), a SQL-type one under
-    "row"/"col" directly. Unchanged (no lookup configured, no folder, or
-    no match found) is returned as-is - a column sourced from the lookup
-    table just resolves blank the same as any other missing source."""
+    matching lookup-table row's columns merged in. Two join modes:
+
+    - "key_field" set: joins on a trusted string ID already attached to
+      the row (e.g. "die_id") against the table's own lookup_key_col
+      column. Use this whenever the run itself already knows which die
+      it measured (Minor Moves recipes attribute die_id per-die - see
+      instrument_panel._exec2_slot_identity) - it can't drift out of sync
+      with the table's own coordinate convention the way a position join
+      can.
+    - otherwise: matched by this app's own real (row, col) - a CSV-type
+      row already carries that under "abs_row"/"abs_col" (see
+      group_results_by_die), a SQL-type one under "row"/"col" directly.
+      Only reliable when this app's (row, col) grid and the table's own
+      coordinate columns use the exact same origin/sign/rotation
+      convention - prefer key_field when a trustworthy ID is available.
+
+    Unchanged (no lookup configured, no folder, or no match found) is
+    returned as-is - a column sourced from the lookup table just resolves
+    blank the same as any other missing source."""
     lookup = fmt.get("lookup")
     if not lookup or not folder:
         return row
+    key_field = lookup.get("key_field")
+    if key_field:
+        key = (row.get(key_field) or "").strip()
+        if not key:
+            return row
+        table = load_lookup_table_by_field(
+            folder, lookup.get("file", ""), lookup.get("lookup_key_col", key_field))
+        match = table.get(key)
+        if not match:
+            return row
+        merged = dict(row)
+        merged.update(match)
+        return merged
     our_row = row.get(lookup.get("our_row_field", "abs_row"))
     our_col = row.get(lookup.get("our_col_field", "abs_col"))
     if our_row in (None, "") or our_col in (None, ""):
