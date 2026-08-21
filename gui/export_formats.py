@@ -227,16 +227,22 @@ def load_formats(folder: str, system: str = "accretech") -> List[Dict[str, Any]]
 def save_formats(folder: str, formats: List[Dict[str, Any]], system: str = "accretech"):
     path = os.path.join(folder, _formats_filename(system))
     default = None
+    export_path = None
     if os.path.exists(path):
         try:
             with open(path, encoding="utf-8") as f:
-                default = json.load(f).get("default")
+                existing = json.load(f)
+            default = existing.get("default")
+            export_path = existing.get("export_path")
         except (OSError, ValueError):
             pass
     if default is not None and default not in {f["name"] for f in formats}:
         default = None  # the format that was default got removed
+    out = {"formats": formats, "default": default}
+    if export_path is not None:
+        out["export_path"] = export_path
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"formats": formats, "default": default}, f, indent=2)
+        json.dump(out, f, indent=2)
 
 
 def add_format(folder: str, fmt: Dict[str, Any], system: str = "accretech") -> List[Dict[str, Any]]:
@@ -272,8 +278,49 @@ def set_default_format_name(folder: str, name: Optional[str], system: str = "acc
     if name is not None and name not in {f["name"] for f in formats}:
         return
     path = os.path.join(folder, _formats_filename(system))
+    export_path = None
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                export_path = json.load(f).get("export_path")
+        except (OSError, ValueError):
+            pass
+    out = {"formats": formats, "default": name}
+    if export_path is not None:
+        out["export_path"] = export_path
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"formats": formats, "default": name}, f, indent=2)
+        json.dump(out, f, indent=2)
+
+
+def get_default_export_path(folder: str, system: str = "accretech") -> Optional[str]:
+    """This project's own remembered export directory - separate from the
+    fixed system-wide fallback (Downloads / PROBE08's RAWDATA share),
+    since different projects legitimately land their data in different
+    places. Lives in the same per-folder/per-system file as the export
+    format default (ata_export_formats.json), not a new file, since the
+    two are always set together (see set_default_export_path)."""
+    path = os.path.join(folder, _formats_filename(system))
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f).get("export_path")
+        except (OSError, ValueError):
+            pass
+    return None
+
+
+def set_default_export_path(folder: str, export_path: str, system: str = "accretech") -> None:
+    path = os.path.join(folder, _formats_filename(system))
+    data = {"formats": [], "default": None}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            pass
+    data["export_path"] = export_path
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
 
 class _BlankMissing(dict):

@@ -5789,6 +5789,13 @@ class MainLayout(ttk.Frame):
         names = [f["name"] for f in self._export_formats]
         self._export_format_cb.config(values=names)
         default_name = xfmt.get_default_format_name(self._ata_folder, system=self._system)
+        # This project's own remembered export directory, if it has one -
+        # falls back to whatever export_path_var already held (the fixed
+        # system-wide default, or wherever the operator last pointed it)
+        # rather than clearing the field when a project has never set one.
+        default_export_path = xfmt.get_default_export_path(self._ata_folder, system=self._system)
+        if default_export_path:
+            self.export_path_var.set(default_export_path)
         if select_name in names:
             self.export_format_var.set(select_name)
         elif self.export_format_var.get() not in names:
@@ -5813,8 +5820,15 @@ class MainLayout(ttk.Frame):
                                  "Pick a format from the Export Format dropdown first.")
             return
         xfmt.set_default_format_name(self._ata_folder, fmt["name"], system=self._system)
+        # Format and export directory are set as default together - the
+        # two always travel together for a given project (a project's data
+        # goes to its own place, in its own shape), so one button covers
+        # both rather than needing two separate "set default" actions.
+        xfmt.set_default_export_path(self._ata_folder, self.export_path_var.get(),
+                                     system=self._system)
         self._update_default_format_label(fmt["name"])
-        self.controller.log(f"[RESULTS] '{fmt['name']}' set as the default export format.")
+        self.controller.log(f"[RESULTS] '{fmt['name']}' and export path "
+                            f"'{self.export_path_var.get()}' set as default for this project.")
 
     def _delete_export_format(self):
         from tkinter import messagebox
