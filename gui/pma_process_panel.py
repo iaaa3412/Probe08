@@ -636,30 +636,17 @@ class PmaProcessPanel(ttk.Frame):
             # that test passed even when the "workbook" was the PMA's own
             # shots, so the log claimed a full wafer while drawing touchdowns.
             from_workbook = run.wafer_definition_data() is not None
-            path = egpma.save_wafer_map_csv(folder, shots, run._fields)
             n = len(egpma.expand_touchdowns_to_dies(shots, *run._die_um))
         except Exception as exc:
-            self._log(f"[PMA] LOAD ALL: could not write the wafer map — "
+            self._log(f"[PMA] LOAD ALL: could not read the wafer's touchdowns — "
                       f"{type(exc).__name__}: {exc}")
             return 0
         source = ("the recipe generator workbook" if from_workbook
                   else "the PMA's touchdowns (NO WORKBOOK LOADED — this draws "
                        "only the dies this recipe probes, not the wafer)")
-        self._log(f"[PMA] LOAD ALL: wafer map written from {source} — "
-                  f"{len(shots)} shot(s), {n} die(s) → {os.path.basename(path)}")
-        try:
-            layout._exec2_map_folder = folder
-            layout._exec2_map_source_var.set("Electroglas")
-            layout._exec2_draw_wafer_map()
-            # The row/col index is keyed to the die set the map was written
-            # from, so rebuild it now the map has changed under it.
-            run._build_rc_index()
-            run._last_seq = None
-            if run._index is not None:
-                run._highlight(run._index)
-        except Exception as exc:
-            self._log(f"[PMA] LOAD ALL: map written but the Run tab did not "
-                      f"redraw — {type(exc).__name__}: {exc}")
+        self._log(f"[PMA] LOAD ALL: wafer map built from {source} — "
+                  f"{len(shots)} shot(s), {n} die(s)")
+        layout._exec2_map_folder = folder
 
         # The Run tab is not the only place this wafer is drawn. The Wafer Map
         # tab and its Wafer View page read the map from the file, so without
@@ -678,9 +665,14 @@ class PmaProcessPanel(ttk.Frame):
         gen = getattr(layout, "recipe_gen", None)
         if gen is not None and hasattr(gen, "load_touchdowns_as_map"):
             # Build an actual Wafer Builder map (Shot/Shot Map/Die Map) from
-            # these same shots - not just redrawing the Run tab from
-            # whatever Wafer Builder already had (which _sync_views below
-            # does, and which is stale/empty the first time LOAD ALL runs).
+            # these same shots - this IS the Run tab's map now (Electroglas
+            # has no separate hardware-extracted map of its own to fall
+            # back on; the old ata_wafer_map_electroglas.csv path predates
+            # Wafer Builder entirely and is retired). _sync_views below
+            # both selects "Wafer Builder" as the Run tab's source AND
+            # publishes this exact state to the file it reads, so the Run
+            # tab actually shows what was just built, not whatever a
+            # previous manual Save Wafer Map happened to leave there.
             # save_as names it after the .PMA itself and saves it as its
             # own map (warning first if that name already exists) instead
             # of overwriting whatever map the operator had open - a second
@@ -698,6 +690,16 @@ class PmaProcessPanel(ttk.Frame):
             except Exception as exc:
                 self._log(f"[PMA] LOAD ALL: the Wafer Map tab did not refresh — "
                           f"{type(exc).__name__}: {exc}")
+        try:
+            # The row/col index is keyed to the die set the map was built
+            # from, so rebuild it now the map has changed under it.
+            run._build_rc_index()
+            run._last_seq = None
+            if run._index is not None:
+                run._highlight(run._index)
+        except Exception as exc:
+            self._log(f"[PMA] LOAD ALL: could not refresh the Run tab's own "
+                      f"index — {type(exc).__name__}: {exc}")
         return n
 
     def _push_touchdowns_to_recipe(self, run, recipe_panel, recipe: str) -> int:

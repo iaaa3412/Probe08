@@ -78,7 +78,13 @@ ATA_KEY_FILES = {
 WAFER_MAP_SOURCES = {
     "GDS":       "ata_wafer_map_gds.csv",
     "Accretech": "ata_wafer_map_accretech.csv",
-    "Electroglas": "ata_wafer_map_electroglas.csv",
+    # "Electroglas" (ata_wafer_map_electroglas.csv) retired 2026-08-21 -
+    # predates Wafer Builder entirely (2026-07-20 vs. 2026-08-12) and
+    # nothing sets this as the active source anymore; Wafer Builder IS
+    # the wafer for Electroglas now, published straight to the file
+    # below by _sync_views. The file itself may still exist in an old
+    # ATA folder from a pre-Wafer-Builder LOAD ALL/Sync Run Map - it's
+    # just never selected or written to again.
     # The single "published/active" map Wafer Builder writes (Shot x Shot
     # Map x Die Map), shared by both systems - distinct from Accretech's own
     # hardware-extracted map and from GDS. Many named map definitions can

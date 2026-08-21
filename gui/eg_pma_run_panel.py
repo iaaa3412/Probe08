@@ -1092,9 +1092,13 @@ class EgPmaRunPanel(ttk.Frame):
     def _sync_run_map(self):
         """Point the Run tab's map at this recipe so highlighting has squares.
 
-        Writes the Electroglas wafer-map CSV into the ATA folder only with
-        permission - it is the operator's data folder, and an existing file may
-        have come from a different recipe.
+        Builds a Wafer Builder map (Shot/Shot Map/Die Map) from the loaded
+        recipe's own touchdowns and publishes it as the Run tab's map -
+        same path LOAD ALL's own map step uses (pma_process_panel._write_
+        wafer_map). The old ata_wafer_map_electroglas.csv this used to
+        write predates Wafer Builder entirely and is retired: Electroglas
+        has no separate hardware-extracted map to fall back on, so Wafer
+        Builder IS the wafer here, not a second parallel copy of it.
         """
         layout = self._main_layout
         wmap = self._run_map()
@@ -1109,34 +1113,27 @@ class EgPmaRunPanel(ttk.Frame):
         if not folder or not os.path.isdir(folder):
             messagebox.showinfo("Run map", "Load an ATA folder on the Run tab first.")
             return
-
-        csv_path = os.path.join(folder, "ata_wafer_map_electroglas.csv")
-        existing = 0
-        if os.path.isfile(csv_path):
-            with open(csv_path, encoding="utf-8-sig") as fh:
-                existing = max(0, sum(1 for _ in fh) - 1)
-        # The map is per-DIE now, so a 2x2 recipe writes four rows per
-        # touchdown. A file written by the older per-shot code has a quarter
-        # of the rows and would draw a quarter of the wafer, so the mismatch
-        # check compares against the die count and offers to rewrite.
-        want = len(expand_touchdowns_to_dies(self._touchdowns, *self._die_um,
-                                             *self.shot_layout()))
-        if existing != want:
-            if not messagebox.askokcancel(
-                    "Run map",
-                    f"{os.path.basename(csv_path)} has {existing} rows but this "
-                    f"recipe has {want} dies across "
-                    f"{len(self._touchdowns)} touchdowns.\n\n"
-                    "Rewrite it from the loaded recipe?"):
-                return
-            from electroglas_pma import save_wafer_map_csv
-            save_wafer_map_csv(folder, self._touchdowns, self._fields)
-            self._log(f"[PMA] Wrote {csv_path} — {want} dies")
-
+        gen = getattr(layout, "recipe_gen", None)
+        if gen is None or not hasattr(gen, "load_touchdowns_as_map"):
+            messagebox.showinfo("Run map", "The Wafer Builder tab is not available.")
+            return
+        if not messagebox.askokcancel(
+                "Run map",
+                "Rebuild the Wafer Builder map from this recipe's touchdowns, "
+                "and make it the Run tab's active map?"):
+            return
+        shots = self._map_source_touchdowns()
         try:
-            layout._exec2_map_folder = folder
-            layout._exec2_map_source_var.set("Electroglas")
-            layout._exec2_draw_wafer_map()
+            gen.load_touchdowns_as_map(
+                shots, "Sync Run Map", "the loaded recipe's touchdowns",
+                save_as=os.path.splitext(os.path.basename(self._pma_path))[0]
+                        if getattr(self, "_pma_path", "") else None)
+        except Exception as exc:
+            self._log(f"[PMA] Could not build a Wafer Builder map from these "
+                      f"shots — {type(exc).__name__}: {exc}")
+            return
+        try:
+            gen._sync_views(folder)
         except Exception as e:
             self._log(f"[PMA] Could not redraw the Run map: {type(e).__name__}: {e}")
             return

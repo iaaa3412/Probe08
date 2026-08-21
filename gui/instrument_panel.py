@@ -2500,8 +2500,14 @@ class MainLayout(ttk.Frame):
         map_bar = ttk.Frame(map_lf)
         map_bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
         self._exec2_map_folder = None
+        # Electroglas has no hardware-extracted map of its own (unlike
+        # Accretech's own "Accretech" source) - Wafer Builder IS the wafer
+        # there, published straight to the Run tab by _sync_views whenever
+        # it changes (see recipe_gen_panel.py). The old "Electroglas"
+        # source (ata_wafer_map_electroglas.csv) predates Wafer Builder
+        # entirely and is retired.
         self._exec2_map_source_var = tk.StringVar(
-            value="Accretech" if self._system == "accretech" else "Electroglas")
+            value="Accretech" if self._system == "accretech" else "Wafer Builder")
         self._exec2_map_path_var = tk.StringVar(value="No wafer map loaded")
         ttk.Label(map_bar, textvariable=self._exec2_map_path_var,
                   foreground="#6b7280", font=("Segoe UI", 8)).pack(

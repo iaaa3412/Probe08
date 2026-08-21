@@ -1509,6 +1509,41 @@ class RecipeGenPanel(ttk.Frame):
     def _wafer_map_filename(self) -> str:
         return WAFER_MAP_SOURCES["Wafer Builder"]
 
+    def _write_active_wafer_map_csv(self, folder: str, dies: list):
+        """Write WAFER_MAP_SOURCES["Wafer Builder"] (the Run tab's actual
+        "Wafer Builder" map source) from an already-computed die list - the
+        part of Save Wafer Map that isn't the confirmation dialog, so LOAD
+        ALL and Sync Run Map (already their own explicit operator action)
+        can publish the SAME file without a second prompt. Returns the
+        written path, or raises OSError on failure - callers decide how to
+        report that."""
+        shot_rows, shot_cols = self._shot_dims()
+        # A stable per-touchdown sequence number, row-major over the shot map
+        # - only used as a label (the "seq" column), not for geometry.
+        shot_order = {(sr, sc): i + 1 for i, (sr, sc) in
+                     enumerate(sorted(k for k, v in self._shotmap_cells.items() if v))}
+        path = os.path.join(folder, self._wafer_map_filename())
+        fields = ("row", "col", "seq", "quad_pos", "device_id",
+                 "x_um", "y_um", "map_x", "map_y", "shot_x", "shot_y", "enabled")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            wr = csv.DictWriter(f, fieldnames=fields)
+            wr.writeheader()
+            for d in dies:
+                device_id = d["die_id"]
+                ox, oy = d["shot_c"] * self._shot_pitch()[0], d["shot_r"] * self._shot_pitch()[1]
+                wr.writerow({
+                    "row": d["shot_r"] * shot_rows + d["slot_r"],
+                    "col": d["shot_c"] * shot_cols + d["slot_c"],
+                    "seq": shot_order.get((d["shot_r"], d["shot_c"]), 0),
+                    "quad_pos": f"R{d['slot_r']}C{d['slot_c']}",
+                    "device_id": device_id,
+                    "x_um": fmt_num(d["x"]), "y_um": fmt_num(-d["y"]),
+                    "map_x": fmt_num(d["x"]), "map_y": fmt_num(d["y"]),
+                    "shot_x": fmt_num(ox), "shot_y": fmt_num(oy),
+                    "enabled": 0 if d["status"] == "skip" else 1,
+                })
+        return path
+
     def _save_wafer_map(self):
         """Write the Run tab's wafer map directly from the Die Map, one row
         per real die - no touchdown-text encoding involved, since this tab
@@ -1534,33 +1569,8 @@ class RecipeGenPanel(ttk.Frame):
                 f"{n_align} align) to {filename} in\n{folder}?\n\n"
                 "This replaces the Run tab's wafer map."):
             return
-
-        shot_rows, shot_cols = self._shot_dims()
-        # A stable per-touchdown sequence number, row-major over the shot map
-        # - only used as a label (the "seq" column), not for geometry.
-        shot_order = {(sr, sc): i + 1 for i, (sr, sc) in
-                     enumerate(sorted(k for k, v in self._shotmap_cells.items() if v))}
-        path = os.path.join(folder, filename)
-        fields = ("row", "col", "seq", "quad_pos", "device_id",
-                 "x_um", "y_um", "map_x", "map_y", "shot_x", "shot_y", "enabled")
         try:
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                wr = csv.DictWriter(f, fieldnames=fields)
-                wr.writeheader()
-                for d in dies:
-                    device_id = d["die_id"]
-                    ox, oy = d["shot_c"] * self._shot_pitch()[0], d["shot_r"] * self._shot_pitch()[1]
-                    wr.writerow({
-                        "row": d["shot_r"] * shot_rows + d["slot_r"],
-                        "col": d["shot_c"] * shot_cols + d["slot_c"],
-                        "seq": shot_order.get((d["shot_r"], d["shot_c"]), 0),
-                        "quad_pos": f"R{d['slot_r']}C{d['slot_c']}",
-                        "device_id": device_id,
-                        "x_um": fmt_num(d["x"]), "y_um": fmt_num(-d["y"]),
-                        "map_x": fmt_num(d["x"]), "map_y": fmt_num(d["y"]),
-                        "shot_x": fmt_num(ox), "shot_y": fmt_num(oy),
-                        "enabled": 0 if d["status"] == "skip" else 1,
-                    })
+            path = self._write_active_wafer_map_csv(folder, dies)
         except OSError as exc:
             messagebox.showerror("Write Failed", str(exc))
             return
@@ -1627,6 +1637,22 @@ class RecipeGenPanel(ttk.Frame):
             # extraction of its own; Wafer Builder IS the wafer there, so
             # publishing makes it the active source directly.
             if self._system != "accretech":
+                # Publish the CURRENT in-memory Die Map to the file
+                # "Wafer Builder" actually reads, not just point the source
+                # var at it - selecting the right source but leaving
+                # whatever was last manually Saved (possibly stale, or
+                # from an unrelated recipe) sitting in the file looked
+                # exactly like the map not updating at all. Every caller
+                # of _sync_views (LOAD ALL, Sync Run Map, Save Wafer Map
+                # itself) gets a genuinely fresh publish this way, not just
+                # the ones that remember to write the CSV first.
+                dies = self._die_positions()
+                if dies:
+                    try:
+                        self._write_active_wafer_map_csv(folder, dies)
+                    except OSError as exc:
+                        self._log(f"[WAFER MAP] Could not publish the Run "
+                                 f"tab's map: {exc}")
                 layout._exec2_map_source_var.set("Wafer Builder")
             layout._exec2_draw_wafer_map()
         except Exception as exc:
