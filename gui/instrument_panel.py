@@ -261,7 +261,19 @@ class MainLayout(ttk.Frame):
         self._dmm_cont_thread = None
         self._dmm_status_var: tk.StringVar | None = None
         self._inst_status_vars: dict = {}
+        # Shared with the Wafer Builder tab's Die Map "Label min width (px):"
+        # control (recipe_gen_panel.py binds its Spinbox to this SAME
+        # Variable, not a copy) - one knob for die-ID-label zoom thresholds
+        # on both maps. See _exec2_labels_fit for how the Run tab uses it.
+        self._exec2_label_min_px_var = tk.IntVar(value=22)
+        self._exec2_label_min_px_var.trace_add(
+            "write", self._on_exec2_label_min_px_change)
         self._build_layout()
+
+    def _on_exec2_label_min_px_change(self, *_args):
+        if hasattr(self, "_exec2_wafer_map"):
+            self._exec2_redraw_overlay_on_run_map()
+            self._exec2_redraw_overlay_on_results_map()
 
     def _build_layout(self):
         paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
@@ -3985,6 +3997,14 @@ class MainLayout(ttk.Frame):
                                                  size=self._OVERLAY_FONT[1])
         return self._overlay_font_obj
 
+    def _exec2_label_min_px(self) -> float:
+        # See _exec2_label_min_px_var's own comment (__init__) - shared with
+        # the Wafer Builder Die Map tab's "Label min width (px):" Spinbox.
+        try:
+            return float(self._exec2_label_min_px_var.get())
+        except (tk.TclError, ValueError):
+            return 22.0
+
     def _exec2_labels_fit(self, wm, die_ids_by_rc: dict) -> bool:
         """Is a die currently drawn big enough to hold its ID?
 
@@ -3993,6 +4013,12 @@ class MainLayout(ttk.Frame):
         until there is room. Measured with the real font rather than guessed,
         against the LONGEST label, so a quad ID like 'TARGET' does not
         overflow its neighbour.
+
+        _exec2_label_min_px() is an extra, operator-adjustable floor on top
+        of that - raising it hides labels until zoomed in further even if
+        they would already fit text-wise; it can never cause an overflow,
+        since the text-fit check above still applies regardless of where
+        the floor is set.
         """
         box_w, box_h = wm.die_box_px()
         if box_w <= 0:
@@ -4000,6 +4026,7 @@ class MainLayout(ttk.Frame):
         longest = max(die_ids_by_rc.values(), key=len, default="")
         font = self._exec2_overlay_font()
         return (box_w >= font.measure(longest) + 3
+                and box_w >= self._exec2_label_min_px()
                 and box_h >= font.metrics("linespace"))
 
     def _exec2_draw_overlay_labels_on(self, wm, die_ids_by_rc: dict) -> list:

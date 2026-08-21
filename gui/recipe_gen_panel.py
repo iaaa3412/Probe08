@@ -246,10 +246,11 @@ class RecipeGenPanel(ttk.Frame):
         self._die_status: Dict[tuple, dict] = {}
         self._diemap_mode_var = tk.StringVar(value="id")
         self._diemap_status_var = tk.StringVar(value="")
-        # User-tweakable version of _DIEMAP_LABEL_MIN_PX (below), added as a
-        # standalone control - see _diemap_label_visibility. Defaults to the
-        # old hardcoded constant, so behavior is unchanged until touched.
-        self._diemap_label_min_px_var = tk.IntVar(value=self._DIEMAP_LABEL_MIN_PX)
+        # SAME Variable object as main_layout._exec2_label_min_px_var, not a
+        # copy - one "Label min width (px):" control drives the zoom
+        # threshold on both this tab's Die Map AND the Run tab's map (see
+        # instrument_panel.MainLayout.__init__ and _exec2_labels_fit).
+        self._diemap_label_min_px_var = main_layout._exec2_label_min_px_var
         self._diemap_label_min_px_var.trace_add("write", self._on_diemap_label_min_px_change)
         self._die_editor: Optional[tk.Entry] = None
         self._die_editor_key: Optional[tuple] = None
