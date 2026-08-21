@@ -909,13 +909,30 @@ class RecipePanel(ttk.Frame):
     def _active_bench_tag(self) -> str:
         """Which prober bench a recipe created right now should be tagged
         with, so it only shows on that bench later - see
-        _visible_recipe_names(). Reads AtomicaDashboard._active_bench(),
-        not special-cased to Electroglas: Accretech is a single fixed
-        bench today (probe08), so every recipe gets that same tag and
-        nothing is filtered out in practice - but a second Accretech
-        prober would already be scoped correctly with no further change
-        here, same as probe02/probe03 are now.
+        _visible_recipe_names().
+
+        Electroglas: reads instruments.eg_profiles.active_name() directly,
+        NOT AtomicaDashboard._active_bench() - that reflects the bench for
+        whichever system is CURRENTLY DISPLAYED (controller.active_system),
+        which is still "accretech" for a chunk of app startup (both
+        systems' ATA folders autoload before _apply_default_prober ever
+        switches the displayed system - see app.py's __init__ ordering).
+        Going through the controller during that window made every
+        Electroglas recipe tagged for a real bench (e.g. probe03) look
+        invisible - _active_bench() falls through to the Accretech branch
+        and returns "probe08", which never matches - so a default recipe
+        autoload silently found nothing to load.
+
+        Accretech: unchanged, still via the controller (single fixed bench
+        today - probe08 - so nothing is filtered out in practice; a second
+        Accretech prober would already be scoped correctly here).
         """
+        if self._system == "electroglas":
+            try:
+                from instruments import eg_profiles
+                return eg_profiles.active_name() or ""
+            except Exception:
+                return ""
         try:
             return self.controller._active_bench() or ""
         except Exception:
