@@ -3496,12 +3496,22 @@ class MainLayout(ttk.Frame):
         lives, rather than trusted against whatever (row, col) the recipe
         computed for it. A site whose die_id isn't on the map at all is
         left unmatched rather than guessing a square from bad coordinates.
+
+        Only UNIQUE labels make it in (a die_id that appears at exactly one
+        square on the loaded map) - a repeated label (e.g. every PCM
+        structure literally named "PCM") cannot be told apart by the id
+        alone. _exec2_resolve_site_cells checks the site's own (row, col)
+        against the map directly first, before ever consulting this table,
+        so a repeated-label site with its correct position already recorded
+        still resolves right without needing to be unique here.
         """
-        out = {}
+        counts, single = {}, {}
         for rc, label in (self._exec2_wafer_map.die_ids or {}).items():
-            if label:
-                out.setdefault(label, rc)
-        return out
+            if not label:
+                continue
+            counts[label] = counts.get(label, 0) + 1
+            single[label] = rc
+        return {label: rc for label, rc in single.items() if counts[label] == 1}
 
     def _exec2_resolve_site_cells(self, sites) -> list:
         """(row, col) to select for each recipe/PMA touchdown `sites` entry
@@ -3511,31 +3521,40 @@ class MainLayout(ttk.Frame):
         Minor Moves recipe's per-slot row/col is itself authoritative there,
         see _exec2_apply_recipe_sites's docstring).
 
-        Electroglas: die_id is looked up against the loaded Wafer Builder
-        map (ground truth) first; a site with no die_id falls back to its
-        own (row, col) silently (nothing to look up), but a site that DOES
-        name a die_id the map doesn't recognize also falls back - and that
-        case is logged, so a bad touchdown resolution (e.g. 21PCM's
-        currently-unreliable one) shows up as an obvious warning instead of
-        silently mismatched squares.
+        Electroglas, per site:
+          1. If the site's own (row, col) is already where the map says
+             that exact die_id lives, use it directly - confirmed correct,
+             regardless of whether the label repeats elsewhere on the
+             wafer (e.g. every PCM site is literally named "PCM").
+          2. Otherwise, if die_id is unique on the map, look it up there.
+          3. Otherwise fall back to the site's own (row, col) and log it -
+             an unconfirmed, possibly-wrong touchdown resolution (e.g.
+             21PCM's currently-unreliable one) shows up as a warning
+             instead of silently landing on the wrong square.
         """
         if self._system != "electroglas":
             return [(s["row"], s["col"]) for s in sites]
-        id_to_rc = self._exec2_map_die_id_lookup()
+        wm_ids = self._exec2_wafer_map.die_ids or {}
+        unique_id_to_rc = self._exec2_map_die_id_lookup()
         resolved, unmatched = [], 0
         for s in sites:
             die_id = (s.get("die_id") or "").strip()
-            rc = id_to_rc.get(die_id) if die_id else None
-            if rc is None:
-                rc = (s["row"], s["col"])
-                if die_id:
-                    unmatched += 1
+            own_rc = (s["row"], s["col"])
+            if die_id and wm_ids.get(own_rc) == die_id:
+                rc = own_rc
+            else:
+                rc = unique_id_to_rc.get(die_id) if die_id else None
+                if rc is None:
+                    rc = own_rc
+                    if die_id:
+                        unmatched += 1
             resolved.append(rc)
         if unmatched:
             self._exec2_log(
                 f"[RUN] {unmatched} of {len(sites)} touchdown(s) named a die ID "
-                "not found on the loaded wafer map — used the recipe's own "
-                "(row, col) for those instead, which may be wrong.")
+                "that doesn't match the map at its own (row, col) and isn't "
+                "unique on the map either — used the recipe's own (row, col) "
+                "for those instead, which may be wrong.")
         return resolved
 
     def _exec2_loaded_recipe_name(self) -> str:
