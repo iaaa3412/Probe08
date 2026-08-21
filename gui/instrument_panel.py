@@ -1571,6 +1571,20 @@ class MainLayout(ttk.Frame):
         recipe_gen = getattr(self, "recipe_gen", None)
         if recipe_gen is not None:
             recipe_gen.autoload_map_for_folder(folder_path)
+            # autoload_map_for_folder only restores the map into memory
+            # (Wafer Builder's own Shot/Shot Map/Die Map canvases) - it does
+            # NOT publish it to ata_wafer_map_builder.csv, the file the Run
+            # tab's "Wafer Builder" source actually reads. Without this, a
+            # map edited and saved (e.g. a new die pitch) looked correct on
+            # the Die Map tab but the Run tab kept showing whatever was
+            # published by the LAST manual Save/Sync - stale until the
+            # operator happened to press Save again. _sync_views is the same
+            # publish _save_wafer_map/LOAD ALL/Sync Run Map already do.
+            try:
+                recipe_gen._sync_views(folder_path)
+            except Exception as exc:
+                self._exec2_log(f"[RUN] Could not publish the auto-loaded "
+                                f"Wafer Builder map: {type(exc).__name__}: {exc}")
         self._exec2_map_folder = folder_path
         # Electroglas has no hardware-extracted map of its own anymore - the
         # Wafer Builder tab (synced above via autoload_map_for_folder) IS the
