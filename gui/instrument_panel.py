@@ -3486,6 +3486,58 @@ class MainLayout(ttk.Frame):
                     out.append(cell)
         return out
 
+    def _exec2_map_die_id_lookup(self) -> dict:
+        """die_id (label string) -> (row, col), from the CURRENTLY LOADED
+        wafer map - the ground truth for what is physically on each square.
+
+        Electroglas only. A recipe's or PMA's own touchdown resolution can
+        be wrong (its geometry math, not the map's) - so a site naming a
+        die_id is matched against where the map itself says that die_id
+        lives, rather than trusted against whatever (row, col) the recipe
+        computed for it. A site whose die_id isn't on the map at all is
+        left unmatched rather than guessing a square from bad coordinates.
+        """
+        out = {}
+        for rc, label in (self._exec2_wafer_map.die_ids or {}).items():
+            if label:
+                out.setdefault(label, rc)
+        return out
+
+    def _exec2_resolve_site_cells(self, sites) -> list:
+        """(row, col) to select for each recipe/PMA touchdown `sites` entry
+        (dicts with row/col and optionally die_id).
+
+        Accretech: unchanged - the site's own (row, col) is used as-is (a
+        Minor Moves recipe's per-slot row/col is itself authoritative there,
+        see _exec2_apply_recipe_sites's docstring).
+
+        Electroglas: die_id is looked up against the loaded Wafer Builder
+        map (ground truth) first; a site with no die_id falls back to its
+        own (row, col) silently (nothing to look up), but a site that DOES
+        name a die_id the map doesn't recognize also falls back - and that
+        case is logged, so a bad touchdown resolution (e.g. 21PCM's
+        currently-unreliable one) shows up as an obvious warning instead of
+        silently mismatched squares.
+        """
+        if self._system != "electroglas":
+            return [(s["row"], s["col"]) for s in sites]
+        id_to_rc = self._exec2_map_die_id_lookup()
+        resolved, unmatched = [], 0
+        for s in sites:
+            die_id = (s.get("die_id") or "").strip()
+            rc = id_to_rc.get(die_id) if die_id else None
+            if rc is None:
+                rc = (s["row"], s["col"])
+                if die_id:
+                    unmatched += 1
+            resolved.append(rc)
+        if unmatched:
+            self._exec2_log(
+                f"[RUN] {unmatched} of {len(sites)} touchdown(s) named a die ID "
+                "not found on the loaded wafer map — used the recipe's own "
+                "(row, col) for those instead, which may be wrong.")
+        return resolved
+
     def _exec2_loaded_recipe_name(self) -> str:
         """The recipe the Run tab currently has loaded, if any."""
         if not getattr(self, "_exec2_steps", None):
@@ -3576,14 +3628,21 @@ class MainLayout(ttk.Frame):
                     f"[RUN] Recipe '{recipe}' has no touchdown list yet — click "
                     "dies on the map, then 💾 Save Selected Map.")
             return []
-        picks = [(s["row"], s["col"]) for s in sites]
-        ids = {(s["row"], s["col"]): s["die_id"]
-               for s in sites if s.get("die_id")}
+        resolved = self._exec2_resolve_site_cells(sites)
+        picks = list(resolved)
+        ids = {rc: s["die_id"] for rc, s in zip(resolved, sites) if s.get("die_id")}
         picks = [rc for rc in self._exec2_touchdown_cells(picks)
                  if rc in self._exec2_wafer_map.dies] or picks
         self._exec2_wafer_map.set_picked(picks)
         self._exec2_on_sites_changed(picks)
-        if ids:
+        # Accretech-only: a Minor Moves recipe's own SITE table knows the
+        # true per-slot die_id inside a shot square, which the map itself
+        # cannot label (see _exec2_apply_recipe_sites for the full reason).
+        # On Electroglas the Wafer Builder map IS the ground truth for die
+        # IDs - a recipe (especially one whose touchdown resolution isn't
+        # trusted yet, e.g. a PMA-based recipe) must only ever select/
+        # highlight squares here, never relabel them.
+        if ids and self._system == "accretech":
             self._exec2_clear_overlay()
             self._exec2_overlay_die_ids = ids
             self._exec2_redraw_overlay_on_run_map()
@@ -4252,8 +4311,9 @@ class MainLayout(ttk.Frame):
         A recipe with no list leaves the map alone - the run then walks
         everything, which is the old behaviour.
         """
-        get_sites = getattr(self.recipe_panel, "get_sites", None)
-        sites = list(get_sites()) if get_sites else []
+        get_records = getattr(self.recipe_panel, "get_site_records", None)
+        records = list(get_records()) if get_records else []
+        sites = self._exec2_resolve_site_cells(records)
         if not sites:
             return
         known = self._exec2_wafer_map.dies
@@ -4280,14 +4340,18 @@ class MainLayout(ttk.Frame):
         # (it does not - it only fires on initial map draw, before a
         # recipe is normally loaded yet, or as a Test Selected fallback
         # that never triggers once cells are already highlighted).
-        get_records = getattr(self.recipe_panel, "get_site_records", None)
-        records = list(get_records()) if get_records else []
-        ids = {(s["row"], s["col"]): s["die_id"] for s in records if s.get("die_id")}
-        if ids:
-            self._exec2_clear_overlay()
-            self._exec2_overlay_die_ids = ids
-            self._exec2_redraw_overlay_on_run_map()
-            self._exec2_redraw_overlay_on_results_map()
+        #
+        # Accretech-only (see the matching note in _exec2_load_selected_map):
+        # on Electroglas the Wafer Builder map is the ground truth for die
+        # IDs - loading a recipe (or a PMA-derived one) must only select/
+        # highlight squares, never relabel them with its own touchdown data.
+        if self._system == "accretech":
+            ids = {(s["row"], s["col"]): s["die_id"] for s in records if s.get("die_id")}
+            if ids:
+                self._exec2_clear_overlay()
+                self._exec2_overlay_die_ids = ids
+                self._exec2_redraw_overlay_on_run_map()
+                self._exec2_redraw_overlay_on_results_map()
 
     def _exec2_load_recipe_by_name(self, name: str):
         """Save button on the Recipe tab calls this too, so saving a recipe
