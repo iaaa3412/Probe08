@@ -2951,6 +2951,18 @@ class RecipePanel(ttk.Frame):
             else:
                 self.controller.log(f"[RECIPE] Replacing existing recipe '{name}'.")
         self._store_form()
+        # NOT auto-computing conn here on purpose. Electroglas connections
+        # come from per-bench relay wiring (hp_switchbox.BENCH_WIRING) that
+        # does not exist - or cannot be assumed correct - for every project,
+        # unlike Accretech's pin-table approach; silently "computing" a
+        # value from possibly-wrong/missing wiring is worse than leaving it
+        # blank and making that fact visible. HI/LO pins can't be inferred
+        # from the .PMA either - checked a real file (LAMPATA's own "HP LaMP
+        # electrical gauge.PMA"): it carries only touchdown-move references
+        # and generic measurement parameters (voltage/delays/averages/NPLC/
+        # current limit), no electrical pin/device field at all. Both stay
+        # exactly what pma_params_to_steps set (blank) until the operator
+        # fills them in by hand.
         self._recipes[name] = {"steps": steps, "sites": [],
                                "bench": self._active_bench_tag()}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
@@ -2960,6 +2972,13 @@ class RecipePanel(ttk.Frame):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
+        # Without this the just-imported recipe's "valid" flag is whatever
+        # it happened to be before (stale, or never set for a brand new
+        # recipe) - not a reflection of the steps actually just built. A
+        # recipe with no pins/connections set yet should show red
+        # (unresolved) or at least accurately "not validated", not a
+        # leftover green from some earlier recipe.
+        self.validate_all_recipes()
 
         mapped = ", ".join(f"{k}={useful[k]}" for k in _PMA_MAPPED_KEYS if k in useful)
         unmapped = ", ".join(f"{k}={useful[k]}" for k in _PMA_UNMAPPED_KEYS if k in useful)
@@ -3047,6 +3066,10 @@ class RecipePanel(ttk.Frame):
             name = f"{orig_name} ({n})"
             n += 1
         self._store_form()
+        # See import_legacy_from_path's identical comment - not auto-
+        # computing conn or pins here on purpose. Neither is reliably
+        # inferrable for Electroglas across every project; left for the
+        # operator to fill in by hand.
         self._recipes[name] = {"steps": steps, "sites": [],
                                "bench": self._active_bench_tag()}
         if ("(unsaved)" in self._recipes and "(unsaved)" != name
@@ -3056,6 +3079,7 @@ class RecipePanel(ttk.Frame):
             del self._recipes["(unsaved)"]
         self._load_form(name)
         self._refresh_picker()
+        self.validate_all_recipes()
 
         mapped = ", ".join(f"{k}={useful[k]}" for k in _PMA_MAPPED_KEYS if k in useful)
         unmapped = ", ".join(f"{k}={useful[k]}" for k in _PMA_UNMAPPED_KEYS if k in useful)

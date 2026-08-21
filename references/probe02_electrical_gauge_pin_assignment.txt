@@ -1,0 +1,33 @@
+probe02 - "HP LaMP electrical gauge" recipe - pin assignment
+==============================================================
+
+Source: instruments/hp_switchbox.py, BENCH_WIRING["probe02"]["die_pins"]
+Card: E1345A relay multiplexer (driver_key "relay1_eg"), 16 channels,
+      CH00-CH03 wired (one per die of a 2x2 shot), CH04-CH15 unwired.
+Evidence: measured on the bench 2026-08-10 (mux channel closures against
+an all-open reference, Keithley 2400 10V into 1uA compliance); probe-card
+pin mapping and the 8-wire harness confirmed with the operator 2026-08-12
+(references/SWITCHBOX_REPORT.txt section 8C). HI/LO within each pair is
+inferred from pin ordering, not separately measured - the pad pair is
+symmetric so it can't be told apart electrically from here.
+
+Die   Relay CH   HI pin   LO pin
+1     CH00       A32      A33
+2     CH01       A34      A36
+3     CH02       A13      A12
+4     CH03       A11      A9
+
+Applied to the recipe (2026-08-21): filled in on "Bias Voltage (Die N)"
+and "Leakage Measurement (Die N)" steps in
+LAMPATA/probe_cards/LaMP_HP.recipes.electroglas.csv (proberautomation
+copy - primary/live). The relay channel numbers (conn: 00/01/02/03) were
+already correctly set beforehand; only the HI/LO pin fields were blank.
+
+Note: this pin table is probe02-specific and manually curated - it is
+NOT something "Compute Connections" or LOAD ALL can derive automatically.
+See the 2026-08-21 conversation: Electroglas connections depend on
+per-bench relay wiring that doesn't exist/isn't reliable for every
+project, and .PMA files carry no electrical pin/device field at all
+(checked directly - only touchdown-move references and generic
+measurement parameters). Both connections and pins are manual-entry
+only for Electroglas going forward.
