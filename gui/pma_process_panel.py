@@ -893,7 +893,11 @@ class PmaProcessPanel(ttk.Frame):
         Minor: the .PMA's own DieSizeX/Y (the quad/shot pitch - see
         electroglas_pma's own note that DieSizeX/Y is the BLOCK pitch, not
         one die) divided by the shot's own dimensions, giving one die's
-        share of it.
+        share of it - EXCEPT when a dimension's shot size is 1 (LAMP: a
+        1x1 shot), where there is no second die to step to within the shot
+        at all, so that axis is forced to 0 rather than DieSizeX/1
+        (=DieSizeX itself, wrong - there is no "minor" axis to divide a
+        single die's own pitch across).
         """
         def _min_gap(values):
             uniq = sorted({round(v, 3) for v in values})
@@ -915,10 +919,8 @@ class PmaProcessPanel(ttk.Frame):
             shot_rows, shot_cols = (run.shot_layout()
                                     if run is not None and hasattr(run, "shot_layout")
                                     else (1, 1))
-            if die_x and shot_cols:
-                minor_x = egpma.fmt_num(die_x / shot_cols)
-            if die_y and shot_rows:
-                minor_y = egpma.fmt_num(die_y / shot_rows)
+            minor_x = egpma.fmt_num(die_x / shot_cols) if die_x and shot_cols > 1 else "0"
+            minor_y = egpma.fmt_num(die_y / shot_rows) if die_y and shot_rows > 1 else "0"
         except (TypeError, ValueError, ZeroDivisionError):
             pass
         self._mm_minor_x_var.set(minor_x)
