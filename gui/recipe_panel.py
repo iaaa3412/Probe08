@@ -1584,12 +1584,19 @@ class RecipePanel(ttk.Frame):
         self._btn_move_down = ttk.Button(btns, text="▼", width=3,
                                          command=lambda: self._step_move(+1))
         self._btn_move_down.pack(side="left", padx=2)
-        self._btn_conn = ttk.Button(btns, text="⚙ Compute Connection",
-                                    command=self._conn_from_editor)
-        self._btn_conn.pack(side="left", padx=(10, 2))
-        self._btn_recompute = ttk.Button(btns, text="↻ Compute All",
-                                         command=self._recompute_all)
-        self._btn_recompute.pack(side="left", padx=2)
+        # Electroglas connections depend on per-bench relay wiring that
+        # isn't reliable/present for every project (unlike Accretech's
+        # pin-table approach - see BENCH_WIRING's own per-bench notes), and
+        # HI/LO pins can't be inferred from a .PMA at all. A button that
+        # looks like it computes the right answer but can't for most
+        # projects is worse than no button - both stay Accretech-only.
+        if self._system != "electroglas":
+            self._btn_conn = ttk.Button(btns, text="⚙ Compute Connection",
+                                        command=self._conn_from_editor)
+            self._btn_conn.pack(side="left", padx=(10, 2))
+            self._btn_recompute = ttk.Button(btns, text="↻ Compute All",
+                                             command=self._recompute_all)
+            self._btn_recompute.pack(side="left", padx=2)
         ttk.Button(btns, text="✓ Validate",
                    command=self._validate_clicked).pack(side="left", padx=(10, 2))
 
@@ -2545,7 +2552,11 @@ class RecipePanel(ttk.Frame):
                         messagebox.showerror("Invalid Step", f"{label} must be a number.")
                         return False
             return True
-        if not (step["hi"] or step["lo"]):
+        # A direct-wired step is cabled straight to the probe card by hand -
+        # its HI/LO pins name nothing the GUI can act on (same exemption
+        # validate_recipe() already gives it), so requiring them here just
+        # blocks saving a step that is correctly configured.
+        if step.get("route") != ROUTE_DIRECT and not (step["hi"] or step["lo"]):
             messagebox.showerror("Invalid Step", "Specify at least one HI or LO pin.")
             return False
         if _is_measurement_step(step):
