@@ -72,26 +72,49 @@ STEP_FIELDS = _STEP_FIELDS
 DEFAULT_RECIPE_FILENAME = "ata_default_recipe.json"
 
 
-def load_default_recipe(folder: str):
-    """(card, recipe) last marked default for this ATA folder, or (None, None)."""
+def load_default_recipe(folder: str, system: str = None):
+    """(card, recipe) last marked default for this ATA folder, or (None, None).
+
+    Scoped per system (accretech/electroglas) - the same ATA folder's probe
+    card list is shared between benches (one probe_cards\\ folder), so a
+    default set while running Accretech names a card wired for Accretech's
+    pin format. Loading that same entry while on Electroglas would switch
+    to a mismatched card and select that recipe's touchdowns (in Accretech's
+    grid) on the Electroglas map. `system=None` reads the legacy flat
+    top-level entry, for callers that predate this split.
+    """
     if not folder:
         return None, None
     path = os.path.join(folder, DEFAULT_RECIPE_FILENAME)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get("card"), data.get("recipe")
     except (OSError, ValueError):
         return None, None
+    if system:
+        entry = data.get(system) or {}
+        return entry.get("card"), entry.get("recipe")
+    return data.get("card"), data.get("recipe")
 
 
-def save_default_recipe(folder: str, card: str, recipe: str) -> bool:
+def save_default_recipe(folder: str, card: str, recipe: str, system: str = None) -> bool:
     if not folder:
         return False
     path = os.path.join(folder, DEFAULT_RECIPE_FILENAME)
+    data = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    if system:
+        data[system] = {"card": card, "recipe": recipe}
+    else:
+        data["card"] = card
+        data["recipe"] = recipe
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"card": card, "recipe": recipe}, f, indent=2)
+            json.dump(data, f, indent=2)
         return True
     except OSError:
         return False
@@ -2725,7 +2748,7 @@ class RecipePanel(ttk.Frame):
             messagebox.showerror("Unsaved Recipe",
                                  "Save this recipe (💾 Save) before setting it as default.")
             return
-        if save_default_recipe(folder, card, name):
+        if save_default_recipe(folder, card, name, system=self._system):
             self.controller.log(
                 f"[RECIPE] '{name}' (probe card '{card}') set as default — will "
                 "auto-load on the Run tab whenever this ATA folder is opened.")
@@ -2735,7 +2758,7 @@ class RecipePanel(ttk.Frame):
 
     def _update_default_label(self):
         folder = self._get_ata_folder()
-        card, name = load_default_recipe(folder) if folder else (None, None)
+        card, name = load_default_recipe(folder, system=self._system) if folder else (None, None)
         if card and name:
             is_current = (card == self._active_card and name == self._current)
             self._default_lbl.config(

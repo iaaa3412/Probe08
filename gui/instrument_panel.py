@@ -4210,15 +4210,17 @@ class MainLayout(ttk.Frame):
         as Default), switch to its probe card if needed and load it straight
         into the Run tab — same effect as manually picking it from the
         Recipe dropdown, just automatic on ATA folder open."""
-        card, name = load_default_recipe(folder_path)
+        card, name = load_default_recipe(folder_path, system=self._system)
         if not card or not name:
             return
         if not hasattr(self, "recipe_panel") or not hasattr(self, "_exec2_recipe_var"):
             return
         if self.pin_wiring.get_active_card() != card:
-            if card not in self.pin_wiring.get_card_names():
+            valid_cards = self.pin_wiring.get_card_names_for_system()
+            if card not in valid_cards:
                 self._exec2_log(f"[RUN] Default recipe '{name}' wants probe card "
-                                f"'{card}', which no longer exists — skipping autoload.")
+                                f"'{card}', which doesn't exist or isn't wired for "
+                                f"this bench — skipping autoload.")
                 return
             self.pin_wiring.switch_to_card(card)
         if name not in self.recipe_panel.get_recipe_names():
