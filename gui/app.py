@@ -766,13 +766,41 @@ class AtomicaDashboard(tk.Tk):
         self.log(eg_profiles.summary(name))
         # The Recipe tab only offers instruments the bench actually has, so it
         # has to be told the bench changed.
-        panel = getattr(self._by_system["electroglas"]["ui"], "recipe_panel", None)
+        ui = self._by_system["electroglas"]["ui"]
+        panel = getattr(ui, "recipe_panel", None)
         refresh = getattr(panel, "refresh_bench_instruments", None)
         if refresh:
             try:
                 refresh()
             except Exception as e:
                 self.log(f"[SYSTEM] Recipe tab instrument refresh failed: {e}")
+        # refresh_bench_instruments() above only updates the Recipe TAB's
+        # own display (it already re-picks/clears itself for the new
+        # bench via _refresh_picker). The Run tab keeps its own separate
+        # cached copy (_exec2_steps/_exec2_recipe_var, loaded once when a
+        # recipe was picked from ITS OWN dropdown) that nothing was
+        # telling to reload - so switching probe02 -> probe03 left the
+        # Run tab still armed with probe02's recipe/steps, runnable
+        # against the wrong bench, even though the Recipe tab itself had
+        # already moved on.
+        active_recipe = ""
+        try:
+            active_recipe = panel.get_active_recipe() if panel else ""
+        except Exception:
+            pass
+        if hasattr(ui, "_exec2_recipe_var"):
+            try:
+                if active_recipe:
+                    ui._exec2_load_recipe_by_name(active_recipe)
+                else:
+                    ui._exec2_recipe_var.set("")
+                    ui._exec2_steps = []
+                    if hasattr(ui, "_exec2_steps_tree"):
+                        ui._exec2_steps_tree.delete(*ui._exec2_steps_tree.get_children())
+                    if hasattr(ui, "_exec2_steps_var"):
+                        ui._exec2_steps_var.set(f"No recipe for bench '{name}' yet")
+            except Exception as e:
+                self.log(f"[SYSTEM] Run tab recipe refresh failed: {e}")
         # During startup the scheduled sweep has not run yet and will pick this
         # bench up, so connecting here as well would just sweep the bus twice.
         if self._startup_done:
