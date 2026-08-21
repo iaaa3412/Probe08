@@ -1817,50 +1817,112 @@ class RecipeGenPanel(ttk.Frame):
 
         self._import_diemap_csv(rows, os.path.basename(path))
 
-    def _import_diemap_csv(self, rows: List[List[str]], name: str):
+    def _diemap_csv_cells(self, rows: List[List[str]]):
+        """Every (row, col) -> stripped text in the CSV, plus which shot
+        (sr, sc)/slot (slr, slc) it lands on for the currently-defined Shot
+        template - shared by the conflict check and the actual import below
+        so the two can never disagree about where a cell lands."""
         shot_rows, shot_cols = self._shot_dims()
-        max_row = len(rows) - 1
-        max_col = max(len(r) for r in rows) - 1
-        need_shot_r = max_row // shot_rows + 1
-        need_shot_c = max_col // shot_cols + 1
-        cells = {}
-        for r in range(need_shot_r):
-            for c in range(need_shot_c):
-                cells[(r, c)] = self._shotmap_cells.get((r, c), False)
-        # SKIP/ALIGN are explicit literal keywords (unchanged, blank the ID
-        # since they're not a real device name) - anything else that looks
-        # like an alignment/PCM/target die (see _find_alignment_ids) also
-        # gets marked align, but keeps its own text as the die_id.
-        raw_texts = [(row[c] or "").strip() for row in rows for c in range(len(row))]
-        align_ids = _find_alignment_ids(
-            t for t in raw_texts if t.upper() not in ("SKIP", "ALIGN"))
-        n = 0
+        out = []
         for r, row in enumerate(rows):
             for c in range(len(row)):
                 text = (row[c] or "").strip()
                 if not text:
                     continue
-                sr, sc = r // shot_rows, c // shot_cols
-                slr, slc = r % shot_rows, c % shot_cols
+                out.append((r, c, text, r // shot_rows, c // shot_cols,
+                           r % shot_rows, c % shot_cols))
+        return out
+
+    def _import_diemap_csv(self, rows: List[List[str]], name: str):
+        """The shot map (which shots are present) is not read from the CSV
+        as its own section - it is derived, in order:
+
+        1. Trust the CURRENTLY DEFINED Shot Map as-is, if every cell this
+           CSV actually fills in lands on a shot it already marks present -
+           a shot with no die IDs filled in yet in this CSV is NOT treated
+           as absent here; the existing map is just adopted unchanged. This
+           is what makes a partially-filled CSV (not every die named yet)
+           still work without guessing.
+        2. If the existing Shot Map disagrees anywhere (a filled cell lands
+           on a shot it marks absent, or a shot map doesn't exist yet at
+           all), fall back to deriving presence purely from the CSV itself:
+           any shot with at least one non-blank cell in it is present.
+        3. Either way, first reject outright if any filled cell lands on a
+           slot the Shot TEMPLATE itself (Shot tab, not Shot Map) marks
+           blank - a die can never legitimately be there, no shot map
+           guess can paper over that, and silently ignoring it would just
+           misplace/drop a real die - the operator has to fix Shot first.
+        """
+        shot_rows, shot_cols = self._shot_dims()
+        max_row = len(rows) - 1
+        max_col = max(len(r) for r in rows) - 1
+        need_shot_r = max_row // shot_rows + 1
+        need_shot_c = max_col // shot_cols + 1
+        filled = self._diemap_csv_cells(rows)
+
+        # Step 1 (hard reject): does every filled cell land on a slot the
+        # Shot template marks present?
+        template_conflicts = [
+            (r, c, text) for r, c, text, _sr, _sc, slr, slc in filled
+            if not self._shot_cells.get((slr, slc), {}).get("present")]
+        if template_conflicts:
+            sample = ", ".join(f"row {r} col {c} ('{t}')"
+                              for r, c, t in template_conflicts[:5])
+            messagebox.showerror(
+                "Shot/Die Map Mismatch",
+                f"{len(template_conflicts)} die ID(s) in this CSV land on a "
+                f"slot the Shot tab's current {shot_rows}x{shot_cols} "
+                f"template marks blank (e.g. {sample}"
+                f"{'…' if len(template_conflicts) > 5 else ''}).\n\n"
+                "A shot map can't be safely worked out from a CSV that "
+                "disagrees with Shot - define Shot to match this wafer "
+                "first, then import again.")
+            return
+
+        # Step 2: try the existing Shot Map unchanged.
+        existing_ok = all(
+            self._shotmap_cells.get((sr, sc), False)
+            for _r, _c, _text, sr, sc, _slr, _slc in filled)
+        if existing_ok and self._shotmap_cells:
+            cells = {(r, c): self._shotmap_cells.get((r, c), False)
+                    for r in range(need_shot_r) for c in range(need_shot_c)}
+            source = "the existing Shot Map"
+        else:
+            # Step 3: derive presence purely from which shots have content.
+            cells = {(r, c): False
+                    for r in range(need_shot_r) for c in range(need_shot_c)}
+            for _r, _c, _text, sr, sc, _slr, _slc in filled:
                 cells[(sr, sc)] = True
-                status = "normal"
-                die_id = text
-                if text.upper() == "SKIP":
-                    status, die_id = "skip", ""
-                elif text.upper() == "ALIGN":
-                    status, die_id = "align", ""
-                elif text in align_ids:
-                    status = "align"
-                self._die_status[(sr, sc, slr, slc)] = {"die_id": die_id,
-                                                        "status": status}
-                n += 1
+            source = "the CSV's own blanks"
+
+        # SKIP/ALIGN are explicit literal keywords (unchanged, blank the ID
+        # since they're not a real device name) - anything else that looks
+        # like an alignment/PCM/target die (see _find_alignment_ids) also
+        # gets marked align, but keeps its own text as the die_id.
+        align_ids = _find_alignment_ids(
+            text for _r, _c, text, *_rest in filled
+            if text.upper() not in ("SKIP", "ALIGN"))
+        n = 0
+        for r, c, text, sr, sc, slr, slc in filled:
+            status = "normal"
+            die_id = text
+            if text.upper() == "SKIP":
+                status, die_id = "skip", ""
+            elif text.upper() == "ALIGN":
+                status, die_id = "align", ""
+            elif text in align_ids:
+                status = "align"
+            self._die_status[(sr, sc, slr, slc)] = {"die_id": die_id,
+                                                    "status": status}
+            n += 1
         self._shotmap_rows_var.set(str(need_shot_r))
         self._shotmap_cols_var.set(str(need_shot_c))
         self._shotmap_cells = cells
         self._draw_shotmap()
         self._redraw_diemap()
         self._log(f"[WAFER BUILDER] Imported Die Map from '{name}': {n} die(s) "
-                 f"placed on a {shot_rows}x{shot_cols} shot grid.")
+                 f"placed on a {shot_rows}x{shot_cols} shot grid "
+                 f"(shot map from {source}).")
         self._sub_nb.select(2)
 
     # ==================================================================
