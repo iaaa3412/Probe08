@@ -26,6 +26,16 @@ class PmaProcessPanel(ttk.Frame):
         self._pma_picker_var = tk.StringVar()
         self._xls_picker_var = tk.StringVar()
 
+        # MM Pitch - calculated ONCE from the loaded file (major: shot-to-
+        # shot spacing from the .xls's own touchdown positions; minor:
+        # within-shot die spacing from the .PMA's DieSizeX/Y), then left
+        # editable - the operator can correct either before it is ever
+        # wired into a real MM move. See _calc_mm_pitch.
+        self._mm_major_x_var = tk.StringVar(value="")
+        self._mm_major_y_var = tk.StringVar(value="")
+        self._mm_minor_x_var = tk.StringVar(value="")
+        self._mm_minor_y_var = tk.StringVar(value="")
+
         self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
 
@@ -271,6 +281,35 @@ class PmaProcessPanel(ttk.Frame):
         # table can never disagree with what a real MM run would do.
         mm_lf = ttk.LabelFrame(split, text="Move MM (µm, from the .xls)")
         split.add(mm_lf, weight=1)
+
+        pitch_bar = ttk.Frame(mm_lf)
+        pitch_bar.pack(fill="x", padx=4, pady=(4, 2))
+        ttk.Label(pitch_bar, text="MM Pitch (µm) — calculated once, editable:",
+                 font=("Segoe UI", 8, "bold")).grid(
+                 row=0, column=0, columnspan=5, sticky="w")
+        ttk.Label(pitch_bar, text="Major X:").grid(row=1, column=0, sticky="e")
+        ttk.Entry(pitch_bar, textvariable=self._mm_major_x_var, width=8).grid(
+            row=1, column=1, padx=(2, 8))
+        ttk.Label(pitch_bar, text="Major Y:").grid(row=1, column=2, sticky="e")
+        ttk.Entry(pitch_bar, textvariable=self._mm_major_y_var, width=8).grid(
+            row=1, column=3, padx=(2, 8))
+        ttk.Label(pitch_bar, text="Minor X:").grid(row=2, column=0, sticky="e")
+        ttk.Entry(pitch_bar, textvariable=self._mm_minor_x_var, width=8).grid(
+            row=2, column=1, padx=(2, 8), pady=(2, 0))
+        ttk.Label(pitch_bar, text="Minor Y:").grid(row=2, column=2, sticky="e")
+        ttk.Entry(pitch_bar, textvariable=self._mm_minor_y_var, width=8).grid(
+            row=2, column=3, padx=(2, 8), pady=(2, 0))
+        ttk.Button(pitch_bar, text="↻ Recalculate",
+                  command=self._calc_mm_pitch).grid(row=1, column=4, rowspan=2,
+                                                     padx=(6, 0))
+        ttk.Label(pitch_bar,
+                 text="Major = shot-to-shot spacing (from the .xls). Minor = "
+                      "within-shot die spacing (DieSizeX/Y ÷ shot dims, from "
+                      "the .PMA). Not wired into a real move yet.",
+                 font=("Segoe UI", 7), foreground="#6b7280", wraplength=420,
+                 justify="left").grid(row=3, column=0, columnspan=5, sticky="w",
+                                     pady=(2, 0))
+
         cols3 = ("step", "seq", "device_ids", "x_um", "y_um", "dx_um", "dy_um")
         self._move_mm_tree = ttk.Treeview(
             mm_lf, columns=cols3, show="headings", height=16, selectmode="browse")
@@ -842,6 +881,49 @@ class PmaProcessPanel(ttk.Frame):
                 egpma.fmt_num(x_um), egpma.fmt_num(y_um), dx, dy))
             prev = (x_um, y_um)
 
+    def _calc_mm_pitch(self):
+        """Major/minor MM pitch, calculated ONCE from whatever is currently
+        loaded, then left in editable Entries (see the fields themselves) -
+        not re-derived per move, and not (yet) wired into a real move.
+
+        Major: smallest positive gap between distinct shot x_um/y_um
+        positions in eg_pma_run._touchdowns (the same .xls-derived list
+        the Move MM table reads) - the shot-to-shot spacing.
+
+        Minor: the .PMA's own DieSizeX/Y (the quad/shot pitch - see
+        electroglas_pma's own note that DieSizeX/Y is the BLOCK pitch, not
+        one die) divided by the shot's own dimensions, giving one die's
+        share of it.
+        """
+        def _min_gap(values):
+            uniq = sorted({round(v, 3) for v in values})
+            gaps = [uniq[i + 1] - uniq[i] for i in range(len(uniq) - 1)
+                    if uniq[i + 1] != uniq[i]]
+            return min(gaps) if gaps else 0.0
+
+        run = getattr(self._main_layout, "eg_pma_run", None)
+        touchdowns = getattr(run, "_touchdowns", None) or []
+        major_x = _min_gap(t.get("x", 0.0) for t in touchdowns)
+        major_y = _min_gap(t.get("y", 0.0) for t in touchdowns)
+        self._mm_major_x_var.set(egpma.fmt_num(major_x) if major_x else "")
+        self._mm_major_y_var.set(egpma.fmt_num(major_y) if major_y else "")
+
+        minor_x = minor_y = ""
+        try:
+            die_x = float(self._fields.get("DieSizeX") or 0)
+            die_y = float(self._fields.get("DieSizeY") or 0)
+            shot_rows, shot_cols = (run.shot_layout()
+                                    if run is not None and hasattr(run, "shot_layout")
+                                    else (1, 1))
+            if die_x and shot_cols:
+                minor_x = egpma.fmt_num(die_x / shot_cols)
+            if die_y and shot_rows:
+                minor_y = egpma.fmt_num(die_y / shot_rows)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+        self._mm_minor_x_var.set(minor_x)
+        self._mm_minor_y_var.set(minor_y)
+
     def load_path(self, path: str):
         try:
             fields = egpma.parse_pma_file(path)
@@ -876,6 +958,7 @@ class PmaProcessPanel(ttk.Frame):
         self.refresh_align_site()
         self._push_to_run_tab()
         self._refresh_move_mm_table()
+        self._calc_mm_pitch()
 
         move_list = egpma.build_move_list(touchdowns)
         self._move_list = move_list
