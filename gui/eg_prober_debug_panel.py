@@ -759,7 +759,23 @@ class EgProberDebugPanel(ttk.Frame):
             try:
                 self._log(f"[PROBER] >> {label}  args={args}")
                 getattr(drv, method)(*args)
-                self.after(0, lambda: self._show_response(label, "sent"))
+                # These SET PRMTR/SET MODE commands are plain writes with no
+                # MC/MF acknowledgement of their own (unlike a motion
+                # command) - so "sent" alone does not mean the prober
+                # actually accepted it. ?E is READ-AND-CLEAR (see the
+                # driver's own docstring) and reports the most recent
+                # latched error, so reading it right after is the verified
+                # way to check whether that write actually landed, without
+                # inventing a query outside the confirmed command set.
+                code = ""
+                try:
+                    code = (drv.get_error_code() or "").strip()
+                except Exception as e:
+                    code = f"?E failed: {e}"
+                self._log(f"[PROBER] << ?E -> {code!r}  (checking {label} landed)")
+                ok = code.upper() in ("E0", "")
+                verdict = "sent — no error (E0)" if ok else f"sent — ERROR: {code}"
+                self.after(0, lambda: self._show_response(label, verdict))
             except Exception as e:
                 self._log(f"[PROBER] ERROR ({label}): {e}")
                 self.after(0, lambda: self._resp_var.set(f"Error: {e}"))
