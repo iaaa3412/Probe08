@@ -1195,8 +1195,16 @@ class RecipeGenPanel(ttk.Frame):
         # the numbers here; the Accretech map for THIS folder may not be
         # loaded yet at this point in a folder switch, so the actual re-draw
         # is instrument_panel.load_ata_folder's job, after its own map load.
+        # Accretech-only: the Overlay dialog reconciles the Accretech
+        # hardware-extracted map against this Wafer Builder map, but this
+        # JSON is shared/cross-synced with Electroglas's own RecipeGenPanel
+        # instance for the same ATA folder (see "CROSS-SYSTEM SYNC" below) -
+        # restoring the confirmed flag onto Electroglas's ml here too meant
+        # _exec2_reapply_overlay (Run tab, on folder open) auto-selected
+        # every overlay-matched die on that bench as well, even though the
+        # Overlay button doesn't exist there.
         ml = self._main_layout
-        if hasattr(ml, "_exec2_overlay_offset_confirmed"):
+        if self._system == "accretech" and hasattr(ml, "_exec2_overlay_offset_confirmed"):
             try:
                 ml._exec2_overlay_row_offset = int(data.get("overlay_row_offset", 0) or 0)
                 ml._exec2_overlay_col_offset = int(data.get("overlay_col_offset", 0) or 0)

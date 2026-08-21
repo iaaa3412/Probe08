@@ -3870,7 +3870,19 @@ class MainLayout(ttk.Frame):
         folder switch). A no-op if nothing was ever confirmed, or if the
         Accretech map turned out empty (e.g. Overlay was confirmed against a
         wafer map source that is no longer loaded).
+
+        Accretech-only: the Overlay dialog itself only exists on that tab
+        (see the "Overlay…" button, gated the same way), reconciling the
+        Accretech hardware-extracted map against the Wafer Builder grid.
+        The confirmed flag/offsets live in the Wafer Builder map's own JSON
+        though, which is shared and cross-synced between both systems (see
+        recipe_gen_panel's "CROSS-SYSTEM SYNC") - so an Accretech-confirmed
+        overlay was silently reapplied here on Electroglas too, selecting
+        every matched die (2000+ on a real wafer) on a folder that was never
+        overlaid on that bench at all.
         """
+        if self._system != "accretech":
+            return
         if not self._exec2_overlay_offset_confirmed:
             return
         accretech_rc = self._exec2_overlay_accretech_rc()
