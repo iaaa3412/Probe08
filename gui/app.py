@@ -153,8 +153,8 @@ class AtomicaDashboard(tk.Tk):
         if not missing:
             return
         if not status["folder"]:
-            prompt = ("This machine has no GUI System folder at "
-                      "C:/automationproject/GUI System - that's where the "
+            prompt = (f"This machine has no GUI System folder at "
+                      f"{workdir.gui_system_dir()} - that's where the "
                       "GUI keeps this machine's real setup (instrument "
                       "addresses, Electroglas bench profiles, switch "
                       "wiring, default ATA folder/prober). None of that "

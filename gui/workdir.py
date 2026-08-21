@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import sys
 
 # Named presets for the project root that holds the ATA folders and "GUI
 # System" - a plain custom path still works via the working-directory
@@ -65,6 +66,48 @@ def set_default_working_dir(path: str) -> None:
         pass
 
 
+def _exe_dir() -> str:
+    """Where the running app itself lives - the exe's own folder once this
+    is built to one (see the module docstring in main.py's launch flow),
+    or this checkout's own root (main.py's directory, same base _PREF_PATH
+    uses) during plain-python development."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(_PREF_PATH)
+
+
+def _looks_like_project_root(path: str) -> bool:
+    """Does `path` actually hold this app's own project layout (a "GUI
+    System" folder, or at least one *ata folder) - not just any reachable
+    directory. The exe's own install folder is normally just the exe/code
+    itself with neither (confirmed: labviewtest has no GUI System/ATA
+    folders of its own, only its parent does) - checking mere existence
+    would stop the fallback search there and never reach the parent that
+    actually holds the data."""
+    if not path or not os.path.isdir(path):
+        return False
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    if "GUI System" in names:
+        return True
+    return any(n.lower().endswith("ata") and os.path.isdir(os.path.join(path, n))
+              for n in names)
+
+
+def _fallback_candidates() -> list:
+    """Where to look for the real working directory if the configured one
+    (preset or saved pref) isn't reachable right now - the exe's own
+    folder, then that folder's parent. Matches the intended real
+    deployment: the GUI lives locally as an exe, and the project data
+    (GUI System + ATA folders) sits either right beside it or one level
+    up, so a dead/disconnected network share for the *configured* location
+    doesn't have to mean a dead app - it can still find a local copy."""
+    base = _exe_dir()
+    return [base, os.path.dirname(base)]
+
+
 _current = None
 
 
@@ -72,6 +115,24 @@ def get_current_working_dir() -> str:
     global _current
     if _current is None:
         _current = get_default_working_dir()
+    # The configured directory itself only needs to be REACHABLE, not
+    # complete - one that exists but has no GUI System/ATA folders yet is
+    # a legitimate first-run state (see app._check_machine_config_folder's
+    # own create-it prompt) and must NOT be silently swapped out from
+    # under that flow just because nothing has been scaffolded there yet.
+    if os.path.isdir(_current):
+        return _current
+    # Only a directory that flat-out cannot be reached (network share
+    # down, wrong/renamed path) falls back - here, both fallback
+    # candidates DO need the completeness check (not just reachability),
+    # since the exe's own folder always "exists" trivially and would
+    # otherwise win by default even when it's just code with no project
+    # data in it, leaving the parent (which actually has it) never tried.
+    # Re-checked live on every call, so a share coming back online is
+    # picked up again without restarting the app.
+    for candidate in _fallback_candidates():
+        if _looks_like_project_root(candidate):
+            return candidate
     return _current
 
 
