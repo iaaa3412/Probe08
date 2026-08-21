@@ -146,28 +146,6 @@ def shot_die_rc(cells: Dict[tuple, dict], rows: int, cols: int,
     return None
 
 
-def sniff_csv_kind(rows: List[List[str]]) -> Optional[str]:
-    """Which of the three tabs a plain CSV grid describes, from its shape
-    alone - no file extension or naming convention to rely on.
-
-    - A header row naming pin_hi/pin_lo -> Shot (the only format with pins).
-    - Every non-blank cell is 0/1/X -> Shot Map (pure presence grid).
-    - Anything else with real content -> Die Map (die IDs / SKIP).
-    - All blank -> None, so the caller falls back to whatever tab is open.
-    """
-    if not rows:
-        return None
-    header = [(c or "").strip().lower() for c in rows[0]]
-    if "pin_hi" in header and "pin_lo" in header:
-        return "shot"
-    all_cells = [(c or "").strip() for r in rows for c in r if (c or "").strip()]
-    if all_cells and all(c.upper() in ("0", "1", "X") for c in all_cells):
-        return "shotmap"
-    if any((c or "").strip() for r in rows for c in r):
-        return "die"
-    return None
-
-
 def _resize_cells(cells: Dict[tuple, dict], new_rows: int, new_cols: int,
                   default: dict) -> Dict[tuple, dict]:
     """New cell dict of the given size, keeping whatever still fits."""
@@ -193,15 +171,19 @@ class RecipeGenPanel(ttk.Frame):
     die resolution (Shot x Shot Map expanded), where every real die gets an
     ID, and any die can be marked skip or align instead.
 
-    A CSV can be imported on any tab; _import_csv sniffs its shape to route
-    it, falling back to whichever tab is currently open if the shape alone
-    doesn't say. A legacy .PMA or Recipe Generator .xls can also be loaded
-    on either system - same idea as Import CSV, just autofilling all three
-    pages from an older file instead of a plain grid (see
-    _autofill_from_major_grid). Both only ever touch this tab's own
-    Shot/Shot Map/Die Map state, unlike Electroglas's separate PMA Process
-    tab, whose own .PMA loading also feeds the Run tab's EgPmaRunPanel
-    bridge - so offering them here doesn't affect that.
+    A CSV always imports as Die Map - a plain grid of die IDs (blank cells
+    are empty positions). It used to also import Shot/Shot Map CSVs, keyed
+    on a pin_hi/pin_lo header for Shot - dropped once pins moved to Recipe
+    tab steps, since the Shot tab has not produced (or needed) that format
+    in a long time. Confirm Shot/Shot Map are set up correctly FIRST - the
+    importer reads their current dimensions to slice the flat grid back
+    into shots (see _import_diemap_csv) - then import die IDs. A legacy
+    .PMA or Recipe Generator .xls can still be loaded on either system to
+    autofill all three pages at once from an older file instead of a plain
+    grid (see _autofill_from_major_grid) - that only ever touches this
+    tab's own Shot/Shot Map/Die Map state, unlike Electroglas's separate
+    PMA Process tab, whose own .PMA loading also feeds the Run tab's
+    EgPmaRunPanel bridge - so offering it here doesn't affect that.
 
     system picks which system's wafer map file Save Wafer Map writes to
     (ata_wafer_map_accretech.csv vs _electroglas.csv) and whether the
@@ -221,14 +203,17 @@ class RecipeGenPanel(ttk.Frame):
         self.map_name_var = tk.StringVar(value="")
 
         # -- Shot --
-        self._shot_rows_var = tk.StringVar(value="2")
-        self._shot_cols_var = tk.StringVar(value="2")
+        # 1x1 default (a shot IS one die) - most projects (this one's real
+        # ATA folders included, see e.g. Peanut/Cenfire) are single-die-per-
+        # touchdown; 2x2 used to be the default and had to be shrunk back
+        # down by hand on every new map for the common case.
+        self._shot_rows_var = tk.StringVar(value="1")
+        self._shot_cols_var = tk.StringVar(value="1")
         self._die_pitch_x_var = tk.StringVar(value="1000")
         self._die_pitch_y_var = tk.StringVar(value="1000")
         self._shot_pitch_x_var = tk.StringVar(value="")
         self._shot_pitch_y_var = tk.StringVar(value="")
-        self._shot_cells: Dict[tuple, dict] = {
-            (r, c): {"present": True} for r in range(2) for c in range(2)}
+        self._shot_cells: Dict[tuple, dict] = {(0, 0): {"present": True}}
         self._shot_selected: Optional[tuple] = None
         self._shot_status_var = tk.StringVar(value="")
 
@@ -1202,8 +1187,8 @@ class RecipeGenPanel(ttk.Frame):
             return int(a), int(b), int(c), int(d)
 
         self._close_die_editor(commit=False)
-        self._shot_rows_var.set(data.get("shot_rows", "2"))
-        self._shot_cols_var.set(data.get("shot_cols", "2"))
+        self._shot_rows_var.set(data.get("shot_rows", "1"))
+        self._shot_cols_var.set(data.get("shot_cols", "1"))
         self._die_pitch_x_var.set(data.get("die_pitch_x", "1000"))
         self._die_pitch_y_var.set(data.get("die_pitch_y", "1000"))
         self._shot_pitch_x_var.set(data.get("shot_pitch_x", ""))
@@ -1265,10 +1250,10 @@ class RecipeGenPanel(ttk.Frame):
             messagebox.showerror("Duplicate", f"A map named '{name}' already exists.")
             return
         self._close_die_editor(commit=True)
-        self._shot_rows_var.set("2"); self._shot_cols_var.set("2")
+        self._shot_rows_var.set("1"); self._shot_cols_var.set("1")
         self._die_pitch_x_var.set("1000"); self._die_pitch_y_var.set("1000")
         self._shot_pitch_x_var.set(""); self._shot_pitch_y_var.set("")
-        self._shot_cells = {(r, c): {"present": True} for r in range(2) for c in range(2)}
+        self._shot_cells = {(0, 0): {"present": True}}
         self._shotmap_rows_var.set("4"); self._shotmap_cols_var.set("4")
         self._shotmap_cells = {(r, c): True for r in range(4) for c in range(4)}
         self._die_status = {}
@@ -1771,7 +1756,13 @@ class RecipeGenPanel(ttk.Frame):
                      f"wafer view: {type(exc).__name__}: {exc}")
 
     # ==================================================================
-    # CSV IMPORT — one button, all three tabs
+    # CSV IMPORT — Die Map only. Used to also sniff/import Shot and Shot
+    # Map CSVs (the Shot format keyed on a pin_hi/pin_lo header) - dropped
+    # since pins moved to Recipe tab steps and the Shot tab has not had
+    # pins of its own in a long time, so that detection path was dead. The
+    # operator now confirms Shot/Shot Map are set up correctly first (the
+    # importer reads their CURRENT dimensions to slice the flat grid back
+    # into shots - see _import_diemap_csv), then imports die IDs.
     # ==================================================================
     def _current_tab_kind(self) -> str:
         cur = self._sub_nb.select()
@@ -1805,7 +1796,7 @@ class RecipeGenPanel(ttk.Frame):
 
     def _import_csv(self):
         path = filedialog.askopenfilename(
-            title="Import CSV (Shot / Shot Map / Die Map)",
+            title="Import CSV (Die Map)",
             filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
         if not path:
             return
@@ -1824,65 +1815,7 @@ class RecipeGenPanel(ttk.Frame):
                                  "no data in it.")
             return
 
-        kind = sniff_csv_kind(rows) or self._current_tab_kind()
-        name = os.path.basename(path)
-        if kind == "shot":
-            self._import_shot_csv(rows, name)
-        elif kind == "shotmap":
-            self._import_shotmap_csv(rows, name)
-        else:
-            self._import_diemap_csv(rows, name)
-
-    def _import_shot_csv(self, rows: List[List[str]], name: str):
-        header = [(c or "").strip().lower() for c in rows[0]]
-        # pin_hi/pin_lo are still recognized in the header (that's what
-        # sniff_csv_kind routes on) but no longer read - pins live on Recipe
-        # tab steps now, not the Shot tab.
-        try:
-            idx = {h: header.index(h) for h in ("row", "col", "present")}
-        except ValueError:
-            messagebox.showerror("Import Failed",
-                                 "Shot CSV needs row,col,present columns.")
-            return
-        cells: Dict[tuple, dict] = {}
-        max_r = max_c = 0
-        for r in rows[1:]:
-            if len(r) <= max(idx.values()):
-                continue
-            rr, cc = _to_int(r[idx["row"]]), _to_int(r[idx["col"]])
-            present = (r[idx["present"]] or "").strip() not in ("", "0")
-            max_r, max_c = max(max_r, rr), max(max_c, cc)
-            cells[(rr, cc)] = {"present": present}
-        rows_n, cols_n = max_r + 1, max_c + 1
-        cells = _resize_cells(cells, rows_n, cols_n, {"present": False})
-        slots = present_slots(cells, rows_n, cols_n)
-
-        self._shot_rows_var.set(str(rows_n))
-        self._shot_cols_var.set(str(cols_n))
-        self._shot_cells = cells
-        self._draw_shot()
-        self._log(f"[WAFER BUILDER] Imported Shot from '{name}': {rows_n}x{cols_n}, "
-                 f"{len(slots)} die(s).")
-        self._sub_nb.select(0)
-
-    def _import_shotmap_csv(self, rows: List[List[str]], name: str):
-        cols_n = max(len(r) for r in rows)
-        rows_n = len(rows)
-        cells = {}
-        n = 0
-        for r, row in enumerate(rows):
-            for c in range(cols_n):
-                text = (row[c].strip() if c < len(row) else "")
-                present = text.upper() in ("1", "X")
-                cells[(r, c)] = present
-                n += present
-        self._shotmap_rows_var.set(str(rows_n))
-        self._shotmap_cols_var.set(str(cols_n))
-        self._shotmap_cells = cells
-        self._draw_shotmap()
-        self._log(f"[WAFER BUILDER] Imported Shot Map from '{name}': "
-                 f"{rows_n}x{cols_n}, {n} touchdown(s).")
-        self._sub_nb.select(1)
+        self._import_diemap_csv(rows, os.path.basename(path))
 
     def _import_diemap_csv(self, rows: List[List[str]], name: str):
         shot_rows, shot_cols = self._shot_dims()
