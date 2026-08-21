@@ -4564,7 +4564,23 @@ class MainLayout(ttk.Frame):
                                         "— no Minor Moves context active (skipped)")
                         continue
                     self._exec2_log(f"[MEASURE] {i}. {name}: moving to die {die_no}...")
-                    move_fn(die_no)
+                    try:
+                        move_fn(die_no)
+                    except RuntimeError as e:
+                        # STB=74 ("target die outside probing area") from
+                        # move_to_die_xy - this die # exists in the shot
+                        # template but has no real die at that position on
+                        # THIS wafer (e.g. a shot at the wafer's edge whose
+                        # second member falls off the real map). Not a run-
+                        # ending error: skip the rest of THIS shot's steps
+                        # (the die #1 measurement already taken still
+                        # counts) and let the caller move on to the next
+                        # shot, same as an aborted run would stop early.
+                        self._exec2_log(f"[MEASURE] {i}. {name}: die {die_no} is off the "
+                                        f"real wafer map ({e}) — skipping the rest of this "
+                                        "shot, moving on to the next one.")
+                        self._exec2_mark_all_open()
+                        return False
                     continue
 
                 if t == "picture":
