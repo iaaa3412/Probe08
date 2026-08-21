@@ -1339,7 +1339,14 @@ class RecipePanel(ttk.Frame):
         if not self._sites:
             messagebox.showinfo("Touchdowns", "This recipe has no touchdowns yet.")
             return
-        picks = [(s["row"], s["col"]) for s in self._sites]
+        # Electroglas: resolve each site's die_id against the loaded map
+        # (ground truth) rather than trusting the recipe's own (row, col) -
+        # same reasoning/helper as the Run tab's own recipe-load path (see
+        # instrument_panel._exec2_resolve_site_cells). Accretech falls
+        # straight through to the site's own row/col, unchanged.
+        resolve = getattr(ui, "_exec2_resolve_site_cells", None)
+        picks = resolve(self._sites) if resolve else [
+            (s["row"], s["col"]) for s in self._sites]
         missing = [rc for rc in picks if rc not in wm.dies]
         wm.set_picked(picks)
         if hasattr(ui, "_exec2_on_sites_changed"):
