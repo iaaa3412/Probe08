@@ -33,6 +33,7 @@ class ProberDebugPanel(ttk.Frame):
         self.controller = controller
         self._polling  = False
         self._poll_job = None
+        self._auto_buzzer_job = None
 
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
@@ -229,6 +230,17 @@ class ProberDebugPanel(ttk.Frame):
         _btn(ef, "e  — Full Error Message", self._cmd_error_msg,  "Human-readable description")
         _btn(ef, "🔕 Buzzer Clear (E + es)", self._cmd_buzzer_clear,
              "Read error code, then clear alarm / silence buzzer (STB 119)")
+
+        auto_row = ttk.Frame(ef)
+        auto_row.pack(fill="x", pady=(4, 0))
+        self._auto_buzzer_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(auto_row, text="Auto Buzzer Clear every",
+                        variable=self._auto_buzzer_var,
+                        command=self._toggle_auto_buzzer).pack(side="left")
+        self._auto_buzzer_min_var = tk.StringVar(value="10")
+        ttk.Entry(auto_row, textvariable=self._auto_buzzer_min_var,
+                  width=4).pack(side="left", padx=(4, 2))
+        ttk.Label(auto_row, text="min, while the GUI is open").pack(side="left")
 
         sf = ttk.LabelFrame(left, text="Motion Commands", padding=6)
         sf.pack(fill="x", padx=4, pady=(0, 4))
@@ -714,6 +726,46 @@ class ProberDebugPanel(ttk.Frame):
                 self.after(0, self._cmd_read_stb)
             except Exception as e:
                 self._log(f"[PROBER] Buzzer Clear error: {e}")
+        self._run_bg(_run)
+
+    def _toggle_auto_buzzer(self):
+        if self._auto_buzzer_job is not None:
+            self.after_cancel(self._auto_buzzer_job)
+            self._auto_buzzer_job = None
+        if self._auto_buzzer_var.get():
+            self._schedule_auto_buzzer()
+
+    def _schedule_auto_buzzer(self):
+        try:
+            minutes = float(self._auto_buzzer_min_var.get())
+            if minutes <= 0:
+                raise ValueError
+        except ValueError:
+            minutes = 10.0
+            self._auto_buzzer_min_var.set("10")
+        self._auto_buzzer_job = self.after(
+            int(minutes * 60_000), self._auto_buzzer_tick)
+
+    def _auto_buzzer_tick(self):
+        self._auto_buzzer_job = None
+        if not self._auto_buzzer_var.get():
+            return
+        # Silent (no popups, no STB re-read/UI flash) - this fires
+        # unattended, possibly while the operator is looking at a different
+        # tab entirely. Only the log line records that it happened.
+        def _run():
+            drv = self._drv(silent=True)
+            if drv is None:
+                self._log("[PROBER] Auto Buzzer Clear skipped — not connected.")
+            else:
+                try:
+                    code = drv.buzzer_clear()
+                    msg = f"error code: {code}" if code else "no pending error code"
+                    self._log(f"[PROBER] Auto Buzzer Clear — {msg}")
+                except Exception as e:
+                    self._log(f"[PROBER] Auto Buzzer Clear error: {e}")
+            if self._auto_buzzer_var.get():
+                self.after(0, self._schedule_auto_buzzer)
         self._run_bg(_run)
 
     def _cmd_stop(self):
