@@ -101,6 +101,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._recipe_path = None
         self._fields = {}
         self._touchdowns = []
+        self._pma_raw_touchdowns = []
         self._die_um = (0.0, 0.0)
         self._index = None          # index of the touchdown the chuck is on
         self._anchored = False
@@ -369,6 +370,15 @@ class EgPmaRunPanel(ttk.Frame):
         # _enabled_indices. Keyed on quad coordinates rather than seq, because
         # the workbook and the .PMA number their shots independently.
         self._pma_order_keys = [self._grid_xy(t) for t in touchdowns]
+        # Kept separately from self._touchdowns (about to be widened to the
+        # whole wafer below) - this is the .PMA's own touchdown list, one
+        # entry per real physical landing, each with its own device_id/x/y.
+        # pma_process_panel._push_touchdowns_to_recipe needs THIS (not the
+        # workbook's shot-granular list) to attach the recipe's touchdowns -
+        # see _die_grid_lookup for why matching against the shot-level list
+        # directly silently dropped most of a multi-die-per-shot recipe's
+        # touchdowns.
+        self._pma_raw_touchdowns = touchdowns
         self._touchdowns = self._map_source_touchdowns()
         self._index = None
         self._anchored = False
@@ -400,6 +410,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._fields = {}
         self._touchdowns = []
         self._pma_order_keys = []
+        self._pma_raw_touchdowns = []
         self._index = None
         self._anchored = False
         self._size_confirmed = False
@@ -794,6 +805,27 @@ class EgPmaRunPanel(ttk.Frame):
                       "look like they are for different wafers.")
         # Kept for anything that still wants a single representative cell.
         self._rc = {seq: cells[0] for seq, cells in self._cells.items()}
+
+    def _die_grid_lookup(self) -> dict:
+        """(grid x, grid y) -> (row, col), one entry per real INDIVIDUAL die
+        the current map defines - not one per shot.
+
+        The workbook's own touchdown list (self._touchdowns after adoption)
+        is shot/quad-granular: a 2x2 shot carries ONE coordinate for the
+        whole group, with all 4 device IDs packed into one cell. The .PMA's
+        own touchdowns are per-individual-die. Matching a .PMA touchdown's
+        raw coordinate 1:1 against the shot-level list (what _pma_order does,
+        for chuck-positioning purposes) only ever hits the one sub-position
+        that happens to coincide with the shot's own anchor coordinate - the
+        other ~3 of every 4 dies in a typical quad silently have no match.
+        Confirmed on a real 3125-touchdown whole-wafer .PMA: only 753 (~1 in
+        4) matched.
+
+        Reuses _build_rc_index's own per-die expansion (self._die_at_rc,
+        already keyed by real absolute die x/y) rather than re-deriving it,
+        so this always agrees with what the map itself just drew."""
+        return {(round(d["x"] / self._die_um[0]), round(d["y"] / self._die_um[1])): rc
+                for rc, d in getattr(self, "_die_at_rc", {}).items()}
 
     def _run_map(self):
         return getattr(self._main_layout, "_exec2_wafer_map", None)

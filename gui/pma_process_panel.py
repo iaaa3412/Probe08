@@ -714,35 +714,51 @@ class PmaProcessPanel(ttk.Frame):
         if set_sites is None:
             self._log("[PMA] LOAD ALL: this Recipe tab has no touchdown list.")
             return 0
-        # The .PMA's touchdowns in .PMA order - NOT run._touchdowns, which is
-        # now every position on the wafer so the chuck can be driven anywhere.
-        # Reading that here would attach all 634 shots to a 15-shot recipe and
-        # turn it into a whole-wafer run.
-        positions = getattr(run, "_touchdowns", None) or []
-        order = run._pma_order() if hasattr(run, "_pma_order") else []
-        touchdowns = ([positions[i] for i in order] if order else positions)
-        cells = getattr(run, "_anchor_rc", None) or {}
-        # The row/col index is derived from the recipe alone, not from the
-        # loaded map, so it can always be rebuilt. Do that rather than attach
-        # an empty list if the Run tab has not built it yet - silently saving
-        # zero touchdowns looks identical to a recipe that probes everything.
-        if touchdowns and not cells and hasattr(run, "_build_rc_index"):
+        # The .PMA's OWN touchdowns, one per real physical landing, each
+        # with its own device_id/x/y - NOT run._touchdowns, which after
+        # adoption is every position on the wafer (the workbook's shot/
+        # quad-granular list) so the chuck can be driven anywhere. Reading
+        # THAT here (even filtered through _pma_order/_anchor_rc, which
+        # collapses each shot to a single anchor cell) only ever resolved
+        # the one sub-position that happened to coincide with each shot's
+        # own anchor coordinate - the other dies of every multi-die shot
+        # silently never made it into the recipe at all (confirmed: a
+        # 3125-touchdown whole-wafer .PMA only produced 753 sites, ~1 in
+        # 4 - almost exactly what a 2x2-quad shot's 1-of-4 anchor hits
+        # would predict).
+        pma_touchdowns = getattr(run, "_pma_raw_touchdowns", None) or []
+        lookup = {}
+        if pma_touchdowns and hasattr(run, "_die_grid_lookup"):
+            # _die_grid_lookup reads _build_rc_index's own per-die
+            # expansion (self._die_at_rc) - rebuild it first if the Run
+            # tab hasn't yet, same as before.
+            if not getattr(run, "_die_at_rc", None) and hasattr(run, "_build_rc_index"):
+                try:
+                    run._build_rc_index()
+                except Exception as exc:
+                    self._log(f"[PMA] LOAD ALL: could not index the touchdowns: {exc}")
             try:
-                run._build_rc_index()
-                cells = getattr(run, "_anchor_rc", None) or {}
+                lookup = run._die_grid_lookup()
             except Exception as exc:
-                self._log(f"[PMA] LOAD ALL: could not index the touchdowns: {exc}")
-        # ONE entry per TOUCHDOWN, not per die. The prober lands once on a
-        # shot and the recipe's steps switch the mux through the dies under
-        # it, so a 2x2 shot is one touchdown, not four. Listing it four times
-        # said the chuck should visit the same place four times over.
+                self._log(f"[PMA] LOAD ALL: could not build the per-die "
+                          f"lookup: {exc}")
+        die_um = getattr(run, "_die_um", None) or (1.0, 1.0)
         sites = []
-        for t in touchdowns:
-            rc = cells.get(t["seq"])
+        missing = 0
+        for t in pma_touchdowns:
+            gx = round(t["x"] / die_um[0])
+            gy = round(t["y"] / die_um[1])
+            rc = lookup.get((gx, gy))
             if rc is None:
+                missing += 1
                 continue
             sites.append({"die_id": t.get("device_id", ""),
                           "row": rc[0], "col": rc[1]})
+        if missing:
+            self._log(f"[PMA] LOAD ALL: {missing} of {len(pma_touchdowns)} "
+                      ".PMA touchdown(s) are not on the recipe generator's "
+                      "wafer map — the .PMA and the .xls look like they are "
+                      "for different wafers.")
         if not sites:
             self._log("[PMA] LOAD ALL: the recipe has no touchdowns to attach "
                       "(is the Run tab's wafer map synced?).")
