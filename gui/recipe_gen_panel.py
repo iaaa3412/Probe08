@@ -246,6 +246,11 @@ class RecipeGenPanel(ttk.Frame):
         self._die_status: Dict[tuple, dict] = {}
         self._diemap_mode_var = tk.StringVar(value="id")
         self._diemap_status_var = tk.StringVar(value="")
+        # User-tweakable version of _DIEMAP_LABEL_MIN_PX (below), added as a
+        # standalone control - see _diemap_label_visibility. Defaults to the
+        # old hardcoded constant, so behavior is unchanged until touched.
+        self._diemap_label_min_px_var = tk.IntVar(value=self._DIEMAP_LABEL_MIN_PX)
+        self._diemap_label_min_px_var.trace_add("write", self._on_diemap_label_min_px_change)
         self._die_editor: Optional[tk.Entry] = None
         self._die_editor_key: Optional[tuple] = None
         self._die_boxes: List[dict] = []
@@ -704,6 +709,10 @@ class RecipeGenPanel(ttk.Frame):
                   command=self._save_wafer_map).pack(side="left", padx=(16, 0))
         ttk.Button(top, text="📤 Export CSV",
                   command=self._export_diemap_csv).pack(side="left", padx=(6, 0))
+        ttk.Label(top, text="Label min width (px):",
+                 foreground="#6b7280").pack(side="left", padx=(16, 0))
+        ttk.Spinbox(top, from_=4, to=200, increment=1, width=4,
+                   textvariable=self._diemap_label_min_px_var).pack(side="left", padx=(4, 0))
         ttk.Label(top, textvariable=self._diemap_status_var,
                  foreground="#374151").pack(side="left", padx=10)
 
@@ -996,12 +1005,29 @@ class RecipeGenPanel(ttk.Frame):
         self._diemap_visibility_after_id = self.after(
             delay_ms, self._diemap_sync_visible_labels)
 
+    def _on_diemap_label_min_px_change(self, *_args):
+        # Fires on every keystroke while typing into the Spinbox too, not
+        # just the arrow buttons (command= only covers those) - guarded on
+        # self.ax existing since the trace is live from __init__, before
+        # _build_diemap_tab has created it.
+        if hasattr(self, "ax"):
+            self._diemap_label_visibility()
+
+    def _diemap_label_min_px(self) -> float:
+        # User control (Die Map tab toolbar) over the class default below -
+        # falls back to the hardcoded constant on a blank/invalid entry
+        # rather than erroring, since this reads on every zoom/pan settle.
+        try:
+            return float(self._diemap_label_min_px_var.get())
+        except (tk.TclError, ValueError):
+            return self._DIEMAP_LABEL_MIN_PX
+
     def _diemap_label_visibility(self):
         if not getattr(self, "_die_id_labels", None):
             return
         dpx, _dpy = self._die_pitch()
         (x0, _), (x1, _) = self.ax.transData.transform([(0, 0), (dpx, 0)])
-        visible = abs(x1 - x0) >= self._DIEMAP_LABEL_MIN_PX
+        visible = abs(x1 - x0) >= self._diemap_label_min_px()
         for txt in self._die_id_labels:
             txt.set_visible(visible)
         self.canvas.draw_idle()
