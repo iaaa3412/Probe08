@@ -2868,8 +2868,13 @@ class MainLayout(ttk.Frame):
             "STOPPING…" if eg_was_running else "STOPPED", "#dc2626"))
         self._exec2_log("[RUN] ⏹ Stop — channels opened, chuck separated, "
                         "run position reset; ▶ Run will start from the beginning.")
+        # Accretech-only: emergency_stop (K) and send_es (buzzer clear) are
+        # both UF200R commands with no Electroglas equivalent - the EG
+        # driver stubs both as _not_implemented, so this used to fire on
+        # every Electroglas Stop Run too, always failing and logging an
+        # "es error" for a command that was never going anywhere.
         prober = self.controller.drivers.get("prober")
-        if prober and prober.inst:
+        if prober and prober.inst and self._system == "accretech":
             def _stop_and_clear():
                 try:
                     prober.emergency_stop()

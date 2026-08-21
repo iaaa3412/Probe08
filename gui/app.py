@@ -291,6 +291,7 @@ class AtomicaDashboard(tk.Tk):
         # The prober list is per-system, so it has to follow the toggle.
         self._refresh_bench_picker()
         self._refresh_routing_button()
+        self._refresh_buzzer_clear_button()
         self.update_statistics_visuals()
         self.check_system_ready()
         self.log(f"[SYSTEM] Switched active system to {system.capitalize()} "
@@ -495,6 +496,16 @@ class AtomicaDashboard(tk.Tk):
             return
         self.log(f"[SYSTEM] Default prober: {system} / {bench}")
         self.apply_prober(system, bench)
+
+    def _refresh_buzzer_clear_button(self):
+        """Accretech-only - see create_toolbar's comment on this button."""
+        btn = getattr(self, "_buzzer_clear_btn", None)
+        if btn is None:
+            return
+        if self.active_system == "electroglas":
+            btn.pack_forget()
+        else:
+            btn.pack(side="left", padx=(0, 6), pady=2, after=self._abort_btn)
 
     def _refresh_routing_button(self):
         """Switch Routing is an Accretech-only view, so hide its toggle on the
@@ -852,8 +863,17 @@ class AtomicaDashboard(tk.Tk):
         toolbar.grid(row=1, column=0, sticky="ew")
         style = ttk.Style()
         style.configure("Abort.TButton", foreground="red", font=("Arial", 9, "bold"))
-        ttk.Button(toolbar, text="⏹ Abort", style="Abort.TButton", command=self.cmd_abort).pack(side="left", padx=6, pady=2)
-        ttk.Button(toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear).pack(side="left", padx=(0, 6), pady=2)
+        self._abort_btn = ttk.Button(toolbar, text="⏹ Abort", style="Abort.TButton",
+                                     command=self.cmd_abort)
+        self._abort_btn.pack(side="left", padx=6, pady=2)
+        # Accretech-only: "E + es" (buzzer_clear) is a UF200R mnemonic with
+        # no Electroglas equivalent at all (the EG driver has no
+        # buzzer_clear method - error handling there is ?E, read-and-
+        # clear, a different mechanism). Left hidden rather than shown-but-
+        # broken - see _refresh_buzzer_clear_button.
+        self._buzzer_clear_btn = ttk.Button(
+            toolbar, text="🔕 Buzzer Clear", command=self.cmd_buzzer_clear)
+        self._buzzer_clear_btn.pack(side="left", padx=(0, 6), pady=2)
 
         ttk.Label(toolbar, text="ATA Folder:").pack(side="left", padx=(6, 2), pady=2)
         self._ata_picker_var = tk.StringVar()
@@ -1457,6 +1477,10 @@ class AtomicaDashboard(tk.Tk):
         self.ui.exec_panel.log("[ALIGN] Alignment locked by operator.")
 
     def cmd_buzzer_clear(self):
+        if self.active_system == "electroglas":
+            self.log("[BUZZER] Electroglas has no buzzer_clear (E + es is a "
+                     "UF200R-only mnemonic) - nothing sent.")
+            return
         drv = self.drivers.get("prober")
         if not (drv and drv.inst):
             self.log("[BUZZER] Prober not connected.")
