@@ -2377,10 +2377,15 @@ class MainLayout(ttk.Frame):
         if self._system == "electroglas":
             self.eg_pma_run = EgPmaRunPanel(body, controller=self.controller,
                                             main_layout=self)
-            body.add(self.eg_pma_run, weight=1)
+            # 25:20:55 (this pane : left_col : map_lf, added below) -
+            # weight alone only governs how EXTRA space is distributed on
+            # resize, not the initial split, so the real ratio is set once
+            # via sashpos after the window is first drawn - see the
+            # after_idle call below map_lf's own body.add.
+            body.add(self.eg_pma_run, weight=25)
 
         left_col = ttk.Frame(body)
-        body.add(left_col, weight=1)
+        body.add(left_col, weight=20 if self._system == "electroglas" else 1)
         left_col.rowconfigure(0, weight=0)
         left_col.rowconfigure(1, weight=1)
         left_col.columnconfigure(0, weight=1)
@@ -2444,6 +2449,15 @@ class MainLayout(ttk.Frame):
             ttk.Button(pos_lf, text="⏭ Next",
                        command=lambda: self.eg_pma_run._step_once()).grid(
                        row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
+            # Same arm/target process as Accretech's own Move to Selected
+            # (row 8 there) - see EgPmaRunPanel.toggle_move_armed. The
+            # widget itself lives here (Chuck Position), same placement as
+            # Accretech, but its state/text is owned by eg_pma_run.
+            self.eg_pma_run._goto_btn = ttk.Button(
+                pos_lf, text="➡ Move to Selected",
+                command=self.eg_pma_run.toggle_move_armed)
+            self.eg_pma_run._goto_btn.grid(
+                row=7, column=0, columnspan=2, sticky="ew", pady=1)
         else:
             # Accretech has no native "previous die" GPIB command (only "J"
             # Next Die) - Back is a plain relative die-index step backward
@@ -2505,9 +2519,41 @@ class MainLayout(ttk.Frame):
         self._exec2_steps_tree.configure(yscrollcommand=ssb.set)
 
         map_lf = ttk.LabelFrame(body, text="Wafer Map")
-        body.add(map_lf, weight=2)
+        body.add(map_lf, weight=55 if self._system == "electroglas" else 2)
         map_lf.rowconfigure(1, weight=1)
         map_lf.columnconfigure(0, weight=1)
+
+        if self._system == "electroglas":
+            # PanedWindow has no percentage-based initial layout - the sash
+            # positions have to be set explicitly, once the pane actually
+            # has a real width. That is NOT true yet at construction time
+            # (an after_idle here measured a too-small, not-yet-final width
+            # whenever Run isn't the notebook's initially-selected tab, or
+            # the window itself isn't mapped by the OS window manager yet -
+            # both true during normal startup) - bound to <Configure>
+            # instead, which fires with the REAL width whenever that
+            # actually happens, and unbinds itself once it has, so this
+            # only runs once and never fights the operator's own later
+            # sash drags.
+            def _apply_initial_sashes():
+                w = body.winfo_width()
+                if w <= 1:
+                    return
+                body.sashpos(0, int(w * 0.25))
+                body.sashpos(1, int(w * 0.45))
+            def _set_initial_sashes(_event=None):
+                if body.winfo_width() <= 1:
+                    return
+                # Unbind BEFORE touching sashpos, and do the actual set on
+                # the next idle pass, not inline - sashpos() itself can
+                # generate another <Configure>, and handling that
+                # re-entrantly (still inside THIS handler, against a width
+                # that may be mid-layout-pass) is what produced a
+                # noticeably-off ratio (e.g. 29/23/48 instead of 25/20/55)
+                # during testing.
+                body.unbind("<Configure>", sash_bind_id[0])
+                body.after_idle(_apply_initial_sashes)
+            sash_bind_id = [body.bind("<Configure>", _set_initial_sashes)]
 
         map_bar = ttk.Frame(map_lf)
         map_bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))

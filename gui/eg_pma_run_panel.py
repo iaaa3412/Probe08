@@ -124,6 +124,13 @@ class EgPmaRunPanel(ttk.Frame):
         self._sel_rc = None         # the exact cell clicked, so we can name the corner
         self._shot_window_items = []   # canvas ids for the 2x2 "you are here" box
         self._sel_window_items = []    # canvas ids for the selected touchdown's box
+        # ➡ Move to Selected arm/target toggle - see toggle_move_armed. Map/
+        # table clicks only pick a target while armed (self._move_armed),
+        # same "press the button first" process Accretech's own Move to
+        # Selected uses. self._goto_btn is created and assigned by
+        # instrument_panel.py (Chuck Position section), not built here.
+        self._move_armed = False
+        self._goto_btn = None
         # Microns asked for but not yet delivered, because MM only moves in
         # whole 2.5 um counts. Carried into the next move - see _move_um.
         self._um_residual = [0.0, 0.0]
@@ -234,19 +241,13 @@ class EgPmaRunPanel(ttk.Frame):
         ttk.Label(lf, textvariable=self._shot_window_var, font=("Consolas", 8),
                   foreground="#2563eb", wraplength=430, justify="left").pack(
                   anchor="w", pady=(2, 0))
-
-        ttk.Separator(lf, orient="horizontal").pack(fill="x", pady=(8, 6))
-        ttk.Label(lf, text="Selected die:", font=("Arial", 9, "bold")).pack(anchor="w")
-        ttk.Label(lf, font=("Arial", 8), foreground="#888", justify="left",
-                  wraplength=430, text=("Click a square on the Run tab's wafer map, or a "
-                                        "row in the table below.")).pack(anchor="w")
-        self._sel_var = tk.StringVar(value="no die selected")
-        ttk.Label(lf, textvariable=self._sel_var, font=("Consolas", 8),
-                  justify="left").pack(anchor="w", pady=(4, 4))
-        self._goto_btn = ttk.Button(lf, text="➤ Move to selected",
-                                    command=self._goto_selected)
-        self._goto_btn.pack(anchor="w")
-        self._goto_btn.state(["disabled"])
+        # "Selected die" (heading/help text/status line/➤ Move to selected
+        # button) used to live here - moved to the Chuck Position section
+        # instead (instrument_panel._tab_execution2 builds the actual
+        # ➡ Move to Selected button there and assigns it to self._goto_btn),
+        # matching where Accretech's own Move to Selected lives. It is now
+        # an arm/target toggle rather than a passive "click updates a status
+        # line" control - see toggle_move_armed.
 
     def _build_selection(self):
         # Folded into _build_controls's "Run" LabelFrame above - kept as a
@@ -421,6 +422,12 @@ class EgPmaRunPanel(ttk.Frame):
         self._die_results = {}
         self._last_seq = None
         self._anchor_choices = []
+        # Move to Selected's own target - self._selected would otherwise
+        # outlive the touchdowns list it indexed into, and stay armed
+        # pointing nowhere for a wafer the operator just left.
+        self._move_armed = False
+        self._selected = None
+        self._sel_rc = None
         try:
             self._recipe_var.set("(none)")
             self._anchor_cb.config(values=[])
@@ -430,6 +437,7 @@ class EgPmaRunPanel(ttk.Frame):
             self._tree.delete(*self._tree.get_children())
             self._clear_selection_window()
             self.update_shot_window()
+            self._update_move_button()
         except Exception:
             pass
         self._log("[PMA] Run tab cleared — the ATA folder changed, so the "
@@ -947,10 +955,16 @@ class EgPmaRunPanel(ttk.Frame):
         self._draw_shot_window()
         self.update_selection_window()
 
+    # Same dark blue as Accretech's own Move to Selected target highlight
+    # (instrument_panel.MainLayout._EXEC2_MOVE_TARGET_COLOR) - one shared
+    # colour convention for "this is the Move to Selected target" on either
+    # system's map.
+    _MOVE_TARGET_COLOR = "#1e3a8a"
+
     def update_selection_window(self):
         """Outline the touchdown the selected die belongs to.
 
-        Deliberately a different colour and dash from the chuck's box: the two
+        Deliberately a different colour/width from the chuck's box: the two
         coincide only when the selection is where the prober already is, and
         the operator needs to see at a glance which is which.
         """
@@ -967,17 +981,20 @@ class EgPmaRunPanel(ttk.Frame):
         box = self._block_box(wmap, cells) if cells else None
         if not box:
             return
-        rect = wmap.canvas.create_rectangle(*box, outline="#d97706", width=2,
-                                            dash=(4, 3))
+        rect = wmap.canvas.create_rectangle(*box, outline=self._MOVE_TARGET_COLOR,
+                                            width=2, dash=(4, 3))
         wmap.canvas.tag_raise(rect)
         self._sel_window_items.append(rect)
-        # The one die that was actually clicked gets a tighter ring inside the
-        # touchdown box, so "which corner am I on" is answerable too.
+        # The one die that was actually clicked gets a tighter, thicker ring
+        # inside the touchdown box - the actual Move to Selected target, so
+        # "which corner am I on" is answerable AND it reads as the highlight
+        # (only one at a time - _clear_selection_window above always runs
+        # first) rather than just an outline.
         if self._sel_rc is not None:
             cell = self._cell_box(wmap, self._sel_rc, self._cell_pitch(wmap))
             if cell:
-                inner = wmap.canvas.create_rectangle(*cell, outline="#d97706",
-                                                     width=2)
+                inner = wmap.canvas.create_rectangle(
+                    *cell, outline=self._MOVE_TARGET_COLOR, width=3)
                 wmap.canvas.tag_raise(inner)
                 self._sel_window_items.append(inner)
 
@@ -1943,55 +1960,91 @@ class EgPmaRunPanel(ttk.Frame):
 
     # -- selection: pick a die on the map or in the table --------------------
 
-    def _on_map_click(self, row: int, col: int):
-        """A die was clicked on the Run tab's wafer map."""
-        seq = self._seq_at_rc.get((row, col))
-        if seq is None:
+    def toggle_move_armed(self):
+        """➡ Move to Selected - same arm/target process as Accretech's own
+        button (instrument_panel._exec2_move_selected_button):
+
+          IDLE ("➡ Move to Selected") --click--> ARMED, no target
+              ("✕ Cancel Move") --click a square OR a Die list row-->
+              ARMED, one target, highlighted dark blue ("➡ Move to #N")
+
+        While armed, _on_map_click/_on_table_click are the only things that
+        can change the target - clicking elsewhere on the map or in the
+        table does nothing outside this mode. Pressing the button with a
+        target executes the move (after the existing confirm dialog) and
+        disarms; with no target, it just cancels.
+        """
+        if not self._move_armed:
+            self._move_armed = True
             self._select(None)
             return
+        if self._selected is None:
+            self._disarm_move()
+            return
+        self._goto_selected()
+
+    def _disarm_move(self):
+        self._move_armed = False
+        self._select(None)
+
+    def _update_move_button(self):
+        btn = self._goto_btn
+        if btn is None:
+            return
+        if not self._move_armed:
+            btn.config(text="➡ Move to Selected")
+            return
+        if self._selected is None:
+            btn.config(text="✕ Cancel Move")
+            return
+        t = self._touchdowns[self._selected]
+        here = "" if self._index is None else \
+            f"  ({self._selected - self._index:+d} from here)"
+        btn.config(text=f"➡ Move to #{t['seq']}{here}")
+
+    def _on_map_click(self, row: int, col: int):
+        """A die was clicked on the Run tab's wafer map - only picks a Move
+        to Selected target while armed (toggle_move_armed)."""
+        if not self._move_armed:
+            return
+        rc = (row, col)
+        if rc == self._sel_rc:
+            # Clicking the current target again deselects it, same as
+            # Accretech's own Move to Selected.
+            self._select(None)
+            return
+        seq = self._seq_at_rc.get(rc)
+        if seq is None:
+            return
         idx = next((i for i, t in enumerate(self._touchdowns) if t["seq"] == seq), None)
-        self._select(idx, clicked_rc=(row, col))
+        self._select(idx, clicked_rc=rc)
         if idx is not None:
             self._tree.selection_set(str(idx))
             self._tree.see(str(idx))
 
     def _on_table_click(self, _event=None):
+        """A row was clicked in the Die list - the EG-specific alternative
+        to clicking a map square, also only live while armed."""
+        if not self._move_armed:
+            return
         sel = self._tree.selection()
-        self._select(int(sel[0]) if sel else None)
+        idx = int(sel[0]) if sel else None
+        if idx == self._selected:
+            # _on_map_click's own selection_set(...) re-fires this same
+            # event - not a real table click, and re-selecting here would
+            # clobber the precise clicked_rc a map click just set.
+            return
+        # A table row names a touchdown, not one exact clicked corner - its
+        # single representative cell (self._rc) still gives the map
+        # highlight something concrete to point at.
+        rc = self._rc.get(self._touchdowns[idx]["seq"]) if idx is not None else None
+        self._select(idx, clicked_rc=rc)
 
     def _select(self, index, clicked_rc=None):
         self._selected = index
         self._sel_rc = clicked_rc
-        if index is None:
-            self._sel_var.set("no die selected")
-            self._goto_btn.state(["disabled"])
-            self.update_selection_window()
-            return
-        t = self._touchdowns[index]
-        qx, qy = self._grid_xy(t)
-        dies = [d for d in t["devices"] if d.strip().upper() != "NA"]
-        na = len(t["devices"]) - len(dies)
-        detail = format_quad(t["device_id"], *self.shot_layout())
-        # Name the die that was actually clicked, not just the touchdown: on a
-        # per-die map the two are different questions.
-        die = self._die_at_rc.get(clicked_rc) if clicked_rc else None
-        picked = ""
-        if die:
-            corner = die.get("quad_pos") or "single"
-            picked = (f"  clicked {die.get('device_id') or '?'} "
-                      f"({corner}) — touchdown #{t['seq']}\n")
-        self._sel_var.set(
-            f"{picked}"
-            f"#{t['seq']}  grid ({qx},{qy})   {len(dies)} die"
-            f"{'' if len(dies) == 1 else 's'}"
-            f"{f', {na} empty' if na else ''}\n"
-            f"  {detail}\n"
-            f"  x={t['x']:.0f} um  y={t['y']:.0f} um")
         self.update_selection_window()
-        here = "" if self._index is None else \
-            f"  ({index - self._index:+d} from here)"
-        self._goto_btn.config(text=f"➤ Move to #{t['seq']}{here}")
-        self._goto_btn.state(["!disabled"])
+        self._update_move_button()
 
     def _goto_selected(self):
         if self._selected is None:
@@ -2012,6 +2065,11 @@ class EgPmaRunPanel(ttk.Frame):
         cap = getattr(drv, "max_die_step", 5)
         self._running = True
         self._abort = False
+        # Disarm now (idle button, target highlight cleared) rather than
+        # after the move finishes - the move itself runs in the background
+        # thread below, same as Accretech's own do_move_to (disarms
+        # immediately, executes after).
+        self._disarm_move()
 
         def _work():
             try:
