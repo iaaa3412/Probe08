@@ -429,7 +429,21 @@ def resolve_column_value(col: Dict[str, Any], row: Dict[str, Any], context: Dict
     mult = col.get("multiply")
     if mult not in (None, "", 1, 1.0) and raw not in (None, ""):
         try:
-            return f"{float(raw) * float(mult):.6g}"
+            raw = f"{float(raw) * float(mult):.6g}"
+        except (TypeError, ValueError):
+            return raw
+    # Report resistance as a magnitude, matching a reference system's own
+    # export (see an export format's own "abs" column key) - which lead a
+    # DMM's HI/LO happens to land on is a wiring convention, not something
+    # that should leak a sign into a physical quantity that has none. Kept
+    # as a per-column, per-format opt-in (like "multiply" above) rather
+    # than changed in compute_target_derived itself, which every project's
+    # Target-derived resistance shares - a project-specific polarity
+    # quirk on one project's DMM channel has no business changing another
+    # project's numbers.
+    if col.get("abs") and raw not in (None, ""):
+        try:
+            return f"{abs(float(raw)):.6g}"
         except (TypeError, ValueError):
             return raw
     return raw
