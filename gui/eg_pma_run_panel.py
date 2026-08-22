@@ -105,6 +105,12 @@ class EgPmaRunPanel(ttk.Frame):
         self._die_um = (0.0, 0.0)
         self._index = None          # index of the touchdown the chuck is on
         self._anchored = False
+        # (dx, dy) between the prober's REAL ?P reading and this module's
+        # own THEORETICAL grid position (_grid_xy) at the moment of the
+        # last anchor - see _finish_anchor/_expected_position. The prober's
+        # own coordinate origin is whatever Set First Die/Load last
+        # established, not fixed session to session.
+        self._origin_offset = (0, 0)
         self._size_confirmed = False
         self._running = False
         self._abort = False
@@ -383,6 +389,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._touchdowns = self._map_source_touchdowns()
         self._index = None
         self._anchored = False
+        self._origin_offset = (0, 0)
         self._size_confirmed = False
         self._rc = {}
         self._cells = {}
@@ -414,6 +421,7 @@ class EgPmaRunPanel(ttk.Frame):
         self._pma_raw_touchdowns = []
         self._index = None
         self._anchored = False
+        self._origin_offset = (0, 0)
         self._size_confirmed = False
         self._rc = {}
         self._cells = {}
@@ -482,6 +490,25 @@ class EgPmaRunPanel(ttk.Frame):
         the origin) - not specific to a 2x2 shot. A single-die probe card's
         touchdowns get exactly the same coordinate, one die-grid step each."""
         return (round(t["x"] / self._die_um[0]), round(t["y"] / self._die_um[1]))
+
+    def _expected_position(self, t) -> tuple:
+        """What ?P SHOULD report right now if the chuck is really at
+        touchdown t, given the origin offset established at the last
+        anchor (_finish_anchor/self._origin_offset).
+
+        _grid_xy alone is only this module's own THEORETICAL grid, built
+        purely from the .xls/.PMA's own absolute microns - it assumes
+        touchdown (0, 0) is the prober's ?P origin too, which is not
+        necessarily true (the prober's own X0Y0 is wherever Set First Die/
+        Load was last done, set independently, often not at the same
+        physical die every time). A relative MD delta between two
+        theoretical positions is unaffected (a constant offset cancels out
+        in any difference) - only a comparison against a REAL ?P reading
+        needs this adjustment, which is what this exists for.
+        """
+        qx, qy = self._grid_xy(t)
+        ox, oy = self._origin_offset
+        return (qx + ox, qy + oy)
 
     def _align_index(self):
         """Index of the touchdown sitting on the align site, if there is one."""
@@ -560,21 +587,23 @@ class EgPmaRunPanel(ttk.Frame):
         self._tree.heading("step", text="MM (µm)" if um_mode else "MD")
         run_order = self._enabled_indices()
         in_run = set(run_order)
-        # The first run-order row's "step" used to just say "start" - wrong,
-        # since the chuck's real starting point is wherever it was anchored
-        # (Set Initial, or a re-anchor after a position mismatch - see
-        # _move_to_index), not necessarily this recipe's first touchdown.
-        # Seed prev from the current anchor instead, so that row shows the
-        # SAME kind of real delta every other row does.
-        prev = None
-        if self._anchored and self._index is not None \
-                and 0 <= self._index < len(self._touchdowns):
-            prev = self._table_position(self._touchdowns[self._index])
+        # The first run-order row's step is the delta from wherever the
+        # chuck is actually anchored (Set Initial, or a re-anchor after a
+        # position mismatch - see _move_to_index), not "start" - the chuck
+        # could be set from anywhere. Until an anchor actually exists, NO
+        # step in this column is a real move the software could compute (a
+        # move always starts from wherever the chuck currently is, which is
+        # unknown pre-anchor) - so the whole column stays blank rather than
+        # showing deltas that look actionable but are missing the one hop
+        # that actually matters (the unknown first move from the real,
+        # un-anchored position).
+        anchored = (self._anchored and self._index is not None
+                   and 0 <= self._index < len(self._touchdowns))
+        prev = self._table_position(self._touchdowns[self._index]) if anchored else None
         for i in run_order:
             t = self._touchdowns[i]
             qx, qy = self._table_position(t)
-            step = "(not anchored)" if prev is None else \
-                f"{qx - prev[0]:+d},{qy - prev[1]:+d}"
+            step = f"{qx - prev[0]:+d},{qy - prev[1]:+d}" if anchored else ""
             self._tree.insert("", "end", iid=str(i),
                               values=(t["seq"], f"{qx},{qy}", "✓", step,
                                       t["device_id"]))
@@ -661,15 +690,59 @@ class EgPmaRunPanel(ttk.Frame):
                 return
             self._size_confirmed = True
 
+        drv = self._prober()
+        if not drv:
+            messagebox.showwarning(
+                "Anchor", "Prober not connected - cannot read its real "
+                          "position to anchor against.")
+            return
+
+        def _work():
+            real = self._read_position(drv)
+            self._ui(lambda: self._finish_anchor(idx, real))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _finish_anchor(self, idx: int, real):
+        """Second half of _set_anchor, back on the UI thread once the
+        prober's REAL position has been read.
+
+        The offset between that real reading and this touchdown's
+        THEORETICAL grid position (_grid_xy, computed purely from the .xls/
+        .PMA's own absolute microns) is stored and applied to every future
+        real-position check (see _expected_position) - the prober's own
+        coordinate origin (wherever Set First Die/Load last put X0Y0) is
+        whatever the operator most recently established, not fixed, so it
+        is not safe to assume it lines up with the .xls's own origin. MD
+        deltas between two THEORETICAL positions are unaffected by this (a
+        constant offset cancels out in any difference) - only an absolute
+        comparison against a real ?P reading needs it, which is exactly
+        what _move_to_index/_sync_position now do.
+        """
+        if real is None:
+            messagebox.showwarning(
+                "Anchor", "Could not read the prober's real position (?P) - "
+                          "cannot anchor. Check the link and try again.")
+            return
+        t = self._touchdowns[idx]
+        theoretical = self._grid_xy(t)
+        self._origin_offset = (real[0] - theoretical[0], real[1] - theoretical[1])
         self._index = idx
         self._anchored = True
         self._um_residual = [0.0, 0.0]
-        t = self._touchdowns[idx]
-        qx, qy = self._grid_xy(t)
-        self._anchor_state_var.set(f"anchored at #{t['seq']} grid ({qx},{qy}) — "
-                                   f"{t['device_id']}")
+        qx, qy = theoretical
+        offset_note = (f", origin offset {self._origin_offset}"
+                       if self._origin_offset != (0, 0) else "")
+        self._anchor_state_var.set(
+            f"anchored at #{t['seq']} grid ({qx},{qy}) — real X{real[0]}Y{real[1]}"
+            f"{offset_note} — {t['device_id']}")
         self._mark_current()
         self._refresh_position()
+        # The Die list table's own step column depends on self._anchored/
+        # self._index (see _fill_table) - without this, pressing Set here
+        # updated everything EXCEPT the one place an operator would actually
+        # look to see the move it just made possible, which looked exactly
+        # like Set had silently failed.
+        self._fill_table()
         # Paint now, inside the click, rather than whenever Tk next goes
         # idle. The overlay is drawn on the map canvas by the calls above,
         # but the canvas only shows it on the next idle cycle - so after a
@@ -681,7 +754,8 @@ class EgPmaRunPanel(ttk.Frame):
                 wmap.canvas.update_idletasks()
         except Exception:
             pass
-        self._log(f"[PMA] Anchored at #{t['seq']} {t['device_id']} grid ({qx},{qy})")
+        self._log(f"[PMA] Anchored at #{t['seq']} {t['device_id']} grid ({qx},{qy})"
+                  f"{offset_note}")
 
     def _mark_current(self):
         run_order = self._enabled_indices()
@@ -1321,14 +1395,16 @@ class EgPmaRunPanel(ttk.Frame):
             if self._anchored and self._index is not None \
                     and 0 <= self._index < len(self._touchdowns):
                 real = parse_position(pos)
-                expect = self._grid_xy(self._touchdowns[self._index])
+                expect = self._expected_position(self._touchdowns[self._index])
                 if real is None:
                     note = "  (could not parse ?P - unable to verify the anchor)"
                 elif real != expect:
                     self._anchored = False
                     note = (f"  ⚠ MISMATCH: software expected X{expect[0]}Y{expect[1]} "
-                            f"(touchdown #{self._touchdowns[self._index]['seq']}) - "
+                            f"(touchdown #{self._touchdowns[self._index]['seq']}, "
+                            "accounting for the origin offset from the last anchor) - "
                             "re-anchor (Set Initial) before running.")
+                    self._ui(self._fill_table)
                 else:
                     note = "  ✓ matches the anchored touchdown."
             self._ui(lambda: (self._status_var.set(f"?P={pos}  {status}"),
@@ -1990,12 +2066,15 @@ class EgPmaRunPanel(ttk.Frame):
                 "recover() - re-anchor once the link is back rather than "
                 "assuming."))
             return False
-        if real != (cx, cy):
+        expected = self._expected_position(cur)
+        if real != expected:
             self._anchored = False
-            self._ui(lambda r=real, c=(cx, cy), s=cur['seq']: self._log(
+            self._ui(lambda r=real, c=expected, s=cur['seq']: self._log(
                 f"[PMA] STOPPED: chuck is really at X{r[0]}Y{r[1]} but the "
-                f"software expected X{c[0]}Y{c[1]} (touchdown #{s}) - "
-                "re-anchor (Set Initial) before continuing. No move was sent."))
+                f"software expected X{c[0]}Y{c[1]} (touchdown #{s}, accounting "
+                "for the origin offset from the last anchor) - re-anchor "
+                "(Set Initial) before continuing. No move was sent."))
+            self._ui(self._fill_table)
             return False
 
         before = real
