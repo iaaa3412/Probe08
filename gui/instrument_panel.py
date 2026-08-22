@@ -2482,6 +2482,16 @@ class MainLayout(ttk.Frame):
                 command=self.eg_pma_run.toggle_move_armed)
             self.eg_pma_run._goto_btn.grid(
                 row=7, column=0, columnspan=2, sticky="ew", pady=1)
+            # Read once whenever the prober connects (_connect_instruments_eg,
+            # app.py), and again whenever a Die Size write goes out from
+            # Prober Debug (eg_prober_debug_panel._send_setup) - there is no
+            # direct query for this (see electroglas_2001x.infer_die_size),
+            # so this is the only place an operator can see it without
+            # opening Prober Debug and inferring it by hand.
+            self._exec2_die_size_var = tk.StringVar(value="Prober die size: unknown")
+            ttk.Label(pos_lf, textvariable=self._exec2_die_size_var,
+                     font=("Consolas", 8), foreground="#6b7280",
+                     justify="center").grid(row=8, column=0, columnspan=2, pady=(2, 0))
         else:
             # Accretech has no native "previous die" GPIB command (only "J"
             # Next Die) - Back is a plain relative die-index step backward
@@ -5572,6 +5582,27 @@ class MainLayout(ttk.Frame):
             self._exec2_safe_after(lambda: self._exec2_highlight_current(int(y), int(x)))
         except Exception as e:
             self._exec2_log(f"[RUN] Refresh XY before run failed: {e}")
+
+    def _exec2_refresh_die_size(self):
+        """Electroglas only. Infers the prober's current SP1 die size (no
+        direct query exists - see electroglas_2001x.infer_die_size) and
+        shows it on the Run tab. Called once whenever the prober connects
+        (app.py._connect_instruments_eg) and again whenever a Die Size
+        write goes out from Prober Debug (eg_prober_debug_panel._send_setup),
+        so the label never has to be trusted stale."""
+        var = getattr(self, "_exec2_die_size_var", None)
+        if var is None:
+            return
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst or not hasattr(prober, "infer_die_size"):
+            return
+        def _run():
+            try:
+                x, y = prober.infer_die_size()
+                self.after(0, lambda: var.set(f"Prober die size: X{x} Y{y} um"))
+            except Exception as e:
+                self.after(0, lambda: var.set(f"Prober die size: could not infer ({e})"))
+        threading.Thread(target=_run, daemon=True).start()
 
     def _exec2_get_xy(self):
         prober = self.controller.drivers.get("prober")

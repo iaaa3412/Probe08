@@ -665,6 +665,8 @@ class AtomicaDashboard(tk.Tk):
             # Each row settles as it is pinged rather than all at the end, so a
             # slow instrument reads as "still going" instead of "hung".
             self.update_idletasks()
+        if "prober" in drivers and hasattr(ui, "_exec2_refresh_die_size"):
+            ui._exec2_refresh_die_size()
 
     def _startup_sweep(self):
         """Connect whichever system is active (Accretech, unless a default

@@ -804,10 +804,22 @@ class EgProberDebugPanel(ttk.Frame):
                 ok = code.upper() in ("E0", "")
                 verdict = "sent — no error (E0)" if ok else f"sent — ERROR: {code}"
                 self.after(0, lambda: self._show_response(label, verdict))
+                # Any of the Die Size rows just changed SP1 - re-infer it
+                # (rather than trust the raw/mm/mil input math here too) and
+                # push the result to the Run tab's own display, same as a
+                # fresh connect does. See instrument_panel._exec2_refresh_die_size.
+                if method.startswith("set_die_size"):
+                    self._refresh_run_tab_die_size()
             except Exception as e:
                 self._log(f"[PROBER] ERROR ({label}): {e}")
                 self.after(0, lambda: self._resp_var.set(f"Error: {e}"))
         self._run_bg(_run)
+
+    def _refresh_run_tab_die_size(self):
+        ui = getattr(self.controller, "instrument_panel_eg", None)
+        refresh = getattr(ui, "_exec2_refresh_die_size", None)
+        if refresh:
+            self.after(0, refresh)
 
     def _send_raw(self):
         raw = self._cmd_var.get().strip()
