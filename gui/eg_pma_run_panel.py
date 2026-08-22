@@ -531,33 +531,48 @@ class EgPmaRunPanel(ttk.Frame):
             matches = [c for c in self._anchor_choices if text in c.lower()]
         self._anchor_cb.config(values=matches[:self._ANCHOR_MAX_LISTED])
 
+    def _table_position(self, t) -> tuple:
+        """This touchdown's position in whichever unit 'Move by:' currently
+        has selected - die-grid steps (_grid_xy, what MD actually moves in)
+        or raw microns (what MM actually moves in, see _move_um). The Die
+        list table has to show whichever one a real move would use, or its
+        deltas mean nothing once the operator switches modes - see
+        _on_motion_mode, which re-fills the table whenever this changes."""
+        if self._motion_var.get() == MOTION_UM:
+            return (round(t["x"]), round(t["y"]))
+        return self._grid_xy(t)
+
     def _fill_table(self):
         """Every wafer position, the run's own first and in run order.
 
         The iid stays the index into _touchdowns, so selecting a row still
         resolves to a position whichever set is shown.
 
-        Run order first, then the rest by index: the MD column is the step
-        from the previous touchdown, which only means anything along the
-        path the recipe actually walks - so it is filled for the run's rows
-        and left blank for positions the recipe never visits.
+        Run order first, then the rest by index: the step column is the
+        delta from the previous touchdown IN THE CURRENTLY SELECTED MOTION
+        MODE's units (_table_position) - only means anything along the path
+        the recipe actually walks, so it is filled for the run's rows and
+        left blank for positions the recipe never visits.
         """
         self._tree.delete(*self._tree.get_children())
+        um_mode = self._motion_var.get() == MOTION_UM
+        self._tree.heading("grid", text="µm x,y" if um_mode else "grid x,y")
+        self._tree.heading("step", text="MM (µm)" if um_mode else "MD")
         run_order = self._enabled_indices()
         in_run = set(run_order)
         # The first run-order row's "step" used to just say "start" - wrong,
         # since the chuck's real starting point is wherever it was anchored
         # (Set Initial, or a re-anchor after a position mismatch - see
-        # _verify_anchor_position), not necessarily this recipe's first
-        # touchdown. Seed prev from the current anchor instead, so that row
-        # shows the SAME kind of real MD delta every other row does.
+        # _move_to_index), not necessarily this recipe's first touchdown.
+        # Seed prev from the current anchor instead, so that row shows the
+        # SAME kind of real delta every other row does.
         prev = None
         if self._anchored and self._index is not None \
                 and 0 <= self._index < len(self._touchdowns):
-            prev = self._grid_xy(self._touchdowns[self._index])
+            prev = self._table_position(self._touchdowns[self._index])
         for i in run_order:
             t = self._touchdowns[i]
-            qx, qy = self._grid_xy(t)
+            qx, qy = self._table_position(t)
             step = "(not anchored)" if prev is None else \
                 f"{qx - prev[0]:+d},{qy - prev[1]:+d}"
             self._tree.insert("", "end", iid=str(i),
@@ -569,7 +584,7 @@ class EgPmaRunPanel(ttk.Frame):
             for i, t in enumerate(self._touchdowns):
                 if i in in_run:
                     continue
-                qx, qy = self._grid_xy(t)
+                qx, qy = self._table_position(t)
                 self._tree.insert("", "end", iid=str(i), tags=("offrun",),
                                   values=(t["seq"], f"{qx},{qy}", "", "",
                                           t["device_id"]))
@@ -2095,8 +2110,17 @@ class EgPmaRunPanel(ttk.Frame):
     def _on_motion_mode(self):
         # Grey explanatory text (Microns/MD note) removed - _motion_var
         # itself still drives which radio is selected and which move
-        # command _step_once/_run_all use.
-        pass
+        # command _step_once/_run_all use. The Die list table's own
+        # grid/step columns show whatever the SELECTED mode would actually
+        # move by (_table_position) - switching modes without refilling it
+        # left MD-style die-step deltas on screen even after switching to
+        # MM, which is not what a real MM run would send.
+        #
+        # _build_controls calls this once during construction, before
+        # _build_table has run and created self._tree - guarded rather than
+        # reordering __init__'s build sequence.
+        if hasattr(self, "_tree"):
+            self._fill_table()
 
     # -- selection: pick a die on the map or in the table --------------------
 
