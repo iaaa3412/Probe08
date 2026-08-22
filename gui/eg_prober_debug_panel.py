@@ -619,6 +619,10 @@ class EgProberDebugPanel(ttk.Frame):
             self._motion_row(mf, label, method, (f1, f2))
 
         self._setup_section(left, "Wafer / Die Setup", _SETUP_COMMANDS)
+        infer_row = ttk.Frame(left)
+        infer_row.pack(fill="x", padx=4, pady=(0, 6))
+        ttk.Button(infer_row, text="🔍 Infer Current Die Size (no direct query exists)",
+                  command=self._cmd_infer_die_size).pack(fill="x")
         self._setup_section(left, "Z Limits & Profile", _LIMIT_COMMANDS)
         self._setup_section(left, "Counters & Yield", _COUNTER_COMMANDS)
         self._setup_section(left, "Wafer Expansion & Time", _MISC_COMMANDS)
@@ -710,6 +714,30 @@ class EgProberDebugPanel(ttk.Frame):
             except Exception as e:
                 self._log(f"[PROBER] Status error: {e}")
                 self.after(0, lambda: self._set_status(f"Status error: {e}", "red"))
+        self._run_bg(_run)
+
+    def _cmd_infer_die_size(self):
+        if not messagebox.askyesno(
+                "Infer Die Size",
+                "This briefly writes a KNOWN die size (SP1), reads ?P to see "
+                "how the die count rescaled, then writes the INFERRED real "
+                "size back - no physical motion, but it does send two SP1 "
+                "writes.\n\nSend it?"):
+            return
+        def _run():
+            drv = self._drv()
+            if not drv:
+                return
+            try:
+                size = drv.infer_die_size()
+                self._log(f"[PROBER] Inferred die size: X{size[0]} Y{size[1]} um "
+                          "(read via ?P before/after a probe SP1 write, then "
+                          "restored)")
+                self.after(0, lambda: self._show_response(
+                    "Infer Die Size", f"X{size[0]} Y{size[1]} um"))
+            except Exception as e:
+                self._log(f"[PROBER] Infer Die Size error: {e}")
+                self.after(0, lambda: self._show_response("Infer Die Size", f"Error: {e}"))
         self._run_bg(_run)
 
     def _send_motion(self, method, label, vars_, confirm_msg):

@@ -346,8 +346,11 @@ def _serialised(method):
 
 # This machine's SET PRMTR page as photographed BEFORE LAMP_INIT_SEQUENCE was
 # ever sent, with the equivalent command to put each value back. There is no
-# GPIB query that reads SP parameters back, so without this list the previous
-# setup would only exist on that photograph.
+# GPIB query that reads most SP parameters back, so without this list the
+# previous setup would only exist on that photograph. Die size (SP1) is the
+# one exception - see infer_die_size() below for an INDIRECT read via ?P,
+# found and verified by direct experiment. Nothing else here has an
+# equivalent trick known yet.
 #
 # Z values are in 0.1-mil units (command = mils x 10), derived from LaMP's own
 # command/comment pairs and consistent across all five of them.
@@ -1377,6 +1380,57 @@ class Electroglas2001X(GPIBInstrument):
 
     def set_die_size_precise_mm(self, x_mm, y_mm):
         self.write(f"SP29X{_fmt6(x_mm)}Y{_fmt6(y_mm)}")
+
+    @_serialised
+    def infer_die_size(self, probe_x: int = 7042, probe_y: int = 3284) -> tuple:
+        """The current SP1 die size, WITHOUT a direct query - there is none
+        (see PRE_LAMP_SETTINGS's own note above). '?I' looks like it should
+        answer this but does not - confirmed by direct experiment: it
+        always reports a fixed 84000x51200 machine constant, unrelated to
+        whatever SP1 is actually set to.
+
+        Method (found and verified by direct experiment on this machine):
+        SP1X<x>Y<y> changes the die size in microns WITHOUT moving the
+        stage - the physical (micron) position stays fixed while the
+        die-COUNT ?P reports rescales to match it. So:
+
+            P_old * size_old == P_new * size_new
+
+        Reading ?P before and after writing a KNOWN probe size solves for
+        the size that was actually set before this ran:
+
+            size_old = probe_size * P_new / P_old
+
+        Verified example: ?P read X-10Y-4, then SP1X7042Y3284 (probe) was
+        sent (acked MC), then ?P read X-5Y-2 - giving
+        7042*5/10=3521 and 3284*2/4=1642, a clean whole-micron result (the
+        sanity check; a wrong reading gives a ragged fraction instead).
+
+        Restores the die size to the inferred value before returning, so
+        the net effect on the machine's actual configuration is nothing -
+        only the temporary probe write in between is not a no-op. Raises
+        if position cannot be read either time, or if either axis' before-
+        reading is 0 (division by zero - re-run once the chuck has moved
+        off that axis).
+        """
+        before = self._parse_die_position(self.get_xy_position())
+        if before is None:
+            raise RuntimeError("infer_die_size: cannot read ?P before probing - "
+                               "refusing to write a temporary die size blind")
+        if before[0] == 0 or before[1] == 0:
+            raise RuntimeError(f"infer_die_size: chuck is at {before} - at least "
+                               "one axis is 0, which divides by zero. Jog off "
+                               "that axis and try again.")
+        self.set_die_size(probe_x, probe_y)
+        after = self._parse_die_position(self.get_xy_position())
+        if after is None:
+            raise RuntimeError("infer_die_size: cannot read ?P after probing - "
+                               f"die size was left at the probe value "
+                               f"X{probe_x}Y{probe_y}, NOT restored.")
+        size_x = round(probe_x * after[0] / before[0])
+        size_y = round(probe_y * after[1] / before[1])
+        self.set_die_size(size_x, size_y)
+        return (size_x, size_y)
 
     def set_wafer_diameter(self, diameter):
         self.write(f"SP4D{int(diameter)}")
