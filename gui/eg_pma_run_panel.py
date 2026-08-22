@@ -545,11 +545,20 @@ class EgPmaRunPanel(ttk.Frame):
         self._tree.delete(*self._tree.get_children())
         run_order = self._enabled_indices()
         in_run = set(run_order)
+        # The first run-order row's "step" used to just say "start" - wrong,
+        # since the chuck's real starting point is wherever it was anchored
+        # (Set Initial, or a re-anchor after a position mismatch - see
+        # _verify_anchor_position), not necessarily this recipe's first
+        # touchdown. Seed prev from the current anchor instead, so that row
+        # shows the SAME kind of real MD delta every other row does.
         prev = None
+        if self._anchored and self._index is not None \
+                and 0 <= self._index < len(self._touchdowns):
+            prev = self._grid_xy(self._touchdowns[self._index])
         for i in run_order:
             t = self._touchdowns[i]
             qx, qy = self._grid_xy(t)
-            step = "start" if prev is None else \
+            step = "(not anchored)" if prev is None else \
                 f"{qx - prev[0]:+d},{qy - prev[1]:+d}"
             self._tree.insert("", "end", iid=str(i),
                               values=(t["seq"], f"{qx},{qy}", "✓", step,
@@ -1286,8 +1295,29 @@ class EgPmaRunPanel(ttk.Frame):
             drv.recover()
             pos = drv.get_xy_position()
             status = drv.decode_status(drv.get_prober_status())
+            # Actually RECONCILE against the anchor, not just display the raw
+            # reply - a mismatch here means self._index (what every MD delta
+            # is computed from) no longer describes where the chuck really
+            # is. _move_to_index checks this too, right before every move,
+            # but catching it here - the moment the operator asks to verify
+            # position - means they find out immediately instead of only
+            # when the next move refuses to send.
+            note = ""
+            if self._anchored and self._index is not None \
+                    and 0 <= self._index < len(self._touchdowns):
+                real = parse_position(pos)
+                expect = self._grid_xy(self._touchdowns[self._index])
+                if real is None:
+                    note = "  (could not parse ?P - unable to verify the anchor)"
+                elif real != expect:
+                    self._anchored = False
+                    note = (f"  ⚠ MISMATCH: software expected X{expect[0]}Y{expect[1]} "
+                            f"(touchdown #{self._touchdowns[self._index]['seq']}) - "
+                            "re-anchor (Set Initial) before running.")
+                else:
+                    note = "  ✓ matches the anchored touchdown."
             self._ui(lambda: (self._status_var.set(f"?P={pos}  {status}"),
-                              self._log(f"[PMA] ?P={pos}  {status}")))
+                              self._log(f"[PMA] ?P={pos}  {status}{note}")))
 
         threading.Thread(target=_work, daemon=True).start()
 
@@ -1926,7 +1956,34 @@ class EgPmaRunPanel(ttk.Frame):
         if self._motion_var.get() == MOTION_UM:
             return self._move_um(drv, cur, nxt, target, (nx, ny))
 
-        before = self._read_position(drv)
+        # Verify the chuck is REALLY at (cx, cy) - what self._index assumes -
+        # BEFORE computing/sending anything from that assumption. MD is a
+        # RELATIVE move: if self._index is stale (chuck moved by hand, a
+        # previous anchor was off, accumulated drift...), the delta below is
+        # wrong from the start, yet the driver faithfully executes whatever
+        # relative delta was commanded - the AFTER-move ?P check further
+        # down only confirms the COMMANDED delta happened, never that it
+        # started from the right place, so a stale anchor "verified cleanly"
+        # while landing somewhere unintended (confirmed cause of a real
+        # out-of-bounds move on 21PCM). Checking here catches it before any
+        # motion is sent, not after.
+        real = self._read_position(drv)
+        if real is None:
+            self._ui(lambda: self._log(
+                f"[PMA] STOPPED at #{nxt['seq']}: could not read ?P to verify "
+                "the chuck's real position before moving, even after a "
+                "recover() - re-anchor once the link is back rather than "
+                "assuming."))
+            return False
+        if real != (cx, cy):
+            self._anchored = False
+            self._ui(lambda r=real, c=(cx, cy), s=cur['seq']: self._log(
+                f"[PMA] STOPPED: chuck is really at X{r[0]}Y{r[1]} but the "
+                f"software expected X{c[0]}Y{c[1]} (touchdown #{s}) - "
+                "re-anchor (Set Initial) before continuing. No move was sent."))
+            return False
+
+        before = real
         self._ui(lambda: self._status_var.set(
             f"#{nxt['seq']}  MD {dx:+d},{dy:+d}  {nxt['device_id']}"))
 
