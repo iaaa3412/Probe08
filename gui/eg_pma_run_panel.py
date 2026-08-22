@@ -1499,6 +1499,10 @@ class EgPmaRunPanel(ttk.Frame):
                 "before each measurement; the chuck is separated at the end."):
             return
         self._running = True
+        try:
+            self._main_layout._exec2_set_running_buttons(True)
+        except Exception:
+            pass
         self._abort = False
         self._set_run_state("RUNNING (Minor Moves)", "#2563eb")
         self._log(f"[PMA] ▶ Run (Minor Moves) — {len(shots)} shot(s).")
@@ -1579,6 +1583,7 @@ class EgPmaRunPanel(ttk.Frame):
         finally:
             layout._exec2_move_fn = None
             self._running = False
+            self._ui(lambda: self._main_layout._exec2_set_running_buttons(False))
             try:
                 self._make_safe(drv)
             except Exception:
@@ -1678,6 +1683,10 @@ class EgPmaRunPanel(ttk.Frame):
 
     def _start(self, count: int):
         self._running = True
+        try:
+            self._main_layout._exec2_set_running_buttons(True)
+        except Exception:
+            pass
         self._abort = False
         self._paused = False
         # The measurement engine checks the LAYOUT's abort flag between
@@ -1717,6 +1726,7 @@ class EgPmaRunPanel(ttk.Frame):
                 # Cleared here, not in the Tk callback: if the window is gone the
                 # callback never runs and the panel would be dead for good.
                 self._running = False
+                self._ui(lambda: self._main_layout._exec2_set_running_buttons(False))
 
             stopped, paused = self._abort, self._paused
             if stopped:

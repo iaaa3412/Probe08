@@ -2362,20 +2362,30 @@ class MainLayout(ttk.Frame):
         # around it.
         run_border = tk.Frame(ctrl, background="#15803d")
         run_border.pack(side="left", padx=(2, 6), pady=5)
-        ttk.Button(run_border, text="▶  Run",
-                   command=(lambda: self.eg_pma_run._run_all())
-                           if self._system == "electroglas"
-                           else self._exec2_start_run).pack(padx=2, pady=2)
+        self._exec2_run_btn = ttk.Button(
+            run_border, text="▶  Run",
+            command=(lambda: self.eg_pma_run._run_all())
+                    if self._system == "electroglas"
+                    else self._exec2_start_run)
+        self._exec2_run_btn.pack(padx=2, pady=2)
 
-        for label, cmd in [
-            ("⏏  Unload (U)",  self._exec2_manual_unload),
+        for label, cmd, attr in [
+            ("⏏  Unload (U)",  self._exec2_manual_unload, None),
             # Pause is what ⏹ Stop Run used to do: finish what is in
             # progress and hold, keeping the position so Run resumes. Stop
             # is now a real stop - see _exec2_abort.
-            ("⏸  Pause",       self._exec2_pause),
-            ("⏹  Stop Run",       self._exec2_abort),
+            ("⏸  Pause",       self._exec2_pause, "_exec2_pause_btn"),
+            ("⏹  Stop Run",       self._exec2_abort, "_exec2_stop_btn"),
         ]:
-            ttk.Button(ctrl, text=label, command=cmd).pack(side="left", padx=3, pady=5)
+            btn = ttk.Button(ctrl, text=label, command=cmd)
+            btn.pack(side="left", padx=3, pady=5)
+            if attr:
+                setattr(self, attr, btn)
+        # Nothing is running yet at startup - Stop Run/Pause have nothing to
+        # stop or pause, and pressing Stop Run with no run active used to
+        # still open every channel and drop Z for no reason. See
+        # _exec2_set_running_buttons, called at every real start/finish.
+        self._exec2_set_running_buttons(False)
 
         self._exec2_state_lbl = tk.Label(
             ctrl, text="IDLE", bg="#f1f5f9", fg="#6b7280",
@@ -2798,6 +2808,39 @@ class MainLayout(ttk.Frame):
             self._exec2_log(f"[RUN] ⚠ Could not open all channels: "
                             f"{type(e).__name__}: {e}")
 
+    def _exec2_set_running_buttons(self, running: bool):
+        """One place that decides which Run tab controls make sense right
+        now - called at every real start (both engines) and every real
+        finish/abort, never from a mid-run status change.
+
+        running=True: Full Die/Test Die/Test Selected/Run are disabled (a
+        second run cannot be started on top of an active one - this was
+        already true logically via _exec2_running/eg_pma_run._running
+        guards, this just keeps the buttons themselves from inviting the
+        click). Stop Run/Pause become usable.
+
+        running=False: the reverse - Stop Run/Pause disabled, since there
+        is nothing to stop or pause; pressing Stop Run with no run active
+        used to still open every switch channel and drop Z for no reason.
+        """
+        state = "disabled" if running else "normal"
+        for attr in ("_exec2_full_btn", "_exec2_test_btn",
+                    "_exec2_test_selected_btn", "_exec2_run_btn"):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                try:
+                    btn.config(state=state)
+                except tk.TclError:
+                    pass
+        stop_state = "normal" if running else "disabled"
+        for attr in ("_exec2_stop_btn", "_exec2_pause_btn"):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                try:
+                    btn.config(state=stop_state)
+                except tk.TclError:
+                    pass
+
     def _exec2_pause(self):
         """Stop after the work in progress, keeping the position.
 
@@ -2808,6 +2851,7 @@ class MainLayout(ttk.Frame):
         if eg_run is not None and getattr(eg_run, "_running", False):
             try:
                 eg_run._pause()
+                self._exec2_set_running_buttons(False)
                 self._exec2_log("[RUN] ⏸ Pause — stopping after this touchdown; "
                                 "position kept, press ▶ Run to carry on.")
                 return
@@ -2820,6 +2864,7 @@ class MainLayout(ttk.Frame):
         # clearing it stops them the same graceful way - without the abort
         # flag, which is what triggers the emergency stop and the reset.
         self._exec2_running = False
+        self._exec2_set_running_buttons(False)
         self._exec2_set_state("PAUSED", "#b45309")
         self._exec2_log("[RUN] ⏸ Paused after the current die — position kept.")
 
@@ -2845,6 +2890,7 @@ class MainLayout(ttk.Frame):
                 self._exec2_log(f"[RUN] Could not stop the .PMA step-through: {e}")
         self._exec2_running = False
         self._exec2_aborted = True
+        self._exec2_set_running_buttons(False)
         # The .PMA run thread opens the channels and drops Z itself on the
         # way out (see EgPmaRunPanel._make_safe), so doing it here as well
         # would race it. Anything else, this is the only chance.
@@ -2910,6 +2956,7 @@ class MainLayout(ttk.Frame):
         finished_mode = self._exec2_run_mode
         self._exec2_running  = False
         self._exec2_run_mode = None
+        self._exec2_safe_after(lambda: self._exec2_set_running_buttons(False))
         self._exec2_safe_after(lambda: self._exec2_full_btn.config(state="normal"))
         self._exec2_safe_after(lambda: self._exec2_test_btn.config(state="normal"))
         self._exec2_safe_after(lambda: self.recipe_panel.set_locked(False))
@@ -3092,6 +3139,7 @@ class MainLayout(ttk.Frame):
         ▶ Run's own "no saved touchdowns, do the whole wafer" fallback."""
         self._exec2_reset_counts(total_dies=len(self._exec2_wafer_map._last_dies or []))
         self._exec2_running  = True
+        self._exec2_set_running_buttons(True)
         self._exec2_aborted  = False
         self._exec2_run_mode = "full"
         self._exec2_run_token += 1
@@ -3244,6 +3292,7 @@ class MainLayout(ttk.Frame):
 
         self._exec2_reset_counts(total_dies=len(shots))
         self._exec2_running  = True
+        self._exec2_set_running_buttons(True)
         self._exec2_aborted  = False
         self._exec2_run_mode = "full" if mode_label == "Full Die" else "test"
         self._exec2_run_token += 1
@@ -4298,6 +4347,7 @@ class MainLayout(ttk.Frame):
         Die/Test Selected's picks, or ▶ Run's saved touchdown list."""
         self._exec2_reset_counts(total_dies=len(sites))
         self._exec2_running  = True
+        self._exec2_set_running_buttons(True)
         self._exec2_aborted  = False
         self._exec2_run_mode = run_mode
         self._exec2_run_token += 1
