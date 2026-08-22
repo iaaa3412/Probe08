@@ -757,20 +757,54 @@ class EgPmaRunPanel(ttk.Frame):
                           "falling back to the PMA's touchdowns.")
         return self._touchdowns
 
+    def _wafer_builder_rc_lookup(self) -> dict:
+        """(x, y) in THIS module's own touchdown x/y sign convention ->
+        (row, col), read straight from the Wafer Builder-published map -
+        the SAME data the Run tab's own wafer map (self._run_map()) is
+        drawing from, via its already-loaded _last_dies. NOT the .xls or
+        .PMA: those seed/create the Wafer Builder map once (LOAD ALL) and
+        are never consulted again after that for row/col or die_id - see
+        _build_rc_index.
+
+        The published CSV negates y for WaferMapPanel's own drawing
+        convention (recipe_gen_panel._write_active_wafer_map_csv's
+        "y_um": fmt_num(-d["y"])) - undone here (-y_um) so the key matches
+        the sign expand_touchdowns_to_dies' own x/y use.
+        """
+        wm = self._run_map()
+        dies = getattr(wm, "_last_dies", None) or []
+        return {(round(d["x_um"]), round(-d["y_um"])): (d["row"], d["col"])
+                for d in dies
+                if d.get("row") is not None and d.get("col") is not None
+                and d.get("x_um") is not None and d.get("y_um") is not None}
+
+    def _wafer_builder_die_id_lookup(self) -> dict:
+        """(row, col) -> die_id, from the same Wafer Builder-published map
+        _wafer_builder_rc_lookup reads - the id an operator typed into
+        Wafer Builder's Die Map (e.g. 'PCM') is frequently NOT the raw
+        text the .xls/.PMA carry at that position at all, so device_id
+        pulled from those files cannot be trusted once a real Wafer
+        Builder label exists."""
+        wm = self._run_map()
+        dies = getattr(wm, "_last_dies", None) or []
+        return {(d["row"], d["col"]): d["die_id"] for d in dies if d.get("die_id")}
+
     def _build_rc_index(self):
         """seq -> the map cells that touchdown covers.
 
-        The map carries one cell per DIE, so a 2x2 shot owns four of them and
-        a single-die recipe owns one. The row/col derivation has to match
-        WaferMapPanel._parse_die_list exactly - sorted unique x/y, densely
-        indexed - because that is what decides the cell keys it draws under,
-        and it has to be derived from the SAME die set the map was written
-        from or every key is off.
+        Row/col (and, where Wafer Builder has one, the die_id) come from
+        the Wafer Builder-published map, not from re-deriving a grid out of
+        the .xls/.PMA - those files are only ever the SOURCE that seeded
+        the Wafer Builder map in the first place (LOAD ALL); once that is
+        done, this module must never disagree with what the map/recipe
+        actually show. Each .PMA-parsed die's physical (x, y) is looked up
+        directly against the published map's own (x, y) -> (row, col), so
+        this can never invent a row/col scheme of its own that drifts out
+        of step with what WaferMapPanel/RecipeGenPanel are using.
         """
         rows, cols = self.shot_layout()
-        map_dies = expand_touchdowns_to_dies(self._map_source_touchdowns(),
-                                             *self._die_um, rows=rows, cols=cols)
-        x_to_col, y_to_row = die_grid_index(map_dies)
+        rc_lookup = self._wafer_builder_rc_lookup()
+        die_id_lookup = self._wafer_builder_die_id_lookup()
         dies = expand_touchdowns_to_dies(self._touchdowns, *self._die_um,
                                          rows=rows, cols=cols)
 
@@ -786,14 +820,17 @@ class EgPmaRunPanel(ttk.Frame):
         self._slot_rc = {}
         missing = 0
         for d in dies:
-            try:
-                rc = (y_to_row[round(d["y"])], x_to_col[round(d["x"])])
-            except KeyError:
-                # A touchdown at coordinates the workbook has no shot for -
-                # the two files are for different wafers. Skip it rather than
-                # invent a cell, and say how many.
+            rc = rc_lookup.get((round(d["x"]), round(d["y"])))
+            if rc is None:
+                # A .PMA touchdown at coordinates the Wafer Builder map has
+                # no die for - the two are for different wafers, or the map
+                # has not been (re)published since this recipe was loaded.
+                # Skip it rather than invent a cell, and say how many.
                 missing += 1
                 continue
+            wb_id = die_id_lookup.get(rc)
+            if wb_id:
+                d = dict(d, device_id=wb_id)
             self._cells.setdefault(d["seq"], []).append(rc)
             self._slot_rc.setdefault(d["seq"], {})[d["quad_pos"]] = rc
             # Only real dies get a reverse mapping - clicking an NA corner
@@ -809,10 +846,30 @@ class EgPmaRunPanel(ttk.Frame):
                 self._anchor_rc.setdefault(d["seq"], rc)
         if missing:
             self._log(f"[PMA] ⚠ {missing} of {len(dies)} recipe dies are not on "
-                      "the recipe generator's wafer map — the .PMA and the .xls "
-                      "look like they are for different wafers.")
+                      "the Wafer Builder map — the .PMA and the published map "
+                      "look like they are for different wafers, or the map has "
+                      "not been (re)published since this recipe loaded.")
         # Kept for anything that still wants a single representative cell.
         self._rc = {seq: cells[0] for seq, cells in self._cells.items()}
+
+        # Correct self._touchdowns' OWN device_id too - not just the
+        # per-die records above - so every consumer that reads a touchdown
+        # directly (Die List table, anchor dropdown, Move MM table, log/
+        # dialog text) shows the SAME label the map and recipe do, not a
+        # possibly-stale .xls/.PMA text an operator has since overridden in
+        # Wafer Builder (e.g. LAMP's PCM sites). Single-die shots only
+        # (LAMP's own shot is 1x1) - a quad's joined "A/B/C/D" string is
+        # left as its original text, since reconstructing that join
+        # correctly needs its own slot-order handling this fix does not
+        # attempt.
+        for t in self._touchdowns:
+            anchor = self._anchor_rc.get(t["seq"])
+            if anchor is None or len(self._slot_rc.get(t["seq"], {})) != 1:
+                continue
+            wb_id = die_id_lookup.get(anchor)
+            if wb_id and wb_id != t["device_id"]:
+                t["device_id"] = wb_id
+                t["devices"] = [wb_id]
 
     def _die_grid_lookup(self) -> dict:
         """(grid x, grid y) -> (row, col), one entry per real INDIVIDUAL die
@@ -1257,17 +1314,33 @@ class EgPmaRunPanel(ttk.Frame):
     # the run, which is the worst of both.
 
     def _probe_seqs(self):
-        """Touchdown seqs the loaded recipe restricts the run to, or None."""
+        """Touchdown seqs the loaded recipe restricts the run to, or None.
+
+        Resolved the SAME way the Run tab map highlight already is (see
+        instrument_panel._exec2_resolve_site_cells) - each site's die_id is
+        looked up against the loaded wafer map first, falling back to the
+        recipe's own (row, col) only when that die_id is not on the map.
+        This used to go straight to the recipe's raw (row, col)
+        (get_sites(), no die_id at all), so a recipe whose touchdown
+        resolution was wrong (e.g. 21PCM's) picked whatever touchdown
+        genuinely happened to sit at that wrong position instead - the map
+        highlight showed the right die (it already went through the fixed
+        path), but the actual run walked a different one entirely, with no
+        relationship to what was highlighted.
+        """
         panel = getattr(self._main_layout, "recipe_panel", None)
-        get_sites = getattr(panel, "get_sites", None)
-        if not get_sites:
+        get_records = getattr(panel, "get_site_records", None)
+        if not get_records:
             return None
         try:
-            sites = list(get_sites())
+            records = list(get_records())
         except Exception:
             return None
-        if not sites:
+        if not records:
             return None
+        resolve = getattr(self._main_layout, "_exec2_resolve_site_cells", None)
+        sites = resolve(records) if resolve else [
+            (r["row"], r["col"]) for r in records]
         seqs = {self._seq_at_rc[rc] for rc in sites if rc in self._seq_at_rc}
         return seqs or None
 
