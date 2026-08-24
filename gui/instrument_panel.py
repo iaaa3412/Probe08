@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox
+import csv
 import os
 import re
 import threading
@@ -1458,35 +1459,167 @@ class MainLayout(ttk.Frame):
         self._map_source_var = tk.StringVar(
             value="Accretech" if self._system == "accretech" else "Wafer Builder")
 
-        split = ttk.PanedWindow(tab, orient=tk.HORIZONTAL)
-        split.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        # One tree, the whole tab - a flat file list plus a wafer map (which
+        # every other tab already shows) told you less about the FOLDER
+        # itself than a real directory/recipe/probe-card breakdown does.
+        # Real Treeview nesting (not "── Section ──" fake header rows) for
+        # the tree feel: folder -> key files / probe cards+recipes per
+        # system / subfolders (each expandable) / other root files.
+        tree_frame = ttk.Frame(tab)
+        tree_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
 
-        list_frame = ttk.LabelFrame(split, text="ATA Files", width=240)
-        split.add(list_frame, weight=0)
-        list_frame.pack_propagate(False)
-
-        cols = ("status", "file", "description")
+        cols = ("status", "detail")
         self._ata_tree = ttk.Treeview(
-            list_frame, columns=cols, show="headings", height=20, selectmode="browse"
+            tree_frame, columns=cols, show="tree headings", height=24, selectmode="browse"
         )
-        self._ata_tree.heading("status",      text="")
-        self._ata_tree.heading("file",        text="File")
-        self._ata_tree.heading("description", text="Contents")
-        self._ata_tree.column("status",      width=24,  stretch=False, anchor="center")
-        self._ata_tree.column("file",        width=170, stretch=False)
-        self._ata_tree.column("description", width=160)
+        self._ata_tree.heading("#0",      text="ATA Folder")
+        self._ata_tree.heading("status",  text="")
+        self._ata_tree.heading("detail",  text="Detail")
+        self._ata_tree.column("#0",      width=340, stretch=True)
+        self._ata_tree.column("status",  width=28,  stretch=False, anchor="center")
+        self._ata_tree.column("detail",  width=340, stretch=True)
+        self._ata_tree.grid(row=0, column=0, sticky="nsew")
 
-        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self._ata_tree.yview)
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._ata_tree.yview)
         self._ata_tree.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        self._ata_tree.pack(fill="both", expand=True)
+        vsb.grid(row=0, column=1, sticky="ns")
 
         self._ata_tree.tag_configure("found",   foreground="#006400")
         self._ata_tree.tag_configure("missing", foreground="#999999")
         self._ata_tree.tag_configure("other",   foreground="#333333")
+        self._ata_tree.tag_configure("section", font=("Segoe UI", 9, "bold"))
 
-        self.wafer_map = WaferMapPanel(split)
-        split.add(self.wafer_map, weight=1)
+        # Still built, just never gridded - this tab no longer SHOWS a
+        # wafer map (see _build_internal_tree), but self.wafer_map's data
+        # (._last_dies/.dies from load_from_ata below) is what feeds the
+        # Results tab's own map (app.py's set_wafer_map calls) and other
+        # readers - removing the widget entirely would have broken those,
+        # not just this tab's own display.
+        self.wafer_map = WaferMapPanel(tab)
+
+    # Base name -> {system: recipe count or None (file missing)} cache key
+    # helper - probe_cards/<base>.recipes.<system>.csv, same naming
+    # wafer_map_view.py's own card-recipe file already uses.
+    @staticmethod
+    def _card_recipe_count(card_dir: str, base: str, system: str):
+        path = os.path.join(card_dir, f"{base}.recipes.{system}.csv")
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as f:
+                names = {row.get("recipe", "").strip()
+                        for row in csv.DictReader(f)
+                        if (row.get("kind", "").strip().upper() == "RECIPE"
+                            and row.get("recipe", "").strip())}
+            return len(names)
+        except (OSError, csv.Error):
+            return None
+
+    def _build_internal_tree(self, folder_path: str):
+        """Everything the ATA Folder tab used to split across a flat file
+        list plus a wafer map (which every other tab already shows), as one
+        real tree: key files, probe cards + each system's own recipe count
+        side by side (so a default recipe pointing at a card with no
+        recipes file for that system - a real incident, LAMP's "lampaccr"
+        - is visible at a glance instead of a silent lookup failure),
+        subfolders (expandable), and whatever else is sitting in the
+        folder root."""
+        tree = self._ata_tree
+        for item in tree.get_children():
+            tree.delete(item)
+        if not folder_path or not os.path.isdir(folder_path):
+            return
+
+        all_entries = os.listdir(folder_path)
+        all_files = {f for f in all_entries
+                    if os.path.isfile(os.path.join(folder_path, f))}
+        subfolders = sorted(f for f in all_entries
+                            if os.path.isdir(os.path.join(folder_path, f)))
+
+        root_id = tree.insert(
+            "", "end", text=f"📁 {os.path.basename(folder_path)}",
+            open=True, tags=("section",))
+
+        # -- Key ATA files --------------------------------------------
+        key_id = tree.insert(root_id, "end", text="📄 Key ATA Files",
+                             open=True, tags=("section",))
+        for fname, (desc, owner) in ATA_KEY_FILES.items():
+            if owner not in ("shared", self._system):
+                continue
+            found = fname in all_files
+            tree.insert(key_id, "end", text=fname,
+                       values=("✔" if found else "–", desc),
+                       tags=("found" if found else "missing",))
+
+        # -- Probe cards + each system's own recipe file ---------------
+        cards_dir = os.path.join(folder_path, "probe_cards")
+        card_bases = set()
+        if os.path.isdir(cards_dir):
+            for fname in os.listdir(cards_dir):
+                if not fname.lower().endswith(".csv"):
+                    continue
+                base = fname[:-4]
+                for marker in (".recipes.", ".movelist."):
+                    idx = base.lower().find(marker)
+                    if idx != -1:
+                        base = base[:idx]
+                        break
+                card_bases.add(base)
+        cards_id = tree.insert(root_id, "end",
+                               text=f"🎫 Probe Cards & Recipes ({len(card_bases)})",
+                               open=True, tags=("section",))
+        if card_bases:
+            active_card = self.pin_wiring.get_active_card() if hasattr(self, "pin_wiring") else ""
+            for base in sorted(card_bases):
+                mark = "  (active)" if base == active_card else ""
+                card_id = tree.insert(cards_id, "end", text=base + mark,
+                                     tags=("found",))
+                for system in ("accretech", "electroglas"):
+                    n = self._card_recipe_count(cards_dir, base, system)
+                    label = system.capitalize()
+                    if n is None:
+                        tree.insert(card_id, "end", text=label,
+                                   values=("–", "no recipes file for this system"),
+                                   tags=("missing",))
+                    else:
+                        tree.insert(card_id, "end", text=label,
+                                   values=("✔", f"{n} recipe(s)"),
+                                   tags=("found",))
+        else:
+            tree.insert(cards_id, "end", text="(none yet)",
+                       values=("–", "create one on the Probe Card tab"),
+                       tags=("missing",))
+
+        # -- Subfolders, one level of contents each --------------------
+        if subfolders:
+            sub_root = tree.insert(root_id, "end",
+                                   text=f"📁 Subfolders ({len(subfolders)})",
+                                   open=False, tags=("section",))
+            for sub in subfolders:
+                sub_path = os.path.join(folder_path, sub)
+                try:
+                    sub_files = sorted(os.listdir(sub_path))
+                except OSError:
+                    sub_files = []
+                sub_id = tree.insert(sub_root, "end",
+                                    text=f"📁 {sub}/  ({len(sub_files)})",
+                                    open=False, tags=("other",))
+                for fname in sub_files:
+                    is_dir = os.path.isdir(os.path.join(sub_path, fname))
+                    tree.insert(sub_id, "end",
+                               text=(f"📁 {fname}/" if is_dir else fname),
+                               tags=("other",))
+
+        # -- Everything else in the folder root -------------------------
+        others = sorted(f for f in all_files if f not in ATA_KEY_FILES)
+        if others:
+            other_id = tree.insert(root_id, "end",
+                                   text=f"📄 Other Files ({len(others)})",
+                                   open=False, tags=("section",))
+            for fname in others:
+                tree.insert(other_id, "end", text=fname, tags=("other",))
 
     def load_ata_folder(self, folder_path):
         self._ata_folder = folder_path
@@ -1517,43 +1650,7 @@ class MainLayout(ttk.Frame):
         # few lines later regardless. That is why the highlight sometimes
         # would not show up right after an autoload.
 
-        all_files = {f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))}
-
-        for item in self._ata_tree.get_children():
-            self._ata_tree.delete(item)
-
-        self._ata_tree.insert("", "end", values=("", "── Key ATA Files ──", ""), tags=("other",))
-        for fname, (desc, owner) in ATA_KEY_FILES.items():
-            if owner not in ("shared", self._system):
-                continue
-            if fname in all_files:
-                self._ata_tree.insert("", "end", values=("✔", fname, desc), tags=("found",))
-            else:
-                self._ata_tree.insert("", "end", values=("–", fname, desc), tags=("missing",))
-
-        active_card = self.pin_wiring.get_active_card()
-        card_names = sorted(self.pin_wiring.get_card_names())
-        if card_names:
-            self._ata_tree.insert("", "end",
-                                  values=("", "── Probe Cards ──", ""), tags=("other",))
-            for name in card_names:
-                n_recipes = self.pin_wiring.get_recipe_count(name)
-                mark = "  (active)" if name == active_card else ""
-                self._ata_tree.insert(
-                    "", "end",
-                    values=("✔", name + mark, f"{n_recipes} recipe(s)"),
-                    tags=("found",))
-        else:
-            self._ata_tree.insert(
-                "", "end",
-                values=("–", "probe_cards/", "No probe cards yet — create one on Probe Card"),
-                tags=("missing",))
-
-        others = sorted(f for f in all_files if f not in ATA_KEY_FILES)
-        if others:
-            self._ata_tree.insert("", "end", values=("", "── Other Files ──", ""), tags=("other",))
-            for fname in others:
-                self._ata_tree.insert("", "end", values=("", fname, ""), tags=("other",))
+        self._build_internal_tree(folder_path)
 
         gen = getattr(self, "recipe_gen", None)
         map_pitch = gen._die_pitch() if gen is not None and hasattr(gen, "_die_pitch") else (1.0, 1.0)
