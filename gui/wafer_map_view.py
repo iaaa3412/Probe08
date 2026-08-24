@@ -61,16 +61,16 @@ ATA_KEY_FILES = {
     "ata_wafer_map_selected.csv":  ("Manually selected test dies (Accretech Run tab)", "accretech"),
     "ata_wafer_map_electroglas.csv": ("Die/touchdown map (PMA Process extraction)", "electroglas"),
     "ata_metadata.csv":         ("Wafer / lot metadata", "shared"),
-    "ata_sites.csv":            ("Probe sites", "shared"),
     "ata_pad_layout.csv":       ("Pad geometry", "shared"),
     "reference_pad_layout.csv": ("Hand-drawn pad layout sketch (Probe Card -> Custom; not used by recipes/wiring)", "shared"),
     "ata_alignment_marks.csv":  ("Alignment marks", "shared"),
     "alignment_marks.csv":      ("Alignment marks (alt)", "shared"),
-    "ata_devices.csv":          ("Device definitions", "shared"),
-    "ata_die_markers.csv":      ("Die-level markers", "shared"),
-    "ata_test_structures.csv":  ("Test structures", "shared"),
-    "ata_test_plan":            ("Test plan", "shared"),
-    "ata_validation_report.csv":("Validation report", "shared"),
+    # ata_devices.csv, ata_die_markers.csv, ata_test_structures.csv,
+    # ata_sites.csv, ata_validation_report.csv and the GDS parser's own
+    # run_summary/layout_metadata/ata_test_plan all moved into the ATA
+    # folder's gds/ subfolder (ata_gds_core.py's GDS_SUBFOLDER) - nothing
+    # outside the GDS parser itself ever read them at the root, so they are
+    # no longer listed here as root-level "key" files.
     "ata_export_formats.json":  ("Results tab SQL/CSV export format definitions", "accretech"),
     "ata_export_formats_electroglas.json": ("Results tab SQL/CSV export format definitions", "electroglas"),
 }

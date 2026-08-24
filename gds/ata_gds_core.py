@@ -1218,6 +1218,19 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+# Subfolder (under the ATA folder root) that everything the GDS parser
+# writes and nothing else reads lands in - keeps the raw cell/layer/polygon
+# dump and the parser's own run summary/test plan out of the ATA folder's
+# top level, where Pad Layout/Alignment/Wafer Map/etc. list real files.
+# ata_pad_layout.csv, alignment_marks.csv, ata_metadata.csv and
+# ata_wafer_map_gds.csv stay at the root on purpose - those ARE read
+# directly off the root by other tabs (load_pad_layout, load_alignment_marks,
+# WaferMapPanel.load_from_ata for the GDS source), so moving them would mean
+# teaching every one of those readers a second lookup location for no
+# benefit; they just happen to also be produced by this exporter.
+GDS_SUBFOLDER = "gds"
+
+
 def export_ata_files(
     data: Dict[str, Any],
     output_dir: str,
@@ -1225,6 +1238,8 @@ def export_ata_files(
     source_file: str = "",
 ) -> Dict[str, str]:
     os.makedirs(output_dir, exist_ok=True)
+    gds_dir = os.path.join(output_dir, GDS_SUBFOLDER)
+    os.makedirs(gds_dir, exist_ok=True)
 
     summary = dict(data.get("summary", {}))
     summary["source_file"] = source_file
@@ -1233,26 +1248,35 @@ def export_ata_files(
     summary["wafer_map_count"] = len(wafer_map) if wafer_map is not None else 0
 
     files: Dict[str, str] = {}
-    files["run_summary"] = os.path.join(output_dir, "run_summary.json")
+    files["run_summary"] = os.path.join(gds_dir, "run_summary.json")
     with open(files["run_summary"], "w", encoding="utf-8") as f:
         json.dump(_json_safe(summary), f, indent=2)
 
     if data.get("layout_metadata_raw"):
-        files["layout_metadata_json"] = os.path.join(output_dir, "layout_metadata.json")
+        files["layout_metadata_json"] = os.path.join(gds_dir, "layout_metadata.json")
         with open(files["layout_metadata_json"], "w", encoding="utf-8") as f:
             json.dump(_json_safe(data.get("layout_metadata_raw", {})), f, indent=2)
 
-    export_map = {
+    # Read directly off the ATA folder root by other tabs - see GDS_SUBFOLDER's
+    # comment above for why these are the exception.
+    root_export_map = {
+        "ata_pad_layout": "ata_pad_layout.csv",
+        "alignment_marks": "alignment_marks.csv",
+        "ata_alignment_marks": "ata_alignment_marks.csv",
+        "ata_metadata": "ata_metadata.csv",
+    }
+    for key, filename in root_export_map.items():
+        files[key] = os.path.join(output_dir, filename)
+        write_csv(files[key], data.get(key, []))
+
+    # GDS-parser-only raw dump - nothing outside this module reads these back.
+    gds_export_map = {
         "cells": "cells.csv",
         "layers": "layers.csv",
         "polygons": "polygons.csv",
         "labels": "labels.csv",
         "references": "references.csv",
         "pads": "pads.csv",
-        "ata_pad_layout": "ata_pad_layout.csv",
-        "alignment_marks": "alignment_marks.csv",
-        "ata_alignment_marks": "ata_alignment_marks.csv",
-        "ata_metadata": "ata_metadata.csv",
         "ata_die_markers": "ata_die_markers.csv",
         "ata_devices": "ata_devices.csv",
         "ata_test_structures": "ata_test_structures.csv",
@@ -1261,8 +1285,8 @@ def export_ata_files(
         "layout_metadata": "layout_metadata.csv",
         "ata_validation_report": "ata_validation_report.csv",
     }
-    for key, filename in export_map.items():
-        files[key] = os.path.join(output_dir, filename)
+    for key, filename in gds_export_map.items():
+        files[key] = os.path.join(gds_dir, filename)
         write_csv(files[key], data.get(key, []))
 
     if wafer_map is not None:
@@ -1274,7 +1298,7 @@ def export_ata_files(
         )
 
     test_plan = build_first_pass_test_plan(data, wafer_map if wafer_map is not None else [], source_file=source_file)
-    files["ata_test_plan"] = os.path.join(output_dir, "ata_test_plan.json")
+    files["ata_test_plan"] = os.path.join(gds_dir, "ata_test_plan.json")
     with open(files["ata_test_plan"], "w", encoding="utf-8") as f:
         json.dump(_json_safe(test_plan), f, indent=2)
 
