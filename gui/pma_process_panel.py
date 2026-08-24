@@ -741,10 +741,27 @@ class PmaProcessPanel(ttk.Frame):
             # own map (warning first if that name already exists) instead
             # of overwriting whatever map the operator had open - a second
             # LOAD ALL for a different recipe used to clobber it silently.
+            # Name the saved map after whatever actually defines the wafer,
+            # not always the .PMA: from_workbook means these shots came from
+            # the recipe generator .xls, so the SAME .xls picked against a
+            # different .PMA in the dropdown must resolve to that SAME named
+            # map, not spawn a new one per .PMA - the .xls is the wafer, the
+            # .PMA only ever named a subset to visit (see _write_wafer_map's
+            # own docstring). Only the no-workbook fallback (this recipe's
+            # own touchdowns standing in for a wafer) is genuinely PMA-
+            # specific, so that's the only case still named after the .PMA.
+            if from_workbook:
+                wafer_data = run.wafer_definition_data() or {}
+                wafer_path = wafer_data.get("path")
+                map_label = os.path.basename(wafer_path) if wafer_path else "workbook"
+                save_as = os.path.splitext(os.path.basename(wafer_path))[0] if wafer_path \
+                    else os.path.splitext(os.path.basename(self._pma_path))[0]
+            else:
+                map_label = os.path.basename(self._pma_path)
+                save_as = os.path.splitext(os.path.basename(self._pma_path))[0]
             try:
                 gen.load_touchdowns_as_map(
-                    shots, os.path.basename(self._pma_path), source,
-                    save_as=os.path.splitext(os.path.basename(self._pma_path))[0])
+                    shots, map_label, source, save_as=save_as)
             except Exception as exc:
                 self._log(f"[PMA] LOAD ALL: could not build a Wafer Builder "
                           f"map from these shots — {type(exc).__name__}: {exc}")
