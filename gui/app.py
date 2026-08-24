@@ -58,6 +58,8 @@ class AtomicaDashboard(tk.Tk):
         self.geometry("1400x800")
         self._check_machine_config_folder()
         self._splash = None
+        self._switch_splash = None
+        self._switch_splash_depth = 0
         self._build_splash_screen()
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -301,7 +303,15 @@ class AtomicaDashboard(tk.Tk):
         # so the tab swap above finishes redrawing first.
         if system not in self._connected_systems:
             fn = self.init_hardware_eg if system == "electroglas" else self.init_hardware
-            self.after(100, fn)
+            self._show_switch_splash(f"Connecting to {system.capitalize()}…")
+
+            def _run_and_dismiss():
+                try:
+                    fn()
+                finally:
+                    self._dismiss_switch_splash()
+
+            self.after(100, _run_and_dismiss)
 
     def _system_ready_loop(self):
         self.check_system_ready()
@@ -360,8 +370,15 @@ class AtomicaDashboard(tk.Tk):
         if not SHOW_SPLASH_SCREEN:
             return
         self.withdraw()
+        self._splash = self._make_splash_toplevel("Starting up…")
+
+    def _make_splash_toplevel(self, message):
+        """Build one always-on-top logo splash window, shared by the
+        startup splash (_build_splash_screen) and the bench/system/ATA-
+        folder switch splash (_show_switch_splash) - same look, different
+        caller and message. Does not touch the main window's own
+        withdraw/deiconify state; the caller decides that."""
         splash = tk.Toplevel(self)
-        self._splash = splash
         # No title() - overrideredirect windows show no title bar anyway,
         # and this keeps it out of _find_other_instance_window's title match.
         splash.overrideredirect(True)
@@ -391,9 +408,12 @@ class AtomicaDashboard(tk.Tk):
                 pass
         tk.Label(splash, text="Electrical Prober", bg="#374558", fg="#f0a020",
                  font=("Arial", 16)).pack()
-        tk.Label(splash, text="Starting up…", bg="#374558", fg="#cbd5e1",
-                 font=("Arial", 9)).pack(pady=(14, 0))
+        msg_lbl = tk.Label(splash, text=message, bg="#374558", fg="#cbd5e1",
+                           font=("Arial", 9))
+        msg_lbl.pack(pady=(14, 0))
+        splash._msg_label = msg_lbl
         splash.update()
+        return splash
 
     def _dismiss_splash_screen(self):
         splash = self._splash
@@ -405,6 +425,45 @@ class AtomicaDashboard(tk.Tk):
                 pass
         self.deiconify()
         self.lift()
+
+    def _show_switch_splash(self, message):
+        """Same splash window as startup, but for a bench/system switch or
+        an ATA folder (re)load - anything that pings hardware or reads a
+        folder off the network share on the UI thread and would otherwise
+        leave the window looking frozen with no explanation. Unlike
+        _build_splash_screen this never withdraws the main window - it's
+        already up and the user is actively looking at it.
+
+        Reentrant: nested show/dismiss calls (e.g. a system switch that
+        itself triggers an ATA folder reload) share one window and a depth
+        counter, so the splash only actually closes once the outermost
+        caller is done."""
+        if not SHOW_SPLASH_SCREEN:
+            return
+        self._switch_splash_depth = getattr(self, "_switch_splash_depth", 0) + 1
+        splash = getattr(self, "_switch_splash", None)
+        if splash is None:
+            self._switch_splash = self._make_splash_toplevel(message)
+        else:
+            try:
+                splash._msg_label.config(text=message)
+                splash.update()
+            except Exception:
+                pass
+
+    def _dismiss_switch_splash(self):
+        if not SHOW_SPLASH_SCREEN:
+            return
+        self._switch_splash_depth = max(0, getattr(self, "_switch_splash_depth", 0) - 1)
+        if self._switch_splash_depth:
+            return
+        splash = getattr(self, "_switch_splash", None)
+        self._switch_splash = None
+        if splash is not None:
+            try:
+                splash.destroy()
+            except Exception:
+                pass
 
     def _build_brand_header(self):
         hdr = tk.Frame(self, bg="#374558", height=48)
@@ -817,7 +876,11 @@ class AtomicaDashboard(tk.Tk):
         # During startup the scheduled sweep has not run yet and will pick this
         # bench up, so connecting here as well would just sweep the bus twice.
         if self._startup_done:
-            self.init_hardware_eg()
+            self._show_switch_splash(f"Connecting to {eg_profiles.label(name)}…")
+            try:
+                self.init_hardware_eg()
+            finally:
+                self._dismiss_switch_splash()
  
     def check_system_ready(self):
         missing = []
@@ -1040,12 +1103,16 @@ class AtomicaDashboard(tk.Tk):
         self.update_statistics_visuals()
 
     def _do_load_ata_folder(self, folder):
-        n_dies = self.ui.load_ata_folder(folder)
+        folder_name = os.path.basename(folder)
+        self._show_switch_splash(f"Loading ATA folder '{folder_name}'…")
+        try:
+            n_dies = self.ui.load_ata_folder(folder)
+        finally:
+            self._dismiss_switch_splash()
         self.total_dies = n_dies
         self.dies_tested = self.dies_passed = self.dies_failed = 0
         self.ui.clear_results()
         self.update_statistics_visuals()
-        folder_name = os.path.basename(folder)
         self._ata_lbl.config(text=f"ATA: {folder_name}  ({n_dies} dies)",
                              foreground="#1d4ed8")
         self._refresh_ata_picker()
