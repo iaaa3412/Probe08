@@ -1855,15 +1855,43 @@ class RecipeGenPanel(ttk.Frame):
     def _import_csv(self):
         path = filedialog.askopenfilename(
             title="Import CSV (Die Map)",
-            filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+            filetypes=[("CSV or Excel", "*.csv *.xlsx *.xls"),
+                      ("CSV", "*.csv"), ("Excel", "*.xlsx *.xls"),
+                      ("All files", "*.*")])
         if not path:
             return
-        try:
-            with open(path, newline="", encoding="utf-8-sig") as fh:
-                rows = [r for r in csv.reader(fh)]
-        except OSError as exc:
-            messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
-            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext in (".xlsx", ".xls"):
+            # A plain grid export (one cell per die, same (row, col) layout
+            # as the sheet) - not the Recipe Generator's MajorMoves workbook
+            # format (that's _import_recipe_gen_xls, a different button).
+            # csv.reader on an .xlsx used to be the only path here, which
+            # read the file's raw zipped-XML bytes as "CSV" text - garbage
+            # that came out looking like one column, hundreds of rows (a
+            # real report: 1322x2). Read it properly instead.
+            try:
+                import openpyxl
+            except ImportError:
+                messagebox.showerror(
+                    "Import Failed",
+                    "openpyxl is required to import an .xlsx/.xls file here "
+                    "(pip install openpyxl).")
+                return
+            try:
+                wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+                ws = wb.active
+                rows = [["" if v is None else str(v) for v in row]
+                       for row in ws.iter_rows(values_only=True)]
+            except Exception as exc:
+                messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
+                return
+        else:
+            try:
+                with open(path, newline="", encoding="utf-8-sig") as fh:
+                    rows = [r for r in csv.reader(fh)]
+            except OSError as exc:
+                messagebox.showerror("Import Failed", f"Could not read {path}:\n{exc}")
+                return
         while rows and not any((c or "").strip() for c in rows[0]):
             rows.pop(0)
         while rows and not any((c or "").strip() for c in rows[-1]):
@@ -1885,7 +1913,11 @@ class RecipeGenPanel(ttk.Frame):
         for r, row in enumerate(rows):
             for c in range(len(row)):
                 text = (row[c] or "").strip()
-                if not text:
+                # "NA" is the same "no die at this slot" marker
+                # _autofill_from_major_grid already treats as blank (its own
+                # is_real check) - without this, every NA placeholder in an
+                # otherwise-real shot imported as a literal die named "NA".
+                if not text or text.upper() == "NA":
                     continue
                 out.append((r, c, text, r // shot_rows, c // shot_cols,
                            r % shot_rows, c % shot_cols))
