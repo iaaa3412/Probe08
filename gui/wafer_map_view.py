@@ -567,7 +567,7 @@ class WaferMapPanel(ttk.LabelFrame):
             )
             self.dies[(d["row"], d["col"])] = rect
         if self._show_axis_grid:
-            self._draw_axis_ticks(dies, to_cx, to_cy, W, H)
+            self._draw_axis_ticks(dies, to_cx, to_cy, W, H, ccx, ccy, cr)
         self._recolor_statuses()
         self._recolor_picks()
         self._run_on_redraw()
@@ -587,7 +587,7 @@ class WaferMapPanel(ttk.LabelFrame):
             y_um_by_row.setdefault(d["row"], d["y_um"])
             x_um_by_col.setdefault(d["col"], d["x_um"])
 
-        def _pick(keys, target=10):
+        def _pick(keys, target=24):
             uniq = sorted(keys)
             if len(uniq) <= target:
                 return uniq
@@ -616,26 +616,33 @@ class WaferMapPanel(ttk.LabelFrame):
                 self.canvas.create_line(cx, ccy - half, cx, ccy + half,
                                         fill="#e3e3e3", dash=(2, 3))
 
-    def _draw_axis_ticks(self, dies, to_cx, to_cy, W, H):
-        """Row/col tick labels along the left and bottom edges, showing the
-        real ACCR-style row/col address at that position - e.g. for lining
-        up an on-screen die with a coordinate read off the real prober."""
+    def _draw_axis_ticks(self, dies, to_cx, to_cy, W, H, ccx, ccy, cr):
+        """Row/col tick labels hugging the wafer circle's own left/bottom
+        edge (ccx - cr / ccy + cr), not the canvas edge (x=0 / y=H) - the
+        canvas is usually bigger than the wafer once fitted (the 28px
+        margin plus whatever's left over on the non-limiting axis), so
+        pinning ticks to the canvas edge could put them a long way from
+        the wafer they're labelling. Shows the real ACCR-style row/col
+        address at that position - e.g. for lining up an on-screen die
+        with a coordinate read off the real prober."""
         row_ticks = getattr(self, "_axis_row_ticks", None)
         col_ticks = getattr(self, "_axis_col_ticks", None)
         if row_ticks is None or col_ticks is None:
             row_ticks, col_ticks = self._axis_tick_values(dies)
 
         tick_font = ("TkDefaultFont", 8)
+        axis_x = ccx - cr - 4   # just left of the wafer's own left edge
+        axis_y = ccy + cr + 4   # just below the wafer's own bottom edge
         for row, y_um in row_ticks.items():
             cy = to_cy(y_um)
-            self.canvas.create_line(0, cy, 6, cy, fill="#999")
-            self.canvas.create_text(9, cy, text=str(row), fill="#555",
-                                    anchor="w", font=tick_font)
+            self.canvas.create_line(axis_x - 6, cy, axis_x, cy, fill="#999")
+            self.canvas.create_text(axis_x - 9, cy, text=str(row), fill="#555",
+                                    anchor="e", font=tick_font)
         for col, x_um in col_ticks.items():
             cx = to_cx(x_um)
-            self.canvas.create_line(cx, H, cx, H - 6, fill="#999")
-            self.canvas.create_text(cx, H - 9, text=str(col), fill="#555",
-                                    anchor="s", font=tick_font)
+            self.canvas.create_line(cx, axis_y, cx, axis_y + 6, fill="#999")
+            self.canvas.create_text(cx, axis_y + 9, text=str(col), fill="#555",
+                                    anchor="n", font=tick_font)
 
     def update_die(self, row, col, status):
         self._die_status[(row, col)] = status
