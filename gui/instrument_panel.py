@@ -2623,7 +2623,7 @@ class MainLayout(ttk.Frame):
         self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
 
         self._exec2_wafer_map = WaferMapPanel(
-            map_lf, show_title=False, show_axis_grid=(self._system == "accretech"))
+            map_lf, show_title=False, show_axis_grid=True)
         self._exec2_wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
         self._exec2_wafer_map.enable_picking(on_change=self._exec2_on_sites_changed)
         self._exec2_wafer_map.on_redraw = self._exec2_redraw_overlay_on_run_map

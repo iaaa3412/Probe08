@@ -640,8 +640,10 @@ class RecipeGenPanel(ttk.Frame):
         cell = max(2, min(self._SM_CELL, avail_w, avail_h))
         span_w = cols * cell + (cols - 1) * self._SM_GAP
         span_h = rows * cell + (rows - 1) * self._SM_GAP
-        x0 = max(8, (w - span_w) // 2)
-        y0 = max(8, (h - span_h) // 2)
+        # Floors bumped from 8 to leave room for the row/col index labels
+        # drawn along the left/top edges - see _draw_shotmap_axis_labels.
+        x0 = max(22, (w - span_w) // 2)
+        y0 = max(16, (h - span_h) // 2)
         out = {}
         for r in range(rows):
             for c in range(cols):
@@ -655,18 +657,39 @@ class RecipeGenPanel(ttk.Frame):
         if cv is None:
             return
         cv.delete("all")
+        rects = self._shotmap_cell_rects()
         n = 0
-        for (r, c), (x0, y0, x1, y1) in self._shotmap_cell_rects().items():
+        for (r, c), (x0, y0, x1, y1) in rects.items():
             present = self._shotmap_cells.get((r, c), False)
             if present:
                 n += 1
             fill = "#60a5fa" if present else "#f1f5f9"
             outline = "#1d4ed8" if present else "#cbd5e1"
             cv.create_rectangle(x0, y0, x1, y1, fill=fill, outline=outline)
+        self._draw_shotmap_axis_labels(rects)
         self._shotmap_status_var.set(f"{n} touchdown(s) on the wafer.")
         if hasattr(self, "_shotmap_fill_btn"):
             all_filled = bool(self._shotmap_cells) and all(self._shotmap_cells.values())
             self._shotmap_fill_btn.config(text="☐ Clear All" if all_filled else "☑ Fill All")
+
+    def _draw_shotmap_axis_labels(self, rects: Dict[tuple, tuple]):
+        """Row/col index labels along the left/top edges - same idea as the
+        Run tab wafer map's axis grid (wafer_map_view.py's
+        _draw_axis_ticks), so a touchdown's row/col can be read straight
+        off this tab instead of counting squares."""
+        cv = self._shotmap_canvas
+        rows, cols = self._shotmap_dims()
+        font = ("TkDefaultFont", 7)
+        step_r = max(1, round(rows / 20))
+        step_c = max(1, round(cols / 20))
+        for r in range(0, rows, step_r):
+            x0, y0, x1, y1 = rects[(r, 0)]
+            cv.create_text(max(4, x0 - 6), (y0 + y1) / 2, text=str(r),
+                           fill="#64748b", anchor="e", font=font)
+        for c in range(0, cols, step_c):
+            x0, y0, x1, y1 = rects[(0, c)]
+            cv.create_text((x0 + x1) / 2, max(4, y0 - 6), text=str(c),
+                           fill="#64748b", anchor="s", font=font)
 
     def _on_shotmap_click(self, event):
         for (r, c), (x0, y0, x1, y1) in self._shotmap_cell_rects().items():
@@ -847,9 +870,44 @@ class RecipeGenPanel(ttk.Frame):
         self.ax.set_title(f"{self.map_name_var.get()} — {len(self._die_boxes)} die(s), "
                           f"{n_id} with ID, {n_skip} skip, {n_align} align")
         self.ax.set_aspect("equal")
-        self.ax.set_axis_off()
+        if self._die_boxes:
+            self.ax.set_axis_on()
+            self._draw_diemap_axis_ticks()
+        else:
+            self.ax.set_axis_off()
         self._diemap_sync_visible_labels()
         self.canvas.draw_idle()
+
+    def _draw_diemap_axis_ticks(self):
+        """Row/col index tick labels along the left/bottom edges - same
+        idea as the Run tab wafer map's axis grid (wafer_map_view.py's
+        _draw_axis_ticks), so a die's row/col can be read straight off
+        this tab instead of counting/clicking squares."""
+        shot_rows, shot_cols = self._shot_dims()
+        row_y, col_x = {}, {}
+        for b in self._die_boxes:
+            row = b["shot_r"] * shot_rows + b["slot_r"]
+            col = b["shot_c"] * shot_cols + b["slot_c"]
+            row_y.setdefault(row, b["y"])
+            col_x.setdefault(col, b["x"])
+
+        def _pick(mapping, target=20):
+            keys = sorted(mapping)
+            if len(keys) <= target:
+                return keys
+            step = max(1, round(len(keys) / target))
+            return keys[::step]
+
+        rows = _pick(row_y)
+        cols = _pick(col_x)
+        self.ax.set_yticks([row_y[r] for r in rows])
+        self.ax.set_yticklabels([str(r) for r in rows], fontsize=7)
+        self.ax.set_xticks([col_x[c] for c in cols])
+        self.ax.set_xticklabels([str(c) for c in cols], fontsize=7)
+        self.ax.tick_params(length=3, colors="#64748b", labelcolor="#64748b")
+        for spine in self.ax.spines.values():
+            spine.set_visible(False)
+        self.ax.grid(True, which="major", alpha=0.15, linestyle="--")
 
     # Extra viewport-widths of margin kept "live" (real Text artists)
     # around the visible area, so a small pan does not immediately need a
