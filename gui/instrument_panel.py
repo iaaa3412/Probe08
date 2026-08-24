@@ -1499,12 +1499,23 @@ class MainLayout(ttk.Frame):
         # not just this tab's own display.
         self.wafer_map = WaferMapPanel(tab)
 
-    # Base name -> {system: recipe count or None (file missing)} cache key
-    # helper - probe_cards/<base>.recipes.<system>.csv, same naming
-    # wafer_map_view.py's own card-recipe file already uses.
+    # Recipe count for one card/system, or None if there's genuinely nothing
+    # saved. WaferMapPanel.save_recipes (wafer_map_view.py) writes these two
+    # DIFFERENT ways depending on system, and this has to match both:
+    #   - Electroglas: a separate probe_cards/<base>.recipes.electroglas.csv
+    #     side file next to the card's own <base>.csv.
+    #   - Accretech: RECIPE/STEP rows written straight INTO <base>.csv
+    #     itself, right after the card's own PIN rows - no side file at
+    #     all. Checking only for the side file (as this used to) reported
+    #     "no recipes file for this system" for every Accretech card even
+    #     when one was saved and sitting in plain sight - confirmed against
+    #     LAMP's real LaMP_HP_b.csv, which carries "lampaccr" this way.
     @staticmethod
     def _card_recipe_count(card_dir: str, base: str, system: str):
-        path = os.path.join(card_dir, f"{base}.recipes.{system}.csv")
+        if system == "accretech":
+            path = os.path.join(card_dir, f"{base}.csv")
+        else:
+            path = os.path.join(card_dir, f"{base}.recipes.{system}.csv")
         if not os.path.isfile(path):
             return None
         try:
@@ -1513,7 +1524,7 @@ class MainLayout(ttk.Frame):
                         for row in csv.DictReader(f)
                         if (row.get("kind", "").strip().upper() == "RECIPE"
                             and row.get("recipe", "").strip())}
-            return len(names)
+            return len(names) or None
         except (OSError, csv.Error):
             return None
 
