@@ -1913,11 +1913,7 @@ class RecipeGenPanel(ttk.Frame):
         for r, row in enumerate(rows):
             for c in range(len(row)):
                 text = (row[c] or "").strip()
-                # "NA" is the same "no die at this slot" marker
-                # _autofill_from_major_grid already treats as blank (its own
-                # is_real check) - without this, every NA placeholder in an
-                # otherwise-real shot imported as a literal die named "NA".
-                if not text or text.upper() == "NA":
+                if not text:
                     continue
                 out.append((r, c, text, r // shot_rows, c // shot_cols,
                            r % shot_rows, c % shot_cols))
