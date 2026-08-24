@@ -33,6 +33,16 @@ _WAVE_SHAPES   = ("SIN", "SQU", "RAMP", "PULS", "DC")
 _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", "lo",
                   "level", "limit", "shape", "freq", "conn", "min", "max",
                   "avg_count", "avg_delay", "nplc", "his", "los",
+                  # How long to wait AFTER the bias/output is turned on but
+                  # BEFORE the first reading is taken - separate from
+                  # avg_delay (the gap BETWEEN averaged readings, or the
+                  # SMU's own per-cycle source delay on a "current" step).
+                  # Covers both "the instrument itself needs a moment to
+                  # settle before its first reading is trustworthy" and "I'm
+                  # biasing while measuring and want the bias to actually
+                  # settle before the first sample" - see
+                  # instrument_panel._exec2_run_steps_once.
+                  "settle_delay",
                   # LaMP's MeterRange - the fixed measurement range. Appended
                   # rather than inserted so existing card CSVs, which are read
                   # by column NAME, keep loading unchanged; a file without the
@@ -240,6 +250,9 @@ def _avg_display(step: dict) -> str:
         parts.append(f"{n}×{step.get('avg_delay') or 0}ms")
     if nplc:
         parts.append(f"NPLC={nplc}")
+    settle = (step.get("settle_delay") or "").strip()
+    if settle and settle != "0":
+        parts.append(f"settle={settle}ms")
     return ", ".join(parts)
 
 
@@ -286,27 +299,27 @@ def _normalize_step(step: dict) -> dict:
         step["hi"] = step["lo"] = step["conn"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
         return step
     if t == "open":
         step["mode"] = step["chan"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
         return step
     if t == "passfail":
         step["mode"] = step["chan"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
         step["level"] = step["limit"] = step["shape"] = step["freq"] = ""
-        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
         return step
     if t == "picture":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
         return step
     if t == "move":
         # Die # is the one field that matters - see _STEP_TYPES - everything
@@ -315,7 +328,7 @@ def _normalize_step(step: dict) -> dict:
         step["hi"] = step["lo"] = step["conn"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
-        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
         try:
             step["die"] = str(max(1, int(float(step.get("die") or "1"))))
         except (TypeError, ValueError):
@@ -380,8 +393,10 @@ def _normalize_step(step: dict) -> dict:
             step["avg_delay"] = "0"
         if not (step.get("nplc") or "").strip():
             step["nplc"] = "1"
+        if not (step.get("settle_delay") or "").strip():
+            step["settle_delay"] = "0"
     else:
-        step["avg_count"] = step["avg_delay"] = step["nplc"] = ""
+        step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
     return step
 
 
@@ -1586,6 +1601,11 @@ class RecipePanel(ttk.Frame):
         self._avg_delay_ent = ttk.Entry(editor, textvariable=self._ed_vars["avg_delay"], width=7)
         self._avg_delay_ent.grid(row=3, column=7, sticky="w")
 
+        _lbl(5, 4, "Settle Delay (ms):")
+        self._settle_delay_ent = ttk.Entry(
+            editor, textvariable=self._ed_vars["settle_delay"], width=7)
+        self._settle_delay_ent.grid(row=5, column=5, sticky="w")
+
         _lbl(4, 0, "NPLC:")
         self._nplc_ent = ttk.Entry(editor, textvariable=self._ed_vars["nplc"], width=6)
         self._nplc_ent.grid(row=4, column=1, sticky="w")
@@ -1738,6 +1758,7 @@ class RecipePanel(ttk.Frame):
         self._avg_count_ent.config(state="disabled")
         self._avg_delay_ent.config(state="disabled")
         self._nplc_ent.config(state="disabled")
+        self._settle_delay_ent.config(state="disabled")
         # Die # means nothing for a wait or a channel release - see
         # _normalize_step - so it's greyed out and cleared for those, same
         # as every other field that type doesn't use.
@@ -1855,12 +1876,15 @@ class RecipePanel(ttk.Frame):
             self._avg_count_ent.config(state="normal")
             self._avg_delay_ent.config(state="normal")
             self._nplc_ent.config(state="normal")
+            self._settle_delay_ent.config(state="normal")
             if not self._ed_vars["avg_count"].get():
                 self._ed_vars["avg_count"].set("1")
             if not self._ed_vars["avg_delay"].get():
                 self._ed_vars["avg_delay"].set("0")
             if not self._ed_vars["nplc"].get():
                 self._ed_vars["nplc"].set("1")
+            if not self._ed_vars["settle_delay"].get():
+                self._ed_vars["settle_delay"].set("0")
 
         # A measure step's Target names an earlier apply step to combine
         # with (see _normalize_step / describe_target_calc) - open/passfail
@@ -2349,6 +2373,11 @@ class RecipePanel(ttk.Frame):
                         issues.append(f"ERROR {tag}: NPLC must be a number > 0")
                 except ValueError:
                     issues.append(f"ERROR {tag}: NPLC is not a number")
+                try:
+                    if float(s.get("settle_delay") or 0) < 0:
+                        issues.append(f"ERROR {tag}: Settle Delay must be a number ≥ 0")
+                except ValueError:
+                    issues.append(f"ERROR {tag}: Settle Delay is not a number")
 
             conn = (s.get("conn") or "").replace(" ", "")
             if direct:
@@ -2624,6 +2653,12 @@ class RecipePanel(ttk.Frame):
                     raise ValueError
             except ValueError:
                 messagebox.showerror("Invalid Step", "NPLC must be a number > 0.")
+                return False
+            try:
+                if float(step["settle_delay"]) < 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid Step", "Settle Delay must be a number ≥ 0.")
                 return False
         for label, key in (("Level", "level"), ("Limit", "limit"), ("Freq", "freq")):
             if step[key]:

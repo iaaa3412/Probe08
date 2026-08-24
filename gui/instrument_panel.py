@@ -3334,6 +3334,80 @@ class MainLayout(ttk.Frame):
             daemon=True)
         self._exec2_lot_thread.start()
 
+    def _exec2_publish_die_slots_for(self, shot_row, shot_col, shot_rows, shot_cols,
+                                     shot_cells, row_offset, col_offset):
+        """Tell _exec2_run_steps_once/_exec2_slot_identity where each die #
+        in shot (shot_row, shot_col) really sits, and its real die ID -
+        shared by the full Minor Moves run (_exec2_minor_move_thread's own
+        publish_die_slots) and the standalone Measure button
+        (_exec2_touchdown_then_measure), so a Measure press files each
+        step's reading against the die it actually measured (by the
+        step's own Die # field) instead of always the shot's landing
+        square - same bug class the run path already had this fix for."""
+        present = present_slots(shot_cells, shot_rows, shot_cols)
+        max_die = max(present.values()) if present else 1
+        rcs, ids, shotpos = [], [], []
+        wm = self._exec2_wafer_map
+        for die_num in range(1, max_die + 1):
+            rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+            if rc is None:
+                rcs.append(None)
+                ids.append("")
+                shotpos.append(None)
+                continue
+            r, c = rc
+            real_row = shot_row * shot_rows + r + row_offset
+            real_col = shot_col * shot_cols + c + col_offset
+            rcs.append((real_row, real_col))
+            ids.append(self._exec2_overlay_die_ids.get((real_row, real_col))
+                      or wm.die_ids.get((real_row, real_col), ""))
+            # (reticle row, reticle col, row WITHIN the shot, col WITHIN
+            # the shot) - generic reticle/shot-position bookkeeping any
+            # export format can read (see export_formats.py's
+            # shot_row/shot_col/intra_row/intra_col source fields), not
+            # tied to any one project's naming.
+            shotpos.append((shot_row, shot_col, r, c))
+        self._exec2_die_rc_by_slot = rcs
+        self._exec2_die_ids_by_slot = ids
+        self._exec2_die_shotpos_by_slot = shotpos
+
+    def _exec2_prepare_minor_moves_publish(self):
+        """Main-thread-only: resolve whatever Minor Moves needs to publish
+        per-die slots for the shot the chuck is on RIGHT NOW, before
+        handing off to _exec2_touchdown_then_measure's background thread -
+        recipe_gen._shot_dims()/_shot_cells read live Tk StringVars, and
+        calling those off the UI thread can raise "main thread is not in
+        main loop" (same class of bug _exec2_start_minor_moves's own
+        docstring already covers for the full-run path). Returns the tuple
+        _exec2_publish_die_slots_for takes, or None if Minor Moves isn't
+        on, there's no confirmed Overlay alignment to resolve a real
+        (row, col) into a shot, or the current position isn't known -
+        every case logged so a silent "still filing everything under one
+        square" doesn't look like nothing happened."""
+        if not self._exec2_minor_moves_active():
+            return None
+        if not self._exec2_overlay_offset_confirmed:
+            self._exec2_log("[MEASURE] Minor Moves is on but there is no confirmed "
+                            "Overlay alignment - press Overlay… and 🖌 Overlay on "
+                            "Map first, so each step's Die # can be filed against "
+                            "the real die it measured.")
+            return None
+        gen = getattr(self, "recipe_gen", None)
+        if gen is None or self._exec2_current_rc is None:
+            self._exec2_log("[MEASURE] Minor Moves is on but the chuck's current "
+                            "die is not known yet - Set Chuck / touch down once "
+                            "first so each step's Die # can be filed correctly.")
+            return None
+        row_offset = self._exec2_overlay_row_offset
+        col_offset = self._exec2_overlay_col_offset
+        shot_rows, shot_cols = gen._shot_dims()
+        shot_cells = dict(gen._shot_cells)
+        cur_row, cur_col = self._exec2_current_rc
+        shot_row = (cur_row - row_offset) // shot_rows
+        shot_col = (cur_col - col_offset) // shot_cols
+        return (shot_row, shot_col, shot_rows, shot_cols, shot_cells,
+                row_offset, col_offset)
+
     def _exec2_minor_move_thread(self, shots: list, my_token: int, overlay_offset: tuple,
                                  shot_rows: int, shot_cols: int, shot_cells: dict):
         """One touchdown per shot, exactly like the native G/J path - the
@@ -3370,33 +3444,15 @@ class MainLayout(ttk.Frame):
             Electroglas quads, so every measurement is filed against the
             die it actually measured (matched by real XY position + the
             step's own Die # field) instead of the shot's landing square
-            for all of them. Cleared after the shot in the caller."""
-            present = present_slots(shot_cells, shot_rows, shot_cols)
-            max_die = max(present.values()) if present else 1
-            rcs, ids, shotpos = [], [], []
-            wm = self._exec2_wafer_map
-            for die_num in range(1, max_die + 1):
-                rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
-                if rc is None:
-                    rcs.append(None)
-                    ids.append("")
-                    shotpos.append(None)
-                    continue
-                r, c = rc
-                real_row = shot_row * shot_rows + r + row_offset
-                real_col = shot_col * shot_cols + c + col_offset
-                rcs.append((real_row, real_col))
-                ids.append(self._exec2_overlay_die_ids.get((real_row, real_col))
-                          or wm.die_ids.get((real_row, real_col), ""))
-                # (reticle row, reticle col, row WITHIN the shot, col WITHIN
-                # the shot) - generic reticle/shot-position bookkeeping any
-                # export format can read (see export_formats.py's
-                # shot_row/shot_col/intra_row/intra_col source fields),
-                # not tied to any one project's naming.
-                shotpos.append((shot_row, shot_col, r, c))
-            self._exec2_die_rc_by_slot = rcs
-            self._exec2_die_ids_by_slot = ids
-            self._exec2_die_shotpos_by_slot = shotpos
+            for all of them. Cleared after the shot in the caller.
+
+            Body lives in _exec2_publish_die_slots_for so the standalone
+            Measure button (_exec2_touchdown_then_measure) can do exactly
+            the same publication for whichever shot the chuck is
+            currently on, not just a full Minor Moves run."""
+            self._exec2_publish_die_slots_for(
+                shot_row, shot_col, shot_rows, shot_cols, shot_cells,
+                row_offset, col_offset)
 
         def goto_shot_die(pick_row, pick_col, die_num):
             """Separate, jump to (shot, die #), contact. Used both for the
@@ -4615,9 +4671,13 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[MEASURE] No recipe loaded — pick one from the "
                             "Recipe dropdown first.")
             return
-        threading.Thread(target=self._exec2_touchdown_then_measure, daemon=True).start()
+        # Resolved here, on the main thread, not inside the background
+        # thread below - see _exec2_prepare_minor_moves_publish's own note.
+        minor_args = self._exec2_prepare_minor_moves_publish()
+        threading.Thread(target=self._exec2_touchdown_then_measure,
+                         args=(minor_args,), daemon=True).start()
 
-    def _exec2_touchdown_then_measure(self):
+    def _exec2_touchdown_then_measure(self, minor_args=None):
         prober = self.controller.drivers.get("prober")
         if prober and prober.inst:
             try:
@@ -4630,7 +4690,40 @@ class MainLayout(ttk.Frame):
         else:
             self._exec2_log("[MEASURE] Prober not connected — skipping touchdown, "
                             "measuring at current state")
-        self._exec2_run_steps_once()
+        # Minor Moves: file each step's reading against the die it
+        # actually measured (by the step's own Die # field), not always
+        # the shot's landing square - same publish-before-run pattern the
+        # full run uses (_exec2_minor_move_thread's publish_die_slots).
+        if minor_args is not None:
+            self._exec2_publish_die_slots_for(*minor_args)
+        try:
+            overall_ok = self._exec2_run_steps_once()
+        finally:
+            if minor_args is not None:
+                self._exec2_die_rc_by_slot = []
+                self._exec2_die_ids_by_slot = []
+                self._exec2_die_shotpos_by_slot = []
+
+        # Colour the square(s) this measurement actually covered, same as
+        # a full run does - Measure never painted PASS/FAIL at all before,
+        # only the wafer map (grey) and log line showed anything.
+        if minor_args is not None:
+            (shot_row, shot_col, shot_rows, shot_cols, shot_cells,
+             row_offset, col_offset) = minor_args
+            slot_verdicts = dict(getattr(self, "_exec2_slot_verdicts", None) or {})
+            if slot_verdicts:
+                for die_num, passed in sorted(slot_verdicts.items()):
+                    rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+                    if rc is None:
+                        continue
+                    r, c = rc
+                    real_row = shot_row * shot_rows + r + row_offset
+                    real_col = shot_col * shot_cols + c + col_offset
+                    self._exec2_update_die_color(real_row, real_col, passed)
+                return
+        if self._exec2_current_rc is not None:
+            self._exec2_update_die_color(
+                self._exec2_current_rc[0], self._exec2_current_rc[1], overall_ok)
 
     def _exec2_avg_spec(self, step: dict) -> tuple:
         try:
@@ -4642,6 +4735,24 @@ class MainLayout(ttk.Frame):
         except ValueError:
             delay = 0.0
         return count, delay
+
+    def _exec2_settle_ms(self, step: dict) -> float:
+        # How long to wait AFTER the bias/output for THIS step is on but
+        # BEFORE its first reading - separate from avg_delay (the gap
+        # between averaged readings once already reading). Covers both a
+        # plain "give the instrument a moment" delay and "I'm biasing while
+        # measuring, wait for the bias to settle before recording" - see
+        # recipe_panel._STEP_FIELDS' own comment on "settle_delay".
+        try:
+            return max(0.0, float(step.get("settle_delay") or 0))
+        except ValueError:
+            return 0.0
+
+    def _exec2_settle(self, step: dict, name: str, i: int):
+        ms = self._exec2_settle_ms(step)
+        if ms > 0:
+            self._exec2_log(f"[MEASURE] {i}. {name}: settling {ms:.0f} ms before reading")
+            time.sleep(ms / 1000.0)
 
     def _exec2_nplc_spec(self, step: dict):
         try:
@@ -4982,6 +5093,7 @@ class MainLayout(ttk.Frame):
                         read_one = ((lambda: abs(random.gauss(50, 15)))
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_resistance()))
+                    self._exec2_settle(s, name, i)
                     r_raw = self._exec2_measure_averaged(
                         smu if instrument == "SMU" else dmm, smu_ch,
                         read_one, avg_count, avg_delay, "Ω")
@@ -5020,6 +5132,7 @@ class MainLayout(ttk.Frame):
                         read_one = ((lambda: random.gauss(3.3, 0.1))
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_voltage_dc()))
+                    self._exec2_settle(s, name, i)
                     v_raw = self._exec2_measure_averaged(
                         smu if instrument == "SMU" else dmm, smu_ch,
                         read_one, avg_count, avg_delay, "V")
@@ -5136,6 +5249,7 @@ class MainLayout(ttk.Frame):
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_current_dc()))
                         bias_txt = "  (via DMM)"
+                    self._exec2_settle(s, name, i)
                     i_raw = self._exec2_measure_averaged(
                         smu if instrument == "SMU" else dmm, smu_ch,
                         read_one, avg_count, avg_delay, "A")
