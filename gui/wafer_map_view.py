@@ -333,7 +333,8 @@ class WaferMapPanel(ttk.LabelFrame):
         _die_status persisting across those."""
         self._die_status.clear()
 
-    def load_from_ata(self, folder_path, filename="ata_wafer_map_gds.csv"):
+    def load_from_ata(self, folder_path, filename="ata_wafer_map_gds.csv",
+                      pitch=(1.0, 1.0)):
         self.clear_status()
         map_file = os.path.join(folder_path, filename)
         if not os.path.exists(map_file):
@@ -364,7 +365,7 @@ class WaferMapPanel(ttk.LabelFrame):
         if not raw:
             return 0
 
-        dies = self._parse_die_list(raw)
+        dies = self._parse_die_list(raw, pitch=pitch)
         self._last_dies = dies
         self._draw_from_die_list(dies)
         if self._show_title:
@@ -383,7 +384,7 @@ class WaferMapPanel(ttk.LabelFrame):
             self.config(text=f"Wafer Map — {len(self.dies)} {label}")
         return len(self.dies)
 
-    def _parse_die_list(self, raw):
+    def _parse_die_list(self, raw, pitch=(1.0, 1.0)):
         sample = raw[0]
         row_key = next((k for k in ("row", "die_row", "y_index", "die_y_idx") if k in sample), None)
         col_key = next((k for k in ("col", "column", "die_col", "x_index", "die_x_idx") if k in sample), None)
@@ -433,9 +434,16 @@ class WaferMapPanel(ttk.LabelFrame):
                 d["col"] = x_to_col[round(d["x_um"])]
 
         if dies and dies[0]["x_um"] is None:
+            # No real micron data in this map file (the Accretech source is
+            # just row/col die-step indices) - synthesize position from the
+            # index, scaled by pitch so the die boxes _draw_from_die_list
+            # computes from THIS spacing come out the real rectangular
+            # shape (Wafer Builder's die_pitch_x/die_pitch_y) instead of a
+            # flat 1-unit square that has nothing to do with the real die.
+            px, py = pitch
             for d in dies:
-                d["x_um"] = float(d["col"])
-                d["y_um"] = -float(d["row"])
+                d["x_um"] = float(d["col"]) * px
+                d["y_um"] = -float(d["row"]) * py
 
         return [d for d in dies if d["row"] is not None and d["x_um"] is not None]
 

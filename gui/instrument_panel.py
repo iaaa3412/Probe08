@@ -1555,8 +1555,11 @@ class MainLayout(ttk.Frame):
             for fname in others:
                 self._ata_tree.insert("", "end", values=("", fname, ""), tags=("other",))
 
+        gen = getattr(self, "recipe_gen", None)
+        map_pitch = gen._die_pitch() if gen is not None and hasattr(gen, "_die_pitch") else (1.0, 1.0)
         n_dies = self.wafer_map.load_from_ata(
-            folder_path, filename=WAFER_MAP_SOURCES[self._map_source_var.get()])
+            folder_path, filename=WAFER_MAP_SOURCES[self._map_source_var.get()],
+            pitch=map_pitch)
 
         self.load_pad_layout(folder_path)
         self._on_pad_source_change()
@@ -2706,7 +2709,17 @@ class MainLayout(ttk.Frame):
         # OUTLINE over that die map (see _exec2_update_shot_window), never
         # by swapping the map itself to one square per shot.
         filename = WAFER_MAP_SOURCES[self._exec2_map_source_var.get()]
-        n = self._exec2_wafer_map.load_from_ata(folder, filename=filename)
+        # The Accretech source file is just row/col die-step indices, no
+        # real micron size - load_from_ata's fallback used to turn that
+        # into a flat 1-unit square regardless of the real die shape. Wafer
+        # Builder's own die_pitch_x/y (the operator's saved shot template,
+        # e.g. LAMP's rectangular die) is the only place that real ratio
+        # lives, so borrow it here too - a no-op for the Wafer Builder
+        # source itself, which already carries real x_um/y_um and never
+        # hits that fallback.
+        gen = getattr(self, "recipe_gen", None)
+        pitch = gen._die_pitch() if gen is not None and hasattr(gen, "_die_pitch") else (1.0, 1.0)
+        n = self._exec2_wafer_map.load_from_ata(folder, filename=filename, pitch=pitch)
         run_dbg = self._exec2_wafer_map.last_draw_debug or {}
         if run_dbg.get("warning"):
             self._exec2_log(f"[ERROR] Run wafer map: {run_dbg['warning']}")
