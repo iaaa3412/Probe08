@@ -1271,3 +1271,42 @@ of source mode.
    rule out a 2636B-specific quirk; a clean result would be a significant,
    surprising pivot needing reconciliation against the open/short bracket
    tests above.
+
+### Line-frequency test RUN (step 1 above) - checked, then directly swap-
+tested - RULED OUT (fresh session, same day, GPIB only)
+
+**Step 1, read-only**: `localnode.linefreq = 60`, `localnode.autolinefreq
+= true` - it has been auto-detecting at every power-up, and 60 Hz is
+correct for this facility's mains. Nothing looks wrong on its face.
+
+**Step 2, direct empirical swap-and-retest anyway** (per the plan's own
+"or to test the hypothesis directly"): forced `localnode.linefreq = 50`
+(confirmed this silently flips `autolinefreq` to `false`, exactly as the
+manual says), then re-ran the identical NPLC=1 reading on die 'third',
+same crosspoints/limits as the recorded NPLC-sweep baseline:
+
+| channel | linefreq=50 (forced) | 60 Hz baseline (correct, auto-detected) |
+|---|---|---|
+| smua | -5.90e-06, -4.50e-06 A | -4.68e-06 A |
+| smub | -3.360e-05, -3.305e-05 A | -4.290e-05 A |
+
+**No meaningful change** - `smua` is essentially the same order of
+magnitude (if anything marginally higher), `smub` is ~20% lower, well
+inside the run-to-run variability already seen everywhere else in this
+doc. A genuine line-frequency mismatch should have made the residual
+noticeably WORSE at a deliberately wrong setting, not roughly the same.
+Restored `localnode.autolinefreq = true` immediately after (confirmed via
+readback) - never left forced.
+
+**This specifically rules out "the instrument's line-frequency setting is
+wrong" as the cause of the 1/NPLC scaling.** The setting was already
+correct before this test even started. The 1/NPLC scaling itself remains
+real and reproduced twice now - it's just not fixable/explained by
+`localnode.linefreq`/`autolinefreq`. Either the disturbance really is mains
+pickup at the (already correct) 60 Hz that NPLC-based integration can't
+be tuned to reject any better than it already does, or the periodic-looking
+scaling comes from something else entirely that happens to average down
+with longer integration for unrelated reasons. The next items in the list
+above (oscilloscope/spectrum check at the contact point; the WGEN+DMM
+alternative source/measure pair) are now the more promising directions,
+since the line-frequency-specific fix is closed off.
