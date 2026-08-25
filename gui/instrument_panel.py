@@ -5467,6 +5467,19 @@ class MainLayout(ttk.Frame):
                             actual_voltage = smu.measure_voltage(smu_ch)
                         except Exception:
                             actual_voltage = None
+                    # Diagnostic only - read while the output is still on
+                    # (compliance state means nothing once it's off), never
+                    # touches pass/fail. A reading whose magnitude looks
+                    # clamped at the step's own limit is a hint, not proof -
+                    # this asks the instrument directly instead of guessing
+                    # from the number.
+                    in_compliance = False
+                    if instrument == "SMU" and not sim and smu and smu.inst \
+                            and hasattr(smu, "in_compliance"):
+                        try:
+                            in_compliance = smu.in_compliance(smu_ch)
+                        except Exception:
+                            in_compliance = False
                     if did_bias:
                         try:
                             smu.turn_output_off(smu_ch)
@@ -5475,7 +5488,8 @@ class MainLayout(ttk.Frame):
                                             f"{s.get('chan') or 'A'} after measuring: {e}")
                     i_a, i_unit, note = self._exec2_apply_target(s, i_raw, "A", readings_by_name)
                     self._exec2_log(f"[MEASURE]    I = {i_raw:.4g} A{bias_txt}{avg_txt}{note}"
-                                    + ("  (bias off)" if did_bias else ""))
+                                    + ("  (bias off)" if did_bias else "")
+                                    + ("  ⚠ SMU REPORTS COMPLIANCE" if in_compliance else ""))
                     if actual_voltage is None:
                         actual_voltage = set_voltage
                     slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
