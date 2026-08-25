@@ -948,35 +948,48 @@ or 8) instead of the spare 1/2, if any of those can be safely disconnected
 on the probe-card side the same way, to see whether the leak follows the
 column even without a wafer present at all.
 
-### Suggested next steps (session 3)
+### Suggested next steps (current, supersedes the stale ground-loop-chasing
+list this section used to have - ground-loop and switch-matrix-internal
+are BOTH ruled out as of the dangling-pin-1/2 test above)
 
 1. **`lampaccr`'s `check1`-`check4` results should not be trusted as-is
    while the wafer is actually in contact** - the anomaly is real,
-   reproducible, and now proven contact-dependent, not a fixed instrument
-   fault and not (per the DMM) a real pad-to-pad short. The DMM-based
+   reproducible, and requires both contact AND columns 5-8 specifically.
+   It is not a fixed instrument fault, not (per the DMM) a real pad-to-pad
+   short, not the switch matrix's rows in general, and not a chuck/ground
+   potential difference (all directly tested and ruled out). The DMM-based
    2-wire check remains the trustworthy stand-in for "is this pad pair
    open" in the meantime.
-2. **Chase the contact-dependent leakage/ground path directly**: with the
-   wafer back in contact, measure the DC potential (and/or resistance)
-   between the chuck (or its known ground point) and the SMU's own chassis/
-   LO reference, and separately between the switch mainframe's chassis and
-   the same reference - a real ground-loop would show up as a measurable
-   potential difference or a low-but-nonzero resistance there, independent
-   of any recipe or die.
-3. Check whether the Accretech chuck/wafer stage has a known grounding
-   scheme (chuck tied to prober chassis, prober chassis tied to building
-   ground, etc.) and whether the SMU/switch matrix share that same ground
-   reference or are on a separate outlet/ground - a genuinely different
-   ground reference between the prober and the SMU bench equipment,
-   bridged only once the needle-wafer-chuck contact closes the loop, would
-   fully explain everything observed across both conditions this session.
-4. Re-run the channel A vs channel B comparison (in contact) while
-   monitoring/grounding the chuck more directly, if accessible, to see
-   whether the ~3-10x A-vs-B difference collapses once a cleaner/lower-
-   impedance ground reference is provided - that would confirm the
-   ground-loop mechanism rather than something inherent to rows C/D.
-5. If `lampaccr` needs to keep using the SMU (not the DMM) for this check,
-   1 µA compliance is not achievable while this contact-dependent leakage
-   exists - it would need either the ground path fixed, a loosened
-   compliance, or the offset characterized/subtracted, and none of those
-   should happen before the ground-reference question above is settled.
+2. **The natural next GPIB-only test**: repeat the exact dangling-wire
+   approach that was just run on spare pins 1/2, but this time on one of
+   the ACTUAL die columns (5, 6, 7, or 8) - disconnect that column's
+   probe-card-side wire, close its crosspoints, bias at that channel's
+   clean `limiti`, and check whether the leak follows the COLUMN even with
+   nothing (no probe card, no wafer) connected past it. This is the
+   cleanest way to separate "the column's own cabling/connector inside the
+   switch matrix enclosure or wiring harness" from "something specific to
+   the probe card or needle itself downstream of that wire."
+   - Clean -> the fault is downstream of the disconnect point entirely
+     (probe card, needle, or the wafer-contact interaction itself) - not
+     the column's wiring up to that point.
+   - Still anomalous with the column dangling and disconnected -> the
+     fault is in that specific column's own cabling/routing, independent
+     of anything past it - but note this would then be in tension with the
+     "requires actual contact" finding (a pure cabling fault shouldn't
+     care whether a wafer is touched), so a positive result here would
+     itself need reconciling with the contact-dependence already
+     established - flag rather than assume either theory automatically
+     wins.
+3. Since contact is required, also worth comparing: do columns 5-8 (or
+   just whichever specific one is tested) route through a physically
+   different cable run, connector, or card position than columns 1/2 -
+   e.g. a longer run, closer proximity to the chuck/prober wiring, or a
+   different connector type - that a length/proximity-dependent
+   AC/capacitive coupling theory would predict matters, unlike a pure DC
+   fault.
+4. If `lampaccr` needs to keep using the SMU (not the DMM) for this check,
+   1 µA compliance is not achievable while this contact-dependent,
+   column-5-8-specific leakage exists - it would need either the leak path
+   found and fixed, a loosened compliance, or the offset characterized/
+   subtracted, and none of those should happen before step 2 above narrows
+   it further.
