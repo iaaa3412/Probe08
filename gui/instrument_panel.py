@@ -5398,6 +5398,16 @@ class MainLayout(ttk.Frame):
                 elif t == "current":
                     set_voltage = None
                     actual_voltage = None
+                    # Only an "apply" step (a different type/mode entirely)
+                    # is meant to leave the instrument supplying power past
+                    # its own step - see _exec2_reset_output's mode=="apply"
+                    # check, which is what an "open" step's turn_output_off
+                    # is actually gated on. A "measure" step (this one) that
+                    # forces a bias to take its own reading has to turn that
+                    # bias back off itself once done, not leave it live
+                    # through however many later steps until something else
+                    # happens to target it.
+                    did_bias = False
                     if instrument == "SMU":
                         if not sim and smu and smu.inst:
                             if lvl:
@@ -5406,6 +5416,7 @@ class MainLayout(ttk.Frame):
                                     smu.set_current_limit(smu_ch, float(limit))
                                 smu.turn_output_on(smu_ch)
                                 last_set_voltage_by_ch[smu_ch] = float(lvl)
+                                did_bias = True
                             nplc = self._exec2_nplc_spec(s)
                             if nplc is not None:
                                 smu.set_nplc(smu_ch, nplc)
@@ -5449,8 +5460,15 @@ class MainLayout(ttk.Frame):
                             actual_voltage = smu.measure_voltage(smu_ch)
                         except Exception:
                             actual_voltage = None
+                    if did_bias:
+                        try:
+                            smu.turn_output_off(smu_ch)
+                        except Exception as e:
+                            self._exec2_log(f"[MEASURE]    ⚠ could not turn off SMU "
+                                            f"{s.get('chan') or 'A'} after measuring: {e}")
                     i_a, i_unit, note = self._exec2_apply_target(s, i_raw, "A", readings_by_name)
-                    self._exec2_log(f"[MEASURE]    I = {i_raw:.4g} A{bias_txt}{avg_txt}{note}")
+                    self._exec2_log(f"[MEASURE]    I = {i_raw:.4g} A{bias_txt}{avg_txt}{note}"
+                                    + ("  (bias off)" if did_bias else ""))
                     if actual_voltage is None:
                         actual_voltage = set_voltage
                     slot_die, slot_row, slot_col, slot_sw, slot_shotpos = self._exec2_slot_identity(
