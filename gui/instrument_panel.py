@@ -3115,7 +3115,18 @@ class MainLayout(ttk.Frame):
         prober.z_down()
 
     def _exec2_zup_measure_zdown(self, sim: bool, prober, die_label: str,
-                                 steps: list = None) -> bool:
+                                 steps: list = None, row: int = None, col: int = None,
+                                 shot_geom=None) -> bool:
+        """row/col: the touchdown's own real (row, col) - always needed,
+        for the ordinary single-die fallback colouring. shot_geom (see
+        _exec2_prepare_shot_geometry): when this touchdown's shot has more
+        than one die, published before the steps run and used after to
+        colour each die in the shot on its own real square instead of
+        just this one touched square - covers ANY shot shape (1x20, 3x9,
+        2x2, ...) and any subset of dies the recipe actually measures
+        (only the die #s a passfail step actually tagged get a verdict;
+        the rest are simply never touched, still whatever colour they
+        were) - see _exec2_color_shot_squares."""
         self._exec2_safe_after(lambda: self._exec2_step_var.set("Step: Contact"))
         try:
             self._exec2_log("[RUN] >> Z  (Contact — chuck rises, wafer CONTACTS probe card)")
@@ -3128,10 +3139,23 @@ class MainLayout(ttk.Frame):
         except Exception as e:
             self._exec2_log(f"[RUN] Touchdown error: {e} — measuring anyway")
 
+        shot_row = shot_col = None
+        if shot_geom is not None and row is not None and col is not None:
+            shot_row, shot_col = self._exec2_publish_die_slots_at(shot_geom, row, col)
+
         self._exec2_safe_after(lambda: self._exec2_step_var.set("Step: Testing"))
-        ok = self._exec2_run_steps_once(steps)
+        try:
+            ok = self._exec2_run_steps_once(steps)
+        finally:
+            if shot_geom is not None:
+                self._exec2_die_rc_by_slot = []
+                self._exec2_die_ids_by_slot = []
+                self._exec2_die_shotpos_by_slot = []
         self._exec2_safe_after(lambda p=ok, dl=die_label: self._exec2_log(
             f"[RESULT] {'PASS' if p else 'FAIL'}  {dl}"))
+
+        if row is not None and col is not None:
+            self._exec2_color_shot_squares(shot_geom, shot_row, shot_col, row, col, ok)
 
         z_down_confirmed = True
         try:
@@ -3282,11 +3306,13 @@ class MainLayout(ttk.Frame):
         self.after(0, lambda: self._exec2_set_state(f"RUNNING ({mode_label})", "#2563eb"))
         self._exec2_log(f"[RUN] ▶ {mode_label} — walking the entire wafer (G/J), "
                         "measuring the loaded recipe at every die.")
+        # Resolved here, on the main thread - see _exec2_prepare_shot_geometry.
+        shot_geom = self._exec2_prepare_shot_geometry()
         self._exec2_lot_thread = threading.Thread(
-            target=self._exec2_full_die_thread, args=(my_token,), daemon=True)
+            target=self._exec2_full_die_thread, args=(my_token, shot_geom), daemon=True)
         self._exec2_lot_thread.start()
 
-    def _exec2_full_die_thread(self, my_token: int):
+    def _exec2_full_die_thread(self, my_token: int, shot_geom=None):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         error_msg = None
@@ -3327,8 +3353,8 @@ class MainLayout(ttk.Frame):
                 self._exec2_highlight_current(int(y), int(x))
                 self._exec2_log(f"[RUN] << Q  die X={x:.0f} Y={y:.0f}")
 
-                ok = self._exec2_zup_measure_zdown(sim, prober, die_label)
-                self._exec2_update_die_color(int(y), int(x), ok)
+                ok = self._exec2_zup_measure_zdown(
+                    sim, prober, die_label, row=int(y), col=int(x), shot_geom=shot_geom)
                 self.after(0, self._exec2_add_pass if ok else self._exec2_add_fail)
 
                 if (not self._exec2_running or self._exec2_aborted
@@ -3479,42 +3505,84 @@ class MainLayout(ttk.Frame):
         self._exec2_die_ids_by_slot = ids
         self._exec2_die_shotpos_by_slot = shotpos
 
-    def _exec2_prepare_minor_moves_publish(self):
-        """Main-thread-only: resolve whatever Minor Moves needs to publish
-        per-die slots for the shot the chuck is on RIGHT NOW, before
-        handing off to _exec2_touchdown_then_measure's background thread -
-        recipe_gen._shot_dims()/_shot_cells read live Tk StringVars, and
-        calling those off the UI thread can raise "main thread is not in
-        main loop" (same class of bug _exec2_start_minor_moves's own
-        docstring already covers for the full-run path). Returns the tuple
-        _exec2_publish_die_slots_for takes, or None if Minor Moves isn't
-        on, there's no confirmed Overlay alignment to resolve a real
-        (row, col) into a shot, or the current position isn't known -
-        every case logged so a silent "still filing everything under one
-        square" doesn't look like nothing happened."""
-        if not self._exec2_minor_moves_active():
+    def _exec2_prepare_shot_geometry(self):
+        """Main-thread-only: resolve the STATIC per-run geometry (shot
+        template dims/cells, Overlay offset) needed to file each Die#-
+        tagged step's reading against its own real square within whatever
+        shot a touchdown lands on - independent of Minor Moves. Minor
+        Moves only ever gates whether a "move" step actually repositions
+        the chuck between dies (_exec2_move_fn) - a recipe that reaches
+        every die in a shot through switch routing at ONE physical
+        touchdown (LAMP: 4 dies, 4 different HI/LO pin pairs, zero chuck
+        movement) still wants its readings split across the shot's 4 real
+        squares, with Minor Moves off the whole time.
+
+        recipe_gen._shot_dims()/_shot_cells read live Tk StringVars, so
+        this is resolved HERE and handed to a background run thread as
+        plain data - calling those off the UI thread can raise "main
+        thread is not in main loop" (same class of bug
+        _exec2_start_minor_moves's own docstring already covers).
+
+        Returns (shot_rows, shot_cols, shot_cells, row_offset, col_offset)
+        - the STATIC part, constant for the whole run - or None if there
+        is nothing to split (a plain 1x1 shot template - the ordinary
+        single-die case) or no confirmed Overlay alignment exists yet to
+        resolve a real (row, col) into a shot."""
+        gen = getattr(self, "recipe_gen", None)
+        if gen is None:
+            return None
+        shot_rows, shot_cols = gen._shot_dims()
+        if shot_rows * shot_cols <= 1:
             return None
         if not self._exec2_overlay_offset_confirmed:
-            self._exec2_log("[MEASURE] Minor Moves is on but there is no confirmed "
-                            "Overlay alignment - press Overlay… and 🖌 Overlay on "
-                            "Map first, so each step's Die # can be filed against "
-                            "the real die it measured.")
+            self._exec2_log("[RUN] This shot template has more than one die, but "
+                            "there is no confirmed Overlay alignment - press "
+                            "Overlay… and 🖌 Overlay on Map first, so each step's "
+                            "Die # can be filed against the real die it measured.")
             return None
-        gen = getattr(self, "recipe_gen", None)
-        if gen is None or self._exec2_current_rc is None:
-            self._exec2_log("[MEASURE] Minor Moves is on but the chuck's current "
-                            "die is not known yet - Set Chuck / touch down once "
-                            "first so each step's Die # can be filed correctly.")
-            return None
-        row_offset = self._exec2_overlay_row_offset
-        col_offset = self._exec2_overlay_col_offset
-        shot_rows, shot_cols = gen._shot_dims()
         shot_cells = dict(gen._shot_cells)
-        cur_row, cur_col = self._exec2_current_rc
-        shot_row = (cur_row - row_offset) // shot_rows
-        shot_col = (cur_col - col_offset) // shot_cols
-        return (shot_row, shot_col, shot_rows, shot_cols, shot_cells,
-                row_offset, col_offset)
+        return (shot_rows, shot_cols, shot_cells,
+                self._exec2_overlay_row_offset, self._exec2_overlay_col_offset)
+
+    def _exec2_publish_die_slots_at(self, shot_geom, row: int, col: int) -> tuple:
+        """Per-touchdown: which shot (row, col) falls in (floor-divide by
+        the shot dims, same as Next Shot/Previous Shot and Minor Moves'
+        own shot_rc_for) - not necessarily die #1's own cell, any die of
+        the shot resolves to the same shot - then publish all of that
+        shot's real die slots. Pure arithmetic on plain data (shot_geom
+        was already resolved on the main thread), safe to call from a
+        background run thread. Returns (shot_row, shot_col)."""
+        shot_rows, shot_cols, shot_cells, row_offset, col_offset = shot_geom
+        shot_row = (row - row_offset) // shot_rows
+        shot_col = (col - col_offset) // shot_cols
+        self._exec2_publish_die_slots_for(
+            shot_row, shot_col, shot_rows, shot_cols, shot_cells,
+            row_offset, col_offset)
+        return shot_row, shot_col
+
+    def _exec2_color_shot_squares(self, shot_geom, shot_row: int, shot_col: int,
+                                  fallback_row: int, fallback_col: int, fallback_ok: bool):
+        """Colour every die in the shot on its OWN real square from
+        _exec2_slot_verdicts (each die passes/fails independently), same
+        rule the Minor Moves run thread already applies - falling back to
+        colouring just the touched square with the combined verdict when
+        the recipe never tagged a passfail step with a Die # (or nothing
+        was published at all - shot_geom is None, the ordinary single-die
+        case)."""
+        shot_rows, shot_cols, shot_cells, row_offset, col_offset = (
+            shot_geom if shot_geom is not None else (None, None, None, None, None))
+        slot_verdicts = dict(getattr(self, "_exec2_slot_verdicts", None) or {})
+        if shot_geom is not None and slot_verdicts:
+            for die_num, passed in sorted(slot_verdicts.items()):
+                rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
+                if rc is None:
+                    continue
+                r, c = rc
+                real_row = shot_row * shot_rows + r + row_offset
+                real_col = shot_col * shot_cols + c + col_offset
+                self._exec2_update_die_color(real_row, real_col, passed)
+        else:
+            self._exec2_update_die_color(fallback_row, fallback_col, fallback_ok)
 
     def _exec2_minor_move_thread(self, shots: list, my_token: int, overlay_offset: tuple,
                                  shot_rows: int, shot_cols: int, shot_cells: dict):
@@ -4546,12 +4614,17 @@ class MainLayout(ttk.Frame):
         self.after(0, lambda: self._exec2_set_state(f"RUNNING ({mode_label})", "#2563eb"))
         self._exec2_log(f"[RUN] ▶ {mode_label} — {len(sites)} site(s): "
                         + ", ".join(f"R{r}C{c}" for r, c in sites))
+        # Resolved here, on the main thread - see _exec2_prepare_shot_geometry.
+        # Each site may be ANY die of its shot (not necessarily #1) - that's
+        # fine, floor-dividing by the shot dims resolves to the same shot
+        # regardless of which one was picked.
+        shot_geom = self._exec2_prepare_shot_geometry()
         self._exec2_lot_thread = threading.Thread(
             target=self._exec2_test_die_thread,
-            args=(sites, my_token), daemon=True)
+            args=(sites, my_token, shot_geom), daemon=True)
         self._exec2_lot_thread.start()
 
-    def _exec2_test_die_thread(self, sites, my_token: int):
+    def _exec2_test_die_thread(self, sites, my_token: int, shot_geom=None):
         prober = self.controller.drivers.get("prober")
         sim = not (prober and prober.inst)
         error_msg = None
@@ -4590,8 +4663,8 @@ class MainLayout(ttk.Frame):
                 self._exec2_highlight_current(row, col)
                 self._exec2_die_num += 1
 
-                ok = self._exec2_zup_measure_zdown(sim, prober, die_label)
-                self._exec2_update_die_color(row, col, ok)
+                ok = self._exec2_zup_measure_zdown(
+                    sim, prober, die_label, row=row, col=col, shot_geom=shot_geom)
                 self.after(0, self._exec2_add_pass if ok else self._exec2_add_fail)
 
                 idx += 1
@@ -4780,12 +4853,12 @@ class MainLayout(ttk.Frame):
                             "Recipe dropdown first.")
             return
         # Resolved here, on the main thread, not inside the background
-        # thread below - see _exec2_prepare_minor_moves_publish's own note.
-        minor_args = self._exec2_prepare_minor_moves_publish()
+        # thread below - see _exec2_prepare_shot_geometry's own note.
+        shot_geom = self._exec2_prepare_shot_geometry()
         threading.Thread(target=self._exec2_touchdown_then_measure,
-                         args=(minor_args,), daemon=True).start()
+                         args=(shot_geom,), daemon=True).start()
 
-    def _exec2_touchdown_then_measure(self, minor_args=None):
+    def _exec2_touchdown_then_measure(self, shot_geom=None):
         prober = self.controller.drivers.get("prober")
         if prober and prober.inst:
             try:
@@ -4798,40 +4871,31 @@ class MainLayout(ttk.Frame):
         else:
             self._exec2_log("[MEASURE] Prober not connected — skipping touchdown, "
                             "measuring at current state")
-        # Minor Moves: file each step's reading against the die it
-        # actually measured (by the step's own Die # field), not always
-        # the shot's landing square - same publish-before-run pattern the
-        # full run uses (_exec2_minor_move_thread's publish_die_slots).
-        if minor_args is not None:
-            self._exec2_publish_die_slots_for(*minor_args)
+
+        row = col = None
+        shot_row = shot_col = None
+        if self._exec2_current_rc is not None:
+            row, col = self._exec2_current_rc
+        # File each step's reading against the die it actually measured
+        # (by the step's own Die # field), not always the shot's landing
+        # square - same publish-before-run pattern every real run uses
+        # (_exec2_zup_measure_zdown). Works with or without Minor Moves -
+        # see _exec2_prepare_shot_geometry.
+        if shot_geom is not None and row is not None:
+            shot_row, shot_col = self._exec2_publish_die_slots_at(shot_geom, row, col)
         try:
             overall_ok = self._exec2_run_steps_once()
         finally:
-            if minor_args is not None:
+            if shot_geom is not None:
                 self._exec2_die_rc_by_slot = []
                 self._exec2_die_ids_by_slot = []
                 self._exec2_die_shotpos_by_slot = []
 
-        # Colour the square(s) this measurement actually covered, same as
-        # a full run does - Measure never painted PASS/FAIL at all before,
-        # only the wafer map (grey) and log line showed anything.
-        if minor_args is not None:
-            (shot_row, shot_col, shot_rows, shot_cols, shot_cells,
-             row_offset, col_offset) = minor_args
-            slot_verdicts = dict(getattr(self, "_exec2_slot_verdicts", None) or {})
-            if slot_verdicts:
-                for die_num, passed in sorted(slot_verdicts.items()):
-                    rc = shot_die_rc(shot_cells, shot_rows, shot_cols, die_num)
-                    if rc is None:
-                        continue
-                    r, c = rc
-                    real_row = shot_row * shot_rows + r + row_offset
-                    real_col = shot_col * shot_cols + c + col_offset
-                    self._exec2_update_die_color(real_row, real_col, passed)
-                return
-        if self._exec2_current_rc is not None:
-            self._exec2_update_die_color(
-                self._exec2_current_rc[0], self._exec2_current_rc[1], overall_ok)
+        # Colour the square(s) this measurement actually covered - Measure
+        # used to never paint PASS/FAIL at all, only the log line showed
+        # anything.
+        if row is not None:
+            self._exec2_color_shot_squares(shot_geom, shot_row, shot_col, row, col, overall_ok)
 
     def _exec2_avg_spec(self, step: dict) -> tuple:
         try:
