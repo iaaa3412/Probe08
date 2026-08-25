@@ -1499,7 +1499,7 @@ class MainLayout(ttk.Frame):
         # not just this tab's own display.
         self.wafer_map = WaferMapPanel(tab)
 
-    # Recipe count for one card/system, or None if there's genuinely nothing
+    # Recipe names for one card/system, or None if there's genuinely nothing
     # saved. WaferMapPanel.save_recipes (wafer_map_view.py) writes these two
     # DIFFERENT ways depending on system, and this has to match both:
     #   - Electroglas: a separate probe_cards/<base>.recipes.electroglas.csv
@@ -1511,7 +1511,7 @@ class MainLayout(ttk.Frame):
     #     when one was saved and sitting in plain sight - confirmed against
     #     LAMP's real LaMP_HP_b.csv, which carries "lampaccr" this way.
     @staticmethod
-    def _card_recipe_count(card_dir: str, base: str, system: str):
+    def _card_recipe_names(card_dir: str, base: str, system: str):
         if system == "accretech":
             path = os.path.join(card_dir, f"{base}.csv")
         else:
@@ -1524,7 +1524,7 @@ class MainLayout(ttk.Frame):
                         for row in csv.DictReader(f)
                         if (row.get("kind", "").strip().upper() == "RECIPE"
                             and row.get("recipe", "").strip())}
-            return len(names) or None
+            return sorted(names) or None
         except (OSError, csv.Error):
             return None
 
@@ -1579,16 +1579,18 @@ class MainLayout(ttk.Frame):
                 card_id = tree.insert(cards_id, "end", text=base + mark,
                                      open=True, tags=("found",))
                 for system in ("accretech", "electroglas"):
-                    n = self._card_recipe_count(cards_dir, base, system)
+                    names = self._card_recipe_names(cards_dir, base, system)
                     label = system.capitalize()
-                    if n is None:
+                    if names is None:
                         tree.insert(card_id, "end", text=label,
                                    values=("–", "no recipes file for this system"),
                                    tags=("missing",))
-                    else:
-                        tree.insert(card_id, "end", text=label,
-                                   values=("✔", f"{n} recipe(s)"),
-                                   tags=("found",))
+                        continue
+                    sys_id = tree.insert(card_id, "end", text=label, open=True,
+                                        values=("✔", f"{len(names)} recipe(s)"),
+                                        tags=("found",))
+                    for name in names:
+                        tree.insert(sys_id, "end", text=name, tags=("found",))
         else:
             tree.insert(cards_id, "end", text="(none yet)",
                        values=("–", "create one on the Probe Card tab"),
