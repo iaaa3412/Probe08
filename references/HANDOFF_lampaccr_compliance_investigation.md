@@ -1038,3 +1038,61 @@ up on a handheld DC meter at all. Not yet isolated further; a scope or LCR-
 style AC measurement at the point of contact (not a plain ohmmeter) would be
 the natural way to test this next, if the bench has one - outside GPIB
 script scope for now.
+
+### Short-through-the-switch test - the OTHER DC bracket, also completely
+clean (fresh session, same day, GPIB only, no physical changes)
+
+Idea (from the user): instead of physically shorting the pins-7/8 wires
+outside the prober, create the short entirely INSIDE the 707B - close both
+the HI row and the LO row onto the SAME column. E.g. for `smua`: close
+`2A07` (HI) and `2B07` (LO) together - both rows now land on column 7's
+single node, tying `smua`'s HI directly to its own LO through the switch's
+own relay contacts. No wire beyond the matrix is involved at all - this is
+as close to "test the switch matrix itself" as it gets. Mirrored for
+`smub` via `2C07`+`2D07`.
+
+Tested at two limits per channel: the recipe's actual `1e-6A` (the value
+that's actually failing against a real wafer - the most diagnostic
+comparison) and each channel's own established "clean" threshold (1e-4 for
+`smua`, 1e-3 for `smub`), for context.
+
+**Result: textbook-clean compliance clamp on both channels, at every
+limit tested - no overflow anywhere:**
+
+| channel | limiti | measure.v() | measure.i() (5x) | compliance |
+|---|---|---|---|---|
+| smua | 1e-6 | -3.10e-05 V | 1.00000e-06, 1.00000e-06, 1.00001e-06, 1.00000e-06, 1.00001e-06 A | true |
+| smua | 1e-4 | 9.78e-05 V | 9.99991e-05 ... 9.99996e-05 A | true |
+| smub | 1e-6 | 5.96e-05 V | 1.00010e-06 (identical x5) A | true |
+| smub | 1e-3 | 1.24e-03 V | 1.00229e-03 ... 1.00230e-03 A | true |
+
+Voltage reads a small, valid, near-zero value every time (exactly what a
+current-limited source should show into a real short - never overflows).
+Current is pinned essentially exactly at the programmed `limiti` (within
+normal calibration tolerance, tighter even than the gauge reference's own
+example of a clean clamp), completely flat across all 5 reads, on BOTH
+channels, at BOTH the tight recipe limit and the loose one. No error queue
+entries. This is precisely the "textbook clamp" signature from
+`references/gauge example.xlsx`, reproduced on THIS bench for the first
+time this investigation.
+
+**This is the decisive complementary result to the dangling-column test.**
+Between the two, both DC extremes have now been directly tested on this
+exact hardware, through the exact same rows/limits that are anomalous under
+real wafer contact:
+- True open (dangling, either spare columns 1/2 or die 'third's own
+  columns 7/8): clean, sub-picoamp.
+- True short (via the switch, same rows, same columns): clean, pinned
+  exactly at the compliance limit, valid near-zero voltage.
+
+**Neither extreme reproduces the anomaly.** The SMU's compliance
+circuitry, the 707B switch matrix, and this signal path all behave
+perfectly correctly and identically well on both channels (no more 3-10x
+A-vs-B gap - that asymmetry is completely absent here) when facing a real
+DC load of either kind. The failure is therefore not the instrument, not
+the switch matrix, not generic cabling behavior - it requires the specific
+electrical condition an actual wafer, in actual mechanical contact,
+presents, which is neither a clean 0 ohm nor a clean infinite-impedance
+node from this SMU's perspective. This continues to point at something
+dynamic/capacitive in the real contact interaction rather than anything
+resistive, matching the leading theory above.
