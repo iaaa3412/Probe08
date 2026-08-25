@@ -948,51 +948,62 @@ or 8) instead of the spare 1/2, if any of those can be safely disconnected
 on the probe-card side the same way, to see whether the leak follows the
 column even without a wafer present at all.
 
-### Suggested next steps (current, supersedes the stale ground-loop-chasing
-list this section used to have - ground-loop and switch-matrix-internal
-are BOTH ruled out as of the dangling-pin-1/2 test above)
+### Suggested next steps (current - both DC extremes now positively
+CLEARED; narrowed to an AC/dynamic effect specific to real contact)
+
+Both the "true open" (dangling column, real die columns 7/8 included) and
+"true short" (HI+LO shorted together inside the switch matrix, no external
+wire) tests came back completely clean on both channels, at both the tight
+recipe limit and each channel's loose limit - see the two result sections
+directly above. The SMU, the 707B switch matrix, and the cabling/columns
+themselves are now positively cleared, not just unimplicated. The anomaly
+exists ONLY with a real wafer in real mechanical contact, and is neither a
+clean short nor a clean open from the SMU's own perspective.
+
+**Sharper signature, worth noting**: the clean baseline readings above
+DECAY toward a low floor (e.g. 6.89e-13 -> 2.80e-13 A) - normal parasitic-
+capacitance settling. The real-contact anomaly readings (Run 1/Run 2/the
+channel A-B test earlier in this doc) are FLAT/non-decaying (e.g. -36.25,
+-36.25, -36.27, -36.33, -36.21 µA). A one-time charging transient should
+look like the clean baseline eventually does, not stay flat indefinitely -
+a flat, sustained, non-decaying offset is more consistent with something
+continuously driving it (e.g. line-frequency/50-60Hz or other AC pickup
+being averaged/rectified into an apparent DC reading by the measurement)
+than with a single capacitive charge event.
 
 1. **`lampaccr`'s `check1`-`check4` results should not be trusted as-is
-   while the wafer is actually in contact** - the anomaly is real,
-   reproducible, and requires both contact AND columns 5-8 specifically.
-   It is not a fixed instrument fault, not (per the DMM) a real pad-to-pad
-   short, not the switch matrix's rows in general, and not a chuck/ground
-   potential difference (all directly tested and ruled out). The DMM-based
-   2-wire check remains the trustworthy stand-in for "is this pad pair
-   open" in the meantime.
-2. **The natural next GPIB-only test**: repeat the exact dangling-wire
-   approach that was just run on spare pins 1/2, but this time on one of
-   the ACTUAL die columns (5, 6, 7, or 8) - disconnect that column's
-   probe-card-side wire, close its crosspoints, bias at that channel's
-   clean `limiti`, and check whether the leak follows the COLUMN even with
-   nothing (no probe card, no wafer) connected past it. This is the
-   cleanest way to separate "the column's own cabling/connector inside the
-   switch matrix enclosure or wiring harness" from "something specific to
-   the probe card or needle itself downstream of that wire."
-   - Clean -> the fault is downstream of the disconnect point entirely
-     (probe card, needle, or the wafer-contact interaction itself) - not
-     the column's wiring up to that point.
-   - Still anomalous with the column dangling and disconnected -> the
-     fault is in that specific column's own cabling/routing, independent
-     of anything past it - but note this would then be in tension with the
-     "requires actual contact" finding (a pure cabling fault shouldn't
-     care whether a wafer is touched), so a positive result here would
-     itself need reconciling with the contact-dependence already
-     established - flag rather than assume either theory automatically
-     wins.
-3. Since contact is required, also worth comparing: do columns 5-8 (or
-   just whichever specific one is tested) route through a physically
-   different cable run, connector, or card position than columns 1/2 -
-   e.g. a longer run, closer proximity to the chuck/prober wiring, or a
-   different connector type - that a length/proximity-dependent
-   AC/capacitive coupling theory would predict matters, unlike a pure DC
-   fault.
+   while the wafer is actually in contact** - real, reproducible, and now
+   proven to require both contact and (at minimum) columns 5-8, with every
+   instrument/matrix/cabling explanation directly tested and cleared. The
+   DMM-based 2-wire check remains the trustworthy stand-in for "is this pad
+   pair open" in the meantime.
+2. **Next GPIB-only test - NPLC sweep under real contact**: with the wafer
+   actually touching (die 'third' or 'fourth'), sweep `{channel}.measure.
+   nplc` widely (e.g. 0.01, 0.1, 1, 10, 25 - the instrument's practical
+   range) at a fixed `limiti` loose enough not to clip (or accept
+   compliance and just watch `measure.i()`'s value change with NPLC), same
+   crosspoints each time. If the offset shrinks substantially as NPLC
+   approaches a multiple of the true local line period (16.67 ms @ 60 Hz /
+   20 ms @ 50 Hz), that's a strong, specific confirmation of line-frequency
+   AC pickup - and would mean the instrument's own configured line
+   frequency (`localnode.linefreq` or similar - verify the TSP property
+   name against the 2636B reference manual, not guessed here) should be
+   checked against the ACTUAL local mains frequency, since a mismatch would
+   explain why the recipe's own nplc=1/nplc=10 settings aren't already
+   rejecting it. If the offset barely changes across the NPLC sweep, that
+   rules out simple line-frequency pickup specifically and points at a
+   higher-frequency or non-periodic AC/dynamic mechanism instead.
+3. **Physical/non-GPIB test, if available**: an oscilloscope or LCR-style
+   AC measurement directly at the point of contact (needle-to-probe-card
+   connector, or as close to the actual touchdown as safely accessible)
+   would show directly whether there's a real AC signal riding on the node
+   under contact, and at what frequency - the single most direct way to
+   confirm or refute the AC-coupling theory, but outside GPIB script scope.
 4. If `lampaccr` needs to keep using the SMU (not the DMM) for this check,
-   1 µA compliance is not achievable while this contact-dependent,
-   column-5-8-specific leakage exists - it would need either the leak path
-   found and fixed, a loosened compliance, or the offset characterized/
-   subtracted, and none of those should happen before step 2 above narrows
-   it further.
+   1 µA compliance is not achievable while this contact-dependent leakage
+   exists - it would need either the AC path found and fixed/filtered, a
+   loosened compliance, or the offset characterized/subtracted, and none of
+   those should happen before step 2 (and ideally step 3) narrow it further.
 
 ### Suggested next steps item 2 RUN - dangling a REAL die column is ALSO
 clean (fresh session, same day, GPIB only)
