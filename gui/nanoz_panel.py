@@ -2487,12 +2487,12 @@ class NanoZPanel(ttk.Frame):
             if drv is None:
                 self.after(0, lambda: self._log_main(
                     "[CASSETTE] (simulated — no prober connected) "
-                    ">> U  (Unload / Load Next Wafer)"))
+                    ">> L  (Unload / Load Next Wafer)"))
                 time.sleep(0.2)
                 next_ready = True
             else:
-                self.after(0, lambda: self._log_main("[CASSETTE] >> U  (Unload / Load Next Wafer)"))
-                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 65
+                self.after(0, lambda: self._log_main("[CASSETTE] >> L  (Unload / Load Next Wafer)"))
+                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 70
         except Exception as e:
             self.after(0, lambda e=e: self._log_main(f"[CASSETTE] Unload/load-next error: {e}"))
             next_ready = False
@@ -2510,7 +2510,7 @@ class NanoZPanel(ttk.Frame):
         self.after(0, lambda: self._nz_wafer_id_var.set(slot["wafer_id"]))
         self.after(0, lambda: self._cst_log_event(
             self._cst_slot_idx + 1, slot["lot_id"],
-            "Next wafer ready (STB=65) — auto-starting its recipe run."))
+            "Next wafer ready (STB=70) — auto-starting its recipe run."))
         self.after(0, self._cst_start_next_run)
 
     def _cst_start_next_run(self):

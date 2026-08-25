@@ -136,7 +136,7 @@ class CassettePanel(ttk.Frame):
                    command=self._manual_wait_ready).pack(side="left", padx=2)
         ttk.Button(mf, text="Send J (Next Die)",
                    command=self._manual_next_die).pack(side="left", padx=2)
-        ttk.Button(mf, text="Send U (Unload / Load Next Wafer)",
+        ttk.Button(mf, text="Send L (Unload / Load Next Wafer)",
                    command=self._manual_unload_next).pack(side="left", padx=2)
         ttk.Button(mf, text="Read STB",
                    command=self._manual_read_stb).pack(side="left", padx=2)
@@ -328,13 +328,13 @@ class CassettePanel(ttk.Frame):
     def _manual_unload_next(self):
         drv = self._drv()
         if not drv:
-            self._log("[CASSETTE] Send U: prober not connected.")
+            self._log("[CASSETTE] Send L: prober not connected.")
             return
         def _run():
-            self._log("[CASSETTE] >> U  (Unload / Load Next Wafer)")
+            self._log("[CASSETTE] >> L  (Unload / Load Next Wafer)")
             stb = drv.cassette_unload_and_load_next(timeout_s=120)
-            if stb == 65:
-                self._log("[CASSETTE] << STB=65  (next wafer ready, Die #1 in contact)")
+            if stb == 70:
+                self._log("[CASSETTE] << STB=70  (next wafer loaded, start die positioned, chuck DOWN)")
             else:
                 self._log("[CASSETTE] No next wafer — cassette empty / idle / timed out.")
         threading.Thread(target=_run, daemon=True).start()
@@ -458,12 +458,12 @@ class CassettePanel(ttk.Frame):
         try:
             if drv is None:
                 self._log("[CASSETTE] (simulated — no prober connected) "
-                          ">> U  (Unload / Load Next Wafer)")
+                          ">> L  (Unload / Load Next Wafer)")
                 time.sleep(0.2)
                 next_ready = True
             else:
-                self._log("[CASSETTE] >> U  (Unload / Load Next Wafer)")
-                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 65
+                self._log("[CASSETTE] >> L  (Unload / Load Next Wafer)")
+                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 70
         except Exception as e:
             self._log(f"[CASSETTE] Unload/load-next error: {e}")
             next_ready = False
@@ -483,7 +483,7 @@ class CassettePanel(ttk.Frame):
         self.after(0, lambda: self.ui.wafer_id_var.set(wafer_id))
         self.after(0, lambda: self._log_event(
             self._slot_idx + 1, lot_id,
-            "Next wafer ready (STB=65) — auto-starting its run."))
+            "Next wafer ready (STB=70) — auto-starting its run."))
         self.after(0, self._start_next_run)
 
     def _start_next_run(self):

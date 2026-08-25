@@ -239,20 +239,26 @@ class AccretechUF200R(GPIBInstrument):
             return None
 
     def cassette_unload_and_load_next(self, timeout_s=None):
-        self.write("U")
+        # "U" (see unload_wafer above) only unloads - per the UF GPIB
+        # Commands manual (4.28 U), it ends in STB=71 and then the prober
+        # "waits for the next wafer loading". It never auto-advances the
+        # cassette on its own.
+        #
+        # The real combined unload-current + load/align-next command is
+        # "L" (4.13 L: Unload/load/align): "used at the Wafer End to
+        # unload the wafer and load/align the next wafer" - its own
+        # flowchart terminates in STB=70 (Wafer Loading Done, start die
+        # positioned, Chuck DOWN) on success. When the cassette has no
+        # more wafers, the same example flow (3.4 Example 1, "L" ->
+        # "Not-tested wafers remain?" -> No) ends the lot instead -
+        # 77/82/94 cover Wafer End/Cassette End/Lot Done so that case is
+        # recognized rather than just timing out.
+        self.write("L")
         try:
-            # STB=65 only, matching cassette_wait_for_wafer_ready's own
-            # target - that's the real "next wafer ready" signal this
-            # prober sends. The old target set also included 0, but 0 is
-            # what _wait_for_stb_any returns immediately when self.inst is
-            # falsy (not connected) - it is not a real STB the hardware
-            # sends, so including it made an unconnected/misread call look
-            # like a false "no next wafer" instead of the caller finding
-            # out nothing is actually hooked up.
-            stb = self._wait_for_stb_any({65}, timeout_s)
+            stb = self._wait_for_stb_any({70, 77, 82, 94}, timeout_s)
         except TimeoutError:
             return None
-        return stb if stb == 65 else None
+        return stb if stb == 70 else None
 
 
     def next_die(self):
