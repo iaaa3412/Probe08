@@ -1987,13 +1987,24 @@ class RecipePanel(ttk.Frame):
 
         if _is_measurement_step({"type": t, "mode": mode}):
             self._avg_count_ent.config(state="normal")
-            self._avg_delay_ent.config(state="normal")
             self._nplc_ent.config(state="normal")
             self._settle_delay_ent.config(state="normal")
+            # The 2636B (Accretech's SMU) has no source-delay mechanism at
+            # all - it averages internally via its own repeat-average filter
+            # (set_averages), so a per-reading delay here would be a no-op.
+            # The 2400 (Electroglas's SMU) does implement it and genuinely
+            # needs it - see instrument_panel.py's set_source_delay comment
+            # about the charging-transient read on LaMP data - so leave it
+            # live there.
+            if instrument == "SMU" and self._system == "accretech":
+                self._avg_delay_ent.config(state="disabled")
+                self._ed_vars["avg_delay"].set("0")
+            else:
+                self._avg_delay_ent.config(state="normal")
+                if not self._ed_vars["avg_delay"].get():
+                    self._ed_vars["avg_delay"].set("0")
             if not self._ed_vars["avg_count"].get():
                 self._ed_vars["avg_count"].set("1")
-            if not self._ed_vars["avg_delay"].get():
-                self._ed_vars["avg_delay"].set("0")
             if not self._ed_vars["nplc"].get():
                 self._ed_vars["nplc"].set("1")
             if not self._ed_vars["settle_delay"].get():

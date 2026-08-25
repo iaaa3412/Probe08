@@ -241,7 +241,15 @@ class AccretechUF200R(GPIBInstrument):
     def cassette_unload_and_load_next(self, timeout_s=None):
         self.write("U")
         try:
-            stb = self._wait_for_stb_any({65, 0}, timeout_s)
+            # STB=65 only, matching cassette_wait_for_wafer_ready's own
+            # target - that's the real "next wafer ready" signal this
+            # prober sends. The old target set also included 0, but 0 is
+            # what _wait_for_stb_any returns immediately when self.inst is
+            # falsy (not connected) - it is not a real STB the hardware
+            # sends, so including it made an unconnected/misread call look
+            # like a false "no next wafer" instead of the caller finding
+            # out nothing is actually hooked up.
+            stb = self._wait_for_stb_any({65}, timeout_s)
         except TimeoutError:
             return None
         return stb if stb == 65 else None
