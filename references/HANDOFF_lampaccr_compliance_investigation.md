@@ -1207,16 +1207,51 @@ how the SMU happens to be configured, it's present and dominant regardless
 of source mode.
 
 **Suggested next steps, updated**:
-1. The 1/NPLC scaling (Part 1) is specific enough to be worth checking
-   `localnode.linefreq`/the instrument's assumed line frequency against the
-   ACTUAL bench mains frequency directly (a wall outlet frequency meter or
-   scope trigger, not GPIB) - a mismatch there is a very concrete,
-   fixable candidate for exactly this signature.
+1. **NEXT TEST TO RUN - line frequency check, verified against
+   `references/keith2636b manual.pdf` (added this session), 100% GPIB, no
+   equipment needed.** Two real TSP attributes, confirmed in the manual
+   (search "Line frequency configuration", section 2-15 / command ref
+   7-137/7-139):
+   - `localnode.linefreq` - the power line frequency (50 or 60) the
+     instrument uses for NPLC aperture calculations.
+   - `localnode.autolinefreq` - boolean. Factory default `true`: the
+     instrument auto-detects the real line frequency at every power-up and
+     sets `linefreq` accordingly. **Manually writing to `linefreq` directly
+     silently flips `autolinefreq` to `false`** - so if anything ever set
+     it explicitly in the past, auto-detection stopped from that point on
+     and it may be sitting on a stale value.
+
+   Step 1 (read-only, do this first, changes nothing):
+   ```
+   print(localnode.linefreq)
+   print(localnode.autolinefreq)
+   ```
+   - `autolinefreq=true` -> it's been auto-detecting every power-up, so
+     `linefreq` should reflect what the instrument itself measured at the
+     wall; still worth reporting what number comes back - if it says 50 in
+     a US facility (or 60 somewhere on 50 Hz mains), that's odd even with
+     auto-detect on.
+   - `autolinefreq=false` and `linefreq` looks right for the location ->
+     probably not the cause.
+   - `autolinefreq=false` and `linefreq` looks WRONG for the location ->
+     likely root cause, one-line fix.
+
+   Step 2 (only if step 1 looks suspicious, or to test the hypothesis
+   directly): `localnode.linefreq = 60` (or `50`, whichever it wasn't),
+   then re-run the exact same NPLC=1 current reading on die 'third'
+   (contact still made, same crosspoints as the NPLC-sweep test above) and
+   compare against that test's own NPLC=1 row. Sharp drop -> confirmed,
+   fix is to leave it set correctly (or restore
+   `localnode.autolinefreq = true` if auto-detect should just be trusted
+   going forward). No real change -> restore `autolinefreq = true` and
+   rule this specific theory out.
+
 2. Since `highc` made it worse rather than better, don't keep chasing a
    pure-capacitance framing - an oscilloscope or spectrum-style
    measurement at the point of contact (needle/probe-card connector) that
    can show actual frequency content, not just "is there voltage," is the
-   most direct remaining way to identify what this signal actually is.
+   most direct remaining way to identify what this signal actually is, if
+   equipment becomes available (none on hand as of this update).
 3. The channel A-vs-B asymmetry (present in literally every test in this
    document, including this NPLC one) is consistent enough across
    completely different test types that it is worth tracing physically -
@@ -1225,3 +1260,14 @@ of source mode.
    real pickup mechanism (proximity to a noise source, loop area, shielding
    quality) would plausibly differ that way, while a software/firmware
    explanation would not.
+4. Alternative source/measure pair, if the line-frequency check comes back
+   negative: force ~10 V via the Keysight 33512B wave gen's "DC" output
+   shape instead of the SMU, on the same die/columns, and measure the
+   resulting current in series with the Keysight 34461A DMM instead of the
+   SMU's own ammeter. Note per `switch_topology.py`'s own "wave" step
+   convention, the return/LO side still routes through the SMU-A LO row
+   (row B) - not a fully independent instrument swap, only the sourcing/
+   sensing electronics change. Same current still appearing would further
+   rule out a 2636B-specific quirk; a clean result would be a significant,
+   surprising pivot needing reconciliation against the open/short bracket
+   tests above.
