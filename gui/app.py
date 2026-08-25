@@ -298,6 +298,13 @@ class AtomicaDashboard(tk.Tk):
         self.check_system_ready()
         self.log(f"[SYSTEM] Switched active system to {system.capitalize()} "
                  f"— prober {self._active_bench()}.")
+        # init_hardware() (below, for a first-time connect) already does its
+        # own Refresh XY once the prober answers - this covers switching
+        # BACK to an Accretech that was already connected, where
+        # init_hardware never runs again.
+        if system == "accretech" and system in self._connected_systems \
+                and hasattr(self.ui, "_exec2_get_xy"):
+            self.ui._exec2_get_xy()
         # First time this system is actually selected, connect its own
         # instruments - not before, and never the other system's. Deferred
         # so the tab swap above finishes redrawing first.
@@ -766,6 +773,9 @@ class AtomicaDashboard(tk.Tk):
         self._connect_instruments(acc_ui,
                                   self._by_system["accretech"]["drivers"], connections)
         self.check_system_ready()
+        if "prober" in self._by_system["accretech"]["drivers"] \
+                and hasattr(acc_ui, "_exec2_get_xy"):
+            acc_ui._exec2_get_xy()
 
     # Driver per profile key. Which of these actually get connected depends on
     # the active bench profile - see GUI System/eg_probers.yaml. A key marked
