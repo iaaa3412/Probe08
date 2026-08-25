@@ -458,54 +458,6 @@ way, every run so far, with different-but-all-large magnitudes.
   value) - comparing "what the source thinks it's doing" vs "what the
   ammeter reads" could reveal a sense-vs-source mismatch.
 
-## Update: manual channel A/B isolation test (real bench data)
-
-User ran a manual test, both `smua` and `smub` on each die, 5 reads each,
-via the raw GPIB/TSP path (not the recipe engine):
-
-| die | channel | measure.v() | measure.i() (5 reads, µA) | compliance |
-|---|---|---|---|---|
-| first  | A (smua) | overflow (9.91e37) | -36.25, -36.25, -36.27, -36.33, -36.21 | true |
-| first  | B (smub) | overflow (9.91e37) | -113.20, -113.16, -113.00, -112.98, -113.02 | true |
-| second | A (smua) | overflow (9.91e37) | -65.07, -64.49, -64.28, -64.32, -64.31 | true |
-| second | B (smub) | overflow (9.91e37) | -182.42, -182.28, -182.20, -182.19, -182.03 | true |
-| third  | A (smua) | overflow (9.91e37) | -62.13, -61.74, -61.59, -61.33, -61.28 | true |
-| third  | B (smub) | overflow (9.91e37) | -188.68, -188.59, -188.62, -188.34, -188.35 | true |
-| fourth | A (smua) | overflow (9.91e37) | -55.45, -55.39, -55.32, -55.29, -55.42 | true |
-| fourth | B (smub) | overflow (9.91e37) | -170.10, -169.33, -168.76, -168.12, -167.26 | true |
-
-Pattern, confirmed across all 4 dies:
-- Current is **flat/stable across the 5 reads** (well under 1% spread) -
-  this weakens ranked hypothesis #2 above (SMU control-loop ringing on a
-  hard short) - a genuine transient/instability would show read-to-read
-  variation, not this.
-- `measure.v()` overflows (the Keithley invalid/overflow sentinel,
-  9.9e37-ish) on literally every single reading, both channels, every die.
-- **Channel B reads a consistent ~3.0-3.1x channel A's current, on every
-  die** (113/36.3≈3.1, 182/64.3≈2.8, 188/61.6≈3.1, 169/55.4≈3.1). A fixed
-  ratio holding across four electrically independent dies argues against
-  four independent per-die semiconductor faults, and argues FOR something
-  structural/shared across the whole rig - most likely channel A and
-  channel B are not cleanly isolated from each other (shared/common LO
-  line between smua/smub, or both channels' switch-matrix relays
-  inadvertently closed at once during the manual test), so each channel's
-  compliance loop is fighting the other's forced 10V through a
-  not-fully-isolated shared path rather than each seeing an independent
-  die.
-
-**New leading hypothesis (supersedes the old #1/#2 ranking above):
-channel A/B cross-coupling or a shared return path, not independent
-per-die faults and not SMU ringing.**
-
-**Most decisive next test, not yet done**: repeat this exact manual
-measurement but explicitly confirm the OTHER channel's output is OFF
-before each read - i.e. measure smua alone with smub.source.output
-verified OFF, then smub alone with smua.source.output verified OFF. If
-the anomaly disappears once properly isolated, that confirms cross-
-channel/shared-path interference. If it persists even fully isolated,
-that rules this out and points back at the switch matrix/probe card
-wiring itself (independent of channel A/B interaction).
-
 ## Suggested concrete next steps
 
 1. **Ask the user what `hi`/`lo`'s colon-separated values mean** for this
@@ -561,3 +513,345 @@ cluster near the limit = the tell" - but the 2636B/Accretech bench data
 gathered in THIS session doesn't show a tight cluster near the limit at
 all, which is exactly what makes the current anomaly worth digging into
 rather than just trusting the gauge-derived threshold at face value.
+
+## Session 2 addendum (2026-08-25) - mystery very likely resolved
+
+Fresh Claude Code session, different PC, picked this handoff up cold. GUI
+was confirmed NOT running (user's word) - everything below is raw GPIB/USB
+sent directly against the drivers in `instruments/`, unmodified, bypassing
+the GUI/recipe engine entirely. **The prober driver was never imported or
+touched** - the user only confirmed by hand that the chuck was already up
+and the wafer in contact for the whole session below. Scripts lived in a
+scratch dir, run via the Python 3.13 install on this PC
+(`instruments.yaml`/`switch_topology.yaml` both read from
+`\\prober\M\ETL\proberautomation\GUI System\`, confirmed identical to the
+defaults in `gui/switch_topology.py`, so the E="DMM LO"/F="DMM HI" row
+mapping is real on this bench, not just a generic default).
+
+### What was run
+
+1. **Read-only survey before touching anything**: all 5 instrument addresses
+   present on the bus (`GPIB0::5/10/12/16`, `USB0::0x2A8D::0x1301::...`).
+   Switch mainframe confirms 707B with two 7072 8x12 Semiconductor Matrix
+   cards in slots 2 and 4 (matches the recipe's row/col usage exactly).
+   SMU was idle/output-off on both channels, `limiti` at its post-reset
+   default (0.1 A) - nothing was live when the session started.
+   **Found `2E08` and `2F07` already closed** on the switch - a leftover
+   from *this* investigation's own earlier suggested step ("close only
+   `2A06,2B05`... measure with the DMM directly"), except it's die
+   **'third'**'s pads (`2A08,2B07`), wired with DMM polarity, and it had
+   been left closed rather than opened. Resistance is a scalar so the
+   swapped HI/LO didn't matter for the reading (see below), but worth
+   knowing the matrix was not in a fully-open state before this session.
+
+2. **Per-die pad resistance via the DMM only, SMU never involved**: for all
+   four dies, closed just the DMM's crosspoints (row F = DMM HI, row E =
+   DMM LO) on the same two columns the recipe's SMU step already uses for
+   HI/LO, then `MEASure:RESistance?` (2-wire - no SHI/SLO rows are wired in
+   this topology at all), 3 reads each, channels reopened after each die:
+
+   | die | crosspoints (DMM) | 3 reads |
+   |---|---|---|
+   | first  | `4F05,4E06` | `9.9e+37, 9.9e+37, 9.9e+37` Ω |
+   | second | `4F07,4E08` | `9.9e+37, 9.9e+37, 9.9e+37` Ω |
+   | third  | `2F08,2E07` | `9.9e+37, 9.9e+37, 9.9e+37` Ω |
+   | fourth | `2F06,2E05` | `9766468.59, 9.9e+37, 9.9e+37` Ω |
+
+   `9.9e+37` is the Keysight 34461A's own overload/open-circuit sentinel -
+   i.e. **every single die read as a clean open circuit**, exactly the
+   "near-infinite resistance" LAMP is supposed to show. `fourth`'s one
+   9.77 MΩ blip on the very first read, immediately followed by two more
+   full-overload reads with nothing else changed, reads as a relay-closure/
+   contact-settling transient, not a real resistive path - it did not
+   repeat. The pre-existing leftover pair (`2F07,2E08`, die 'third') read
+   full overload too, for what it's worth, before any of this touched it.
+
+   **This directly confirms the switch matrix + cabling + probe pad path is
+   properly connected to the wafer for all four dies**, and that the DUT
+   itself is exactly as high-impedance as expected - independent of the
+   SMU, so this is not "no wafer contact" and not "switch/wiring fault."
+
+3. **Direct SMU replication of the recipe's own 'fourth' step** (bypassing
+   the recipe engine, same 10 V / 1 µA limit / `nplc=10`, closing
+   `2A06,2B05` by hand): `get_current_limit` readback confirmed `1e-06`
+   correctly programmed (again). But:
+   - `smua.measure.v()` returned **`9.91e+37`** - the SMU's *own*
+     TSP overflow/invalid-reading sentinel - while sourcing what should be
+     a plain 10 V into a near-open load.
+   - `smua.measure.i()` returned real-looking but large, drifting numbers
+     across 5 unaveraged reads taken back-to-back
+     (`-4.19e-05 -> -4.21e-05 A`, and on a second run
+     `-5.04e-05 -> -5.06e-05 A`) - a different magnitude on each attempt,
+     consistent with the original handoff's "5x-60x over limit, different
+     every time" pattern, not a repeatable clamp.
+   - `smua.source.compliance` = `True` throughout.
+   - A **VISA timeout** (`VI_ERROR_TMO`) then occurred on the very next,
+     completely ordinary `measure.i()` query in a follow-up script -
+     the instrument didn't answer within 3 s. (Confirmed immediately after:
+     both SMU channels' outputs were off and slot 2 was fully open - the
+     `finally` cleanup in the failing script had already run before the
+     timeout propagated, so nothing was left biased. No physical risk, but
+     the timeout itself is a data point.)
+
+4. **Ruled out remote-sense-with-open-leads** as the explanation for the
+   voltage-overflow: `smua.sense` reads back `SENSE_LOCAL` (0) by default
+   right after `reset()` on this instrument - already 2-wire, not 4-wire.
+   Explicitly forcing `smua.sense = smua.SENSE_LOCAL` again before repeating
+   the exact same bias made no difference (`measure.v()` still overflowed,
+   `measure.i()` still read ~-5.05e-05 A, still "in compliance"). Whatever
+   this is, it isn't a floating sense-lead artifact.
+
+5. **Ruled out a scripting/config mistake** as the explanation: idle
+   baseline (output off, nothing closed) reads perfectly clean -
+   `measure.v()` ≈ -97 µV, `measure.i()` ≈ 7e-14 A, `errorqueue.count = 0`.
+   `measure.rangev` correctly autoranged from 0.2 V (idle) to 20 V once
+   10 V was commanded. The error queue stayed at 0 through the entire
+   biased sequence - the SMU itself never flags an error, it just silently
+   returns an overflow on the voltage read while returning plausible-looking
+   numbers on the current read of the identical measurement.
+
+### Revised understanding (superseded by the further testing below - kept
+for the record of how the diagnosis narrowed)
+
+Every finding above points the same direction: **the wafer/pad/switch/
+cabling side is fine and behaves exactly as LAMP expects (near-infinite,
+i.e. open, resistance on all four dies, confirmed by an instrument that
+isn't even part of the suspect signal path).** The anomaly is specific to
+what happens when the Keithley 2636B voltage-sources 10 V into that
+genuinely-near-open node with an extremely tight 1 µA current limit - its
+own voltage measurement invalidates itself, its current reading is
+large/unstable/non-repeating, and communication with it degraded (one
+timeout) shortly after.
+
+### Further testing (same session, continued) - the offset is real, is
+channel-specific, and is NOT voltage-dependent
+
+The user asked to keep characterizing the SMU directly: both channels
+(`smua`/`smub`), 10 V bias, current readback. Four more test batteries,
+still never touching the prober:
+
+1. **Both channels, all four dies, still at the recipe's 1e-6 A limit**
+   (channel B has never actually been used by `lampaccr` - its rows in this
+   topology are `C`=SMU-B HI, `D`=SMU-B LO): every one of the 8
+   combinations overflowed `measure.v()` and reported `compliance=true`,
+   but with a striking pattern - **`smub`'s current was ~3.0x `smua`'s on
+   every single die** (113/36.3, 182/64.3, 188/61.7, 168/55.3 µA - all
+   ≈3.0-3.1x), and the five back-to-back reads on every single test were
+   flat to <1% - a real RC transient would decay visibly over that many
+   reads a few ms apart; this didn't. Steady current, not a transient.
+
+2. **Isolation test**: bias both channels at 10 V/1 µA with the switch
+   matrix **fully open** - nothing closed, output floating. Result: clean,
+   correct `measure.v()` (~10.0004/10.0006 V), current in the **1e-13-1e-14
+   A** range (true instrument noise floor), `compliance=false`. So the
+   overflow/large-current behavior does NOT exist in the SMU/cabling alone -
+   it only appears once the switch matrix routes the channel through to a
+   die.
+
+3. **`limiti` sweep on die 'fourth'** (`smua` via 2A06/2B05, `smub` via
+   2C06/2D05), 10 V fixed, `limiti` = 1e-6/1e-5/1e-4/1e-3 A: each channel
+   has its own threshold where it snaps out of the overflow/compliance
+   state into a clean, valid reading -
+   - `smua`: still overflowing/compliant at 1e-5, clean at 1e-4 (settles to
+     ≈**-12.3 µA**, `compliance=false`, valid V≈10.0V).
+   - `smub`: still overflowing/compliant even at 1e-4, clean only at 1e-3
+     (settles to ≈**-125.8 µA**, `compliance=false`, valid V≈10.0V) - again
+     ≈10x `smua`'s clean value, on the exact same physical pads.
+   This is the key structural fact: **once each channel's limit is loose
+   enough to stop clipping, the current stops being noisy/invalid and
+   becomes a clean, repeatable, channel-specific value** - i.e. there is a
+   real current being drawn in the switch-matrix-side path, and it is
+   different for the A/B row pair vs the C/D row pair on the *same*
+   physical columns.
+
+4. **Voltage sweep at each channel's own clean (non-compliant) `limiti`**
+   (`smua` @ 1e-4 A, `smub` @ 1e-3 A), V = 0/0.5/1/2/5/10 - the decisive
+   test. If the ≈12.3 µA / ≈126 µA currents above were real DUT conduction
+   (resistive or diode-like), they would track the applied voltage,
+   dropping toward 0 A as V→0. They did not:
+   - `smua`: **-13.3 µA at V=0.0**, drifting only to -22 µA at V=10.0 -
+     nearly flat across the whole 0-10 V range.
+   - `smub`: **-118.2 µA at V=0.0**, only to -127 µA at V=10.0 - same flat
+     pattern, ~9-10x larger.
+   Voltage read back correctly (matching commanded V almost exactly) at
+   every point in this sweep - it's only the *current* that stays
+   essentially pinned near a fixed, non-zero, channel-specific value
+   regardless of the voltage applied across the pads.
+
+### Conclusion
+
+**The wafer and its pads are fine.** The DMM's independent 2-wire check
+(never touching the SMU) reads a clean open circuit on every one of the
+four `lampaccr` dies, exactly the near-infinite resistance LAMP is supposed
+to have, and the SMU's own isolation test (nothing closed on the switch)
+shows the instrument itself is clean too (sub-picoamp noise floor) with
+nothing connected. **The current failing every die is a real, roughly
+voltage-independent, channel-specific offset/leakage current that only
+appears once the Keithley 707B switch matrix is in the signal path** -
+present even with 0 V commanded, ~3-10x larger on the SMU-B/row-C-D path
+than the SMU-A/row-A-B path for the identical physical pads, and large
+enough (tens to ~150 µA) that it alone blows through LAMP's intended 1 µA
+compliance on every single measurement regardless of what the actual die
+is doing. At the tight 1 µA limit the source can't supply this current
+without hitting compliance, so it never settles to a stable operating
+point - hence the invalid voltage readback and the noisy, oversized,
+non-repeating current numbers documented back in Session 1. Loosen the
+limit past this offset and the picture becomes completely clean and
+repeatable (just not anywhere near the intended 1 µA regime).
+
+Leading suspects for WHERE this offset current actually originates (not
+yet isolated further - would need a handheld meter directly at the switch
+matrix's row-bus terminals, which is a physical, not scriptable, check):
+- A leaky/marginal relay or crosstalk within the 707B's own 7072 8x12
+  matrix cards, specific to which rows are used (A/B vs C/D) rather than
+  which columns (i.e. a per-row-bus characteristic, not a per-die one).
+- A ground-loop/common-mode current between the switch mainframe's chassis
+  and the SMU's LO reference, which would plausibly be close to
+  voltage-independent (matches what was measured) and could differ between
+  the B/D bus run and the A/B bus run if they're routed differently inside
+  the card or backplane.
+- Cabling/harness leakage between the matrix and the probe card connector,
+  again specific to the row pair rather than the column/die.
+
+### Control test, same session: chuck DOWN, needles NOT touching - the
+offset REQUIRES contact (corrects the "switch matrix internal" lead above)
+
+The user then separated the chuck (still never commanded by Claude - purely
+reported/performed by the user) and asked to repeat the check. Same DMM
+per-die sweep and same SMU 10V/1e-6A/both-channels/all-four-dies test,
+needles now floating in air:
+
+- **DMM**: unchanged - open circuit on all four dies, as expected with
+  nothing touching.
+- **SMU**: completely clean on BOTH channels, ALL FOUR DIES - valid
+  ~10.00 V readback every time, current in the **1e-13-1e-12 A range**
+  (indistinguishable from instrument noise floor), `compliance=false`
+  throughout. The 36-65 µA (channel A) / 113-189 µA (channel B) offsets
+  documented above are **completely gone**.
+
+This reverses the leading suspect from "something inside the 707B/cabling
+regardless of contact" to **something that requires actual needle-to-wafer
+(or needle-to-chuck) contact to exist at all** - the earlier "isolation"
+test only proved the SMU+cabling are clean with *nothing closed on the
+switch*; this control proves they're ALSO clean with the switch closed
+onto real columns, provided the needles simply aren't touching anything.
+Since the DMM's own HI-to-LO-only measurement stays a clean open in both
+the contact and no-contact conditions, the extra current in the contact
+case is not flowing pad-to-pad - the leading physical explanation is a
+leakage/ground-reference current that only completes once the needle
+actually touches the wafer/chuck (e.g. needle -> wafer body -> grounded
+chuck -> back to the SMU via chassis/earth, a path a 2-wire HI/LO-only
+measurement would never see), which would also explain why the current
+was close to voltage-independent (driven by a ground potential difference,
+not by the programmed 10 V) and why channel A and channel B differed by
+~3-10x on the identical physical pad (if their LO/guard references inside
+the switch matrix aren't equally well tied to that same ground).
+
+### Ruled out, same session: cross-channel interference between smua/smub
+
+Hypothesis (from the user, worth testing directly): the consistent ~3-10x
+smub-vs-smua ratio on every die could mean the two channels aren't
+electrically isolated from each other (e.g. a shared LO/return), so each
+channel's compliance loop is fighting the other's forced 10 V rather than
+seeing its own die in isolation - which would also explain the universal
+`measure.v()` overflow (two sources fighting over one node is a classic way
+to get an undefined voltage reading).
+
+Tested directly, chuck back in contact, die 'fourth': for each channel,
+before biasing it, the OTHER channel's `source.output` was explicitly
+forced to `OUTPUT_OFF` and read back to confirm - not just assumed - at
+three checkpoints (immediately after forcing it, again right before the
+tested channel's output turned on, and again during the tested channel's
+bias). The other channel's own switch crosspoints were also never closed
+in either direction, so there's no path through the matrix for it to
+interfere via regardless of its internal state. Result: **identical
+anomaly on both channels** - `smua` alone: overflow V, ≈-28.3 µA,
+compliance=true, with `smub.source.output` confirmed `0` at every
+checkpoint; `smub` alone: overflow V, ≈-115 to -147 µA (this run showed
+more read-to-read drift than earlier ones, still all >>1e-6A), compliance=
+true, with `smua.source.output` confirmed `0` throughout.
+
+This rules out cross-channel interference: if smua/smub shared an internal
+LO reference, that coupling would be a fixed hardware fact independent of
+wafer contact, but the identical channel-alone sequence with the needles
+NOT touching (same crosspoints, same one-channel-at-a-time approach, no-
+contact control above) came back completely clean on both channels. An
+effect that requires actual contact to appear is not explained by the two
+channels sharing wiring inside the instrument or matrix - it needs the
+wafer/chuck genuinely in the loop, consistent with the ground-path theory
+above rather than this one. (Minor loose end: `smuX.OUTPUT_HIGHZ` read
+back `nil` on this instrument/firmware, so the idle channel's `offmode`
+could not be forced to a true floating high-Z during this test - it stayed
+at the default `OUTPUT_NORMAL`. Its `source.output` was still confirmed
+`0`/off at every checkpoint, and its own crosspoints were never closed, so
+this doesn't reopen the cross-channel theory, but a firmware/model check on
+the correct high-Z constant name would close this gap fully if revisited.)
+
+### Ground-reference test procedure (how to actually run suggested next steps 2-4)
+
+This needs a handheld multimeter, not GPIB - it's chassis/ground potential,
+not the signal path.
+
+**Before touching anything**: confirm both SMU channel outputs are OFF
+(`smua.source.output`/`smub.source.output` = `OFF`) and the switch matrix
+is fully open (`SwitchboxTestPanel`'s "■ ALL OPEN", or
+`channel.open('allslots')`). Don't run this with the recipe/GUI live.
+
+Three chassis points: **chuck/prober chassis** (exposed frame metal, or the
+chuck's own ground lug if it has one), **SMU chassis** (2636B rear-panel
+ground screw or LO connector shell), **switch mainframe chassis** (707B
+rear-panel ground screw).
+
+1. **Test A - DC voltage, all three pairs** (chuck↔SMU, chuck↔switch
+   mainframe, switch mainframe↔SMU), handheld DMM on DC volts. Should read
+   near 0V (low mV) on a clean single-point ground; anything meaningfully
+   higher is a real ground potential difference.
+2. **Test B - resistance/continuity, same three pairs**, outputs still off,
+   nothing energized. Should read near 0Ω if directly bonded. A
+   meaningfully high or open reading means those two "grounds" are only
+   connected indirectly (e.g. via building AC ground through separate
+   outlets), not a real bond.
+3. **Test C - sanity check**: `V_offset (Test A) / R_path (Test B) ≈
+   I_leak`. Compare against the already-measured clean offsets (`smua`
+   ≈12.3 µA @ 1e-4A limit, `smub` ≈126 µA @ 1e-3A limit) - if the order of
+   magnitude lines up, that's quantitative confirmation, not just
+   correlation.
+4. **If confirmed**: the standard fix is a low-impedance bonding strap
+   directly between the prober chassis and the SMU/switch matrix chassis
+   (a proper single-point ground) - flag to whoever owns the bench rather
+   than improvising on production equipment. Re-run the `limiti` sweep
+   (smua @1e-4A, smub @1e-3A) after any such fix to see whether the offsets
+   shrink/disappear - that would be the definitive confirm-and-fix.
+
+### Suggested next steps (session 3)
+
+1. **`lampaccr`'s `check1`-`check4` results should not be trusted as-is
+   while the wafer is actually in contact** - the anomaly is real,
+   reproducible, and now proven contact-dependent, not a fixed instrument
+   fault and not (per the DMM) a real pad-to-pad short. The DMM-based
+   2-wire check remains the trustworthy stand-in for "is this pad pair
+   open" in the meantime.
+2. **Chase the contact-dependent leakage/ground path directly**: with the
+   wafer back in contact, measure the DC potential (and/or resistance)
+   between the chuck (or its known ground point) and the SMU's own chassis/
+   LO reference, and separately between the switch mainframe's chassis and
+   the same reference - a real ground-loop would show up as a measurable
+   potential difference or a low-but-nonzero resistance there, independent
+   of any recipe or die.
+3. Check whether the Accretech chuck/wafer stage has a known grounding
+   scheme (chuck tied to prober chassis, prober chassis tied to building
+   ground, etc.) and whether the SMU/switch matrix share that same ground
+   reference or are on a separate outlet/ground - a genuinely different
+   ground reference between the prober and the SMU bench equipment,
+   bridged only once the needle-wafer-chuck contact closes the loop, would
+   fully explain everything observed across both conditions this session.
+4. Re-run the channel A vs channel B comparison (in contact) while
+   monitoring/grounding the chuck more directly, if accessible, to see
+   whether the ~3-10x A-vs-B difference collapses once a cleaner/lower-
+   impedance ground reference is provided - that would confirm the
+   ground-loop mechanism rather than something inherent to rows C/D.
+5. If `lampaccr` needs to keep using the SMU (not the DMM) for this check,
+   1 µA compliance is not achievable while this contact-dependent leakage
+   exists - it would need either the ground path fixed, a loosened
+   compliance, or the offset characterized/subtracted, and none of those
+   should happen before the ground-reference question above is settled.
