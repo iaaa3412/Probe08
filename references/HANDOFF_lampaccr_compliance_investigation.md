@@ -871,6 +871,83 @@ probe_cards\LaMP_HP_b.csv`'s `PIN` rows list every pin actually in use;
 anything on slot 2/4 not listed there, within the card's 12-column range,
 is fair game) - not yet done as of this update.
 
+### Switch-matrix-internal-leakage test RUN - result is CLEAN, rules out
+"purely internal to the 707B" (fresh session, same day, GPIB only)
+
+Physical precondition per the user (not GPIB-verifiable - the 707B cannot
+know what's on the far end of a column wire): the probe-card-side wires for
+**pins 1 and 2 were manually disconnected**, dangling, nothing downstream.
+Only the instrument-side row wires (SMU-A HI/LO, SMU-B HI/LO, DMM HI/LO,
+WGEN1/2) remain wired as usual. Per the card convention (pins 1-12 = slot 2
+cols 01-12, pins 13-24 = slot 4 cols 01-12 - confirmed via
+`gui/switch_topology.py`/`gui/switch_debug_panel.py`, not something
+`query_slot_info()` itself reports since that's a wiring convention, not a
+matrix property): **pin 1 = `2A01`/`2C01`, pin 2 = `2B02`/`2D02`** - same
+row buses (A/B for smua, C/D for smub) that show the large offset on the
+real die columns (5-8), just routed to different, currently-dangling
+columns.
+
+Test: matrix opened fully first (`smua`/`smub` outputs confirmed off),
+then for each channel - close its HI/LO crosspoints on pins 1/2, source
+10 V, `limiti` at that channel's own already-established clean threshold
+(`smua`=1e-4A, `smub`=1e-3A, from the earlier limiti-sweep), read
+`measure.v()`/`measure.i()` x5/`source.compliance`, output off, crosspoints
+open, repeat for the other channel.
+
+**Result - clean on both channels:**
+- `smua` (`2A01`+`2B02`, limiti=1e-4): `measure.v()`=10.0004 V (valid),
+  `measure.i()` x5 = 6.89e-13 -> 2.80e-13 A (decaying, sub-picoamp),
+  `compliance`=false.
+- `smub` (`2C01`+`2D02`, limiti=1e-3): `measure.v()`=10.0008 V (valid),
+  `measure.i()` x5 = 1.03e-12 -> 7.75e-13 A (decaying, sub-picoamp),
+  `compliance`=false.
+
+Both channels behave exactly like the very first "switch fully open"
+isolation test - i.e. **this rules out a leak that is purely internal to
+the 707B's rows/backplane independent of column**, per the interpretation
+this test was designed against. The same row buses (A/B, C/D) that misbehave
+on columns 5-8 are clean on columns 1/2 - so it is not "row A/row C always
+leaks regardless of what's closed downstream."
+
+Aside, not related to this result: the error queue showed `count=4` during
+this test and was drained separately - all 4 are stale entries predating
+this run (`-286 TSP Runtime error... attempt to index global 'channel' (a
+nil value)` - i.e. a switch-matrix-style `channel.close(...)` command sent
+to the *SMU's* GPIB address by mistake at some earlier point, not by this
+script; plus a `Query UNTERMINATED` and two `Data type error`s). Worth
+knowing something hit the wrong instrument address at some point during
+this investigation's manual/raw-terminal work, but it doesn't touch this
+test's result.
+
+**Where this leaves the theory ranking**, combining every condition tested
+across this whole investigation:
+| condition | result |
+|---|---|
+| switch fully open, nothing closed | clean |
+| real die columns (5-8) closed, needles NOT touching wafer | clean |
+| dangling columns (1/2) closed, same rows as the real dies | clean |
+| chuck-to-wafer DC continuity (handheld, other session) | isolated, no path |
+| chuck vs SMU/switch ground potential (handheld, other session) | matched |
+| cross-channel (other channel confirmed off) | anomaly persists - ruled out |
+| real die columns (5-8) closed, needles touching wafer #1 | anomalous |
+| real die columns (5-8) closed, needles touching wafer #2 (different wafer) | anomalous, same signature |
+
+The only two conditions that reproduce the anomaly both require (a) actual
+needle-to-wafer contact and (b) routing through columns 5-8 specifically -
+every other combination, including this session's dangling-pin-1/2 test, is
+clean. With the switch matrix itself now cleared (this test) and the DC
+chuck-ground path separately cleared (handheld tests above), the leading
+open theory is something **downstream of the switch matrix but specific to
+columns 5-8's own cabling/connector/probe-card routing, that only shows up
+under real wafer contact** - e.g. an AC/capacitive coupling path a DC
+continuity check wouldn't catch, or a card-layout quirk (shared guard trace,
+proximity to a wafer-common structure) specific to those needle positions.
+Not yet isolated further - the natural next GPIB-only test would be the
+same dangling-wire approach but on one of the ACTUAL die columns (5, 6, 7,
+or 8) instead of the spare 1/2, if any of those can be safely disconnected
+on the probe-card side the same way, to see whether the leak follows the
+column even without a wafer present at all.
+
 ### Suggested next steps (session 3)
 
 1. **`lampaccr`'s `check1`-`check4` results should not be trusted as-is
