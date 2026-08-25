@@ -48,7 +48,7 @@ class CassettePanel(ttk.Frame):
         bar = ttk.Frame(self, padding=(6, 4))
         bar.grid(row=0, column=0, sticky="ew")
 
-        self._go_btn = ttk.Button(bar, text="▶  Arm Cassette Automation",
+        self._go_btn = ttk.Button(bar, text="▶  Cassette Automation",
                                   command=self._arm)
         self._go_btn.pack(side="left", padx=4)
         self._stop_btn = ttk.Button(bar, text="⏹  Stop Automation", state="disabled",
