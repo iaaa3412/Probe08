@@ -63,6 +63,8 @@ class CassettePanel(ttk.Frame):
         # the slot list, so a reset is required before resuming automation.
         ttk.Button(bar, text="⏏ Unload Wafer",
                   command=self._manual_unload).pack(side="left", padx=4)
+        ttk.Button(bar, text="📥 Load Next Wafer",
+                  command=self._manual_load_next).pack(side="left", padx=4)
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(bar, text="Pass yield ≥").pack(side="left")
@@ -305,6 +307,32 @@ class CassettePanel(ttk.Frame):
                           "auto-advance to the next wafer on its own)")
             else:
                 self._log(f"[CASSETTE] << STB={stb}  (unexpected)")
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _manual_load_next(self):
+        drv = self._drv()
+        if not drv:
+            self._log("[CASSETTE] Load Next Wafer: prober not connected.")
+            return
+        if not messagebox.askyesno(
+            "Load Next Wafer",
+            "This sends L (unload the current wafer, if any, and load/"
+            "align the next one from the cassette) - the same command "
+            "cassette automation itself uses. It does NOT advance "
+            "automation's own slot tracking.\n\n"
+            "If automation is armed/paused, you must press "
+            "🔄 Reset to Slot #1 (or otherwise re-sync the slot list "
+            "yourself) before resuming it, or it will get out of sync "
+            "with what's physically in the cassette.\n\n"
+            "Continue?"):
+            return
+        def _run():
+            self._log("[CASSETTE] >> L  (Unload / Load Next Wafer)")
+            stb = drv.cassette_unload_and_load_next(timeout_s=120)
+            if stb == 70:
+                self._log("[CASSETTE] << STB=70  (next wafer loaded, start die positioned, chuck DOWN)")
+            else:
+                self._log("[CASSETTE] No next wafer — cassette empty / idle / timed out.")
         threading.Thread(target=_run, daemon=True).start()
 
     # ------------------------------------------------------------- automation
