@@ -5010,6 +5010,13 @@ class MainLayout(ttk.Frame):
                     time.sleep(avg_delay_ms / 1000.0)
         return sum(readings) / len(readings)
 
+    def _exec2_maybe_abs(self, step: dict, value: float) -> float:
+        """recipe_panel's "Absolute Value" checkbox (step field abs_value) -
+        applied right after the raw reading comes back, so the target
+        calc, pass/fail compare, log line, and recorded/painted value all
+        agree on the same (possibly rectified) number."""
+        return abs(value) if (step.get("abs_value") or "").strip() else value
+
     def _exec2_switch_driver(self):
         """The relay card a recipe's conn channels refer to on this system.
 
@@ -5285,9 +5292,9 @@ class MainLayout(ttk.Frame):
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_resistance()))
                     self._exec2_settle(s, name, i)
-                    r_raw = self._exec2_measure_averaged(
+                    r_raw = self._exec2_maybe_abs(s, self._exec2_measure_averaged(
                         smu if instrument == "SMU" else dmm, smu_ch,
-                        read_one, avg_count, avg_delay, "Ω")
+                        read_one, avg_count, avg_delay, "Ω"))
                     r, r_unit, note = self._exec2_apply_target(s, r_raw, "ohm", readings_by_name)
                     self._exec2_log(f"[MEASURE]    R = {r_raw:.4g} Ω  (via {instrument})"
                                     f"{avg_txt}{note}")
@@ -5324,9 +5331,9 @@ class MainLayout(ttk.Frame):
                                    if sim or not (dmm and dmm.inst)
                                    else (lambda: dmm.measure_voltage_dc()))
                     self._exec2_settle(s, name, i)
-                    v_raw = self._exec2_measure_averaged(
+                    v_raw = self._exec2_maybe_abs(s, self._exec2_measure_averaged(
                         smu if instrument == "SMU" else dmm, smu_ch,
-                        read_one, avg_count, avg_delay, "V")
+                        read_one, avg_count, avg_delay, "V"))
                     v, v_unit, note = self._exec2_apply_target(s, v_raw, "V", readings_by_name)
                     self._exec2_log(f"[MEASURE]    V = {v_raw:.4g} V  (via {instrument})"
                                     f"{avg_txt}{note}")
@@ -5452,9 +5459,9 @@ class MainLayout(ttk.Frame):
                                    else (lambda: dmm.measure_current_dc()))
                         bias_txt = "  (via DMM)"
                     self._exec2_settle(s, name, i)
-                    i_raw = self._exec2_measure_averaged(
+                    i_raw = self._exec2_maybe_abs(s, self._exec2_measure_averaged(
                         smu if instrument == "SMU" else dmm, smu_ch,
-                        read_one, avg_count, avg_delay, "A")
+                        read_one, avg_count, avg_delay, "A"))
                     if instrument == "SMU" and not sim and smu and smu.inst:
                         try:
                             actual_voltage = smu.measure_voltage(smu_ch)

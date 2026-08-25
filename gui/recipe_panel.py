@@ -43,6 +43,11 @@ _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", 
                   # settle before the first sample" - see
                   # instrument_panel._exec2_run_steps_once.
                   "settle_delay",
+                  # Take abs() of the reading before it's compared to a
+                  # target or recorded/painted on the map. "1" = on, blank
+                  # = off (the default - most steps want the signed value).
+                  # Only meaningful on a measurement step.
+                  "abs_value",
                   # LaMP's MeterRange - the fixed measurement range. Appended
                   # rather than inserted so existing card CSVs, which are read
                   # by column NAME, keep loading unchanged; a file without the
@@ -253,6 +258,8 @@ def _avg_display(step: dict) -> str:
     settle = (step.get("settle_delay") or "").strip()
     if settle and settle != "0":
         parts.append(f"settle={settle}ms")
+    if (step.get("abs_value") or "").strip():
+        parts.append("abs")
     return ", ".join(parts)
 
 
@@ -300,6 +307,7 @@ def _normalize_step(step: dict) -> dict:
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
+        step["abs_value"] = ""
         return step
     if t == "open":
         step["mode"] = step["chan"] = step["instrument"] = ""
@@ -307,12 +315,14 @@ def _normalize_step(step: dict) -> dict:
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
+        step["abs_value"] = ""
         return step
     if t == "passfail":
         step["mode"] = step["chan"] = step["instrument"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
         step["level"] = step["limit"] = step["shape"] = step["freq"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
+        step["abs_value"] = ""
         return step
     if t == "picture":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
@@ -320,6 +330,7 @@ def _normalize_step(step: dict) -> dict:
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
+        step["abs_value"] = ""
         return step
     if t == "move":
         # Die # is the one field that matters - see _STEP_TYPES - everything
@@ -329,6 +340,7 @@ def _normalize_step(step: dict) -> dict:
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
+        step["abs_value"] = ""
         try:
             step["die"] = str(max(1, int(float(step.get("die") or "1"))))
         except (TypeError, ValueError):
@@ -397,6 +409,7 @@ def _normalize_step(step: dict) -> dict:
             step["settle_delay"] = "0"
     else:
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
+        step["abs_value"] = ""
     return step
 
 
@@ -1719,6 +1732,14 @@ class RecipePanel(ttk.Frame):
             editor, textvariable=self._ed_vars["settle_delay"], width=7)
         self._settle_delay_ent.grid(row=5, column=5, sticky="w")
 
+        # abs() the reading before target/pass-fail compares against it and
+        # before it's recorded/painted - see _STEP_FIELDS' own comment.
+        self._abs_chk = ttk.Checkbutton(
+            editor, text="Absolute Value",
+            variable=self._ed_vars["abs_value"], onvalue="1", offvalue="")
+        self._abs_chk.grid(row=5, column=6, columnspan=2, sticky="w",
+                           padx=(6, 2), pady=2)
+
         _lbl(4, 0, "NPLC:")
         self._nplc_ent = ttk.Entry(editor, textvariable=self._ed_vars["nplc"], width=6)
         self._nplc_ent.grid(row=4, column=1, sticky="w")
@@ -1872,6 +1893,7 @@ class RecipePanel(ttk.Frame):
         self._avg_delay_ent.config(state="disabled")
         self._nplc_ent.config(state="disabled")
         self._settle_delay_ent.config(state="disabled")
+        self._abs_chk.config(state="disabled")
         # Die # means nothing for a wait or a channel release - see
         # _normalize_step - so it's greyed out and cleared for those, same
         # as every other field that type doesn't use.
@@ -1989,6 +2011,7 @@ class RecipePanel(ttk.Frame):
             self._avg_count_ent.config(state="normal")
             self._nplc_ent.config(state="normal")
             self._settle_delay_ent.config(state="normal")
+            self._abs_chk.config(state="normal")
             # The 2636B (Accretech's SMU) has no source-delay mechanism at
             # all - it averages internally via its own repeat-average filter
             # (set_averages), so a per-reading delay here would be a no-op.
