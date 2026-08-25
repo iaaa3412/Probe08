@@ -331,6 +331,15 @@ class CassettePanel(ttk.Frame):
                 self._log("[CASSETTE] Timed out waiting for STB=66/67.")
         threading.Thread(target=_run, daemon=True).start()
 
+    # 4.81 w response layout, confirmed against real hardware output:
+    # [cassette-1 ID][25 per-slot codes] "." [cassette-2 ID][25 per-slot
+    # codes] - 1 + 25 + 1 + 1 + 25 = 53 chars after the leading "w".
+    _CASSETTE_ID_DESC = {"0": "No cassette", "1": "Ready to test",
+                         "2": "Testing under way", "3": "Testing finished",
+                         "4": "Rejected wafer cassette"}
+    _SLOT_STATUS_DESC = {"0": "No wafer", "1": "Not done",
+                         "2": "Finished", "3": "Under way"}
+
     def _manual_wafer_status(self):
         drv = self._drv()
         if not drv:
@@ -339,12 +348,19 @@ class CassettePanel(ttk.Frame):
         def _run():
             raw = drv.get_wafer_status()
             self._log(f"[CASSETTE] << w (wafer status): {raw!r}")
-            self._log("[CASSETTE]    Per the manual (4.81 w): cassette ID "
-                      "(0=no cassette/1=ready/2=testing/3=finished/"
-                      "4=rejected) then 25 per-slot wafer codes (0=no wafer/"
-                      "1=not done/2=finished/3=under way), for cassette 1 "
-                      "then cassette 2 - raw string shown as-is, exact field "
-                      "widths not parsed here.")
+            body = raw[1:] if raw[:1] == "w" else raw
+            if len(body) != 53 or body[26] != ".":
+                self._log("[CASSETTE]    (unexpected length/format - not "
+                          "parsed, see raw string above)")
+                return
+            for cass_no, block in ((1, body[0:26]), (2, body[27:53])):
+                cid, slots = block[0], block[1:]
+                self._log(f"[CASSETTE]    Cassette {cass_no}: "
+                          f"{self._CASSETTE_ID_DESC.get(cid, cid)}")
+                for i, ch in enumerate(slots, start=1):
+                    if ch != "0":
+                        self._log(f"[CASSETTE]      slot {i}: "
+                                  f"{self._SLOT_STATUS_DESC.get(ch, ch)}")
         threading.Thread(target=_run, daemon=True).start()
 
     def _manual_cassette_status(self):
@@ -355,11 +371,19 @@ class CassettePanel(ttk.Frame):
         def _run():
             raw = drv.get_cassette_status()
             self._log(f"[CASSETTE] << x (cassette status): {raw!r}")
-            self._log("[CASSETTE]    Per the manual (4.82 x): cassette IDs, "
-                      "then the count of not-yet-tested wafers remaining in "
-                      "the current cassette, then the slot number of the "
-                      "wafer currently on the chuck - raw string shown as-is, "
-                      "exact field widths not parsed here.")
+            body = raw[1:] if raw[:1] == "x" else raw
+            if len(body) != 6 or not body.isdigit():
+                self._log("[CASSETTE]    (unexpected length/format - not "
+                          "parsed, see raw string above)")
+                return
+            not_finished, chuck_slot, id1, id2 = (
+                int(body[0:2]), int(body[2:4]), body[4], body[5])
+            self._log(f"[CASSETTE]    Not-yet-tested wafers remaining: "
+                      f"{not_finished}; wafer on chuck came from slot "
+                      f"{chuck_slot}")
+            self._log(f"[CASSETTE]    Cassette 1: "
+                      f"{self._CASSETTE_ID_DESC.get(id1, id1)}; "
+                      f"Cassette 2: {self._CASSETTE_ID_DESC.get(id2, id2)}")
         threading.Thread(target=_run, daemon=True).start()
 
     def _manual_unload_only(self):
