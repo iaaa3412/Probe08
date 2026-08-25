@@ -258,28 +258,21 @@ Summarized per die:
 | 3 | third  | `7:2`  | `8:1`  | `2A08,2B07` | 10.000 V | 1e-06 A | [0, 1e-07] A |
 | 4 | fourth | `6:3`  | `5:4`  | `2A06,2B05` | 10.000 V | 1e-06 A | [0, 1e-07] A |
 
-**Open question / not resolved this session: what does the colon-separated
-`hi`/`lo` field actually mean** (e.g. `"17:8"`)? It does not match
-`switch_topology.pin_channel()`'s simple `pin_number` -> row/col formula
-against the actual `conn` value recorded for the same step (e.g. `first`'s
-`conn` is `4A05,4B06`, i.e. row A/pin 5 and row B/pin 6 by the generic
-formula - which doesn't obviously correspond to `hi=17:8`/`lo=18:7` at
-all). Two live hypotheses, neither confirmed:
-1. `hi`/`lo` are literal probe-needle/pad identifiers on this specific,
-   custom-wired card (not switch-matrix pin numbers at all), and `conn`
-   was set independently/directly (e.g. imported from the original legacy
-   LaMP software) rather than computed from `hi`/`lo` via
-   `switch_topology`.
-   Ask the user directly what "17:8" means (I did not get to ask this
-   session).
-2. The `hi:lo` in "17:8" is a leftover/unrelated field from a different
-   legacy schema that happens to still be populated in this CSV but isn't
-   actually consumed by anything in `_exec2_run_steps_once` - **check
-   whether the execution code actually reads the `hi`/`lo` fields for a
-   `current`-type step at all**, or whether it's purely decorative for
-   this step type (it seems to matter for pass/fail wiring displays but
-   the actual physical routing is 100% determined by `conn`, which is
-   unambiguous and is what actually got verified/exercised this session).
+**RESOLVED (this update): `hi`/`lo`'s colon-separated values are literal
+`(pin, pad)` pairs copied straight from the card's own `PIN` rows.** Every
+`PIN,,<pin>,<pad>,...` row in `LaMP_HP_b.csv` (8 total: (5,4) (6,3) (7,2)
+(8,1) (17,8) (18,7) (19,6) (20,5)) is used exactly once across the four
+steps' `hi`/`lo` fields, verified by direct match, e.g. `fourth`'s
+`hi="6:3"` == PIN row `(6, 3)`. So `hi`/`lo` are real probe-needle/pad
+identifiers on the physical card - traceability of which physical needle
+is involved - but they live in a **completely separate numbering space
+from `conn`'s switch-matrix column numbers**: `first`'s needles are pins
+17/18 (per PIN table), but its `conn` (`4A05,4B06`) uses columns 5/6 on
+slot 4 - no numeric relationship at all. `conn` is the actual, real
+routing (independently set, not derived from `hi`/`lo` via
+`switch_topology.pin_channel()`); `hi`/`lo` never feeds into that formula
+at all. Not a bug - just two different ID systems sharing the same CSV
+row. This is why the naive `pin_channel()` cross-check never lined up.
 
 ## Execution code path - `gui/instrument_panel.py`, `_exec2_run_steps_once`
 
@@ -822,6 +815,61 @@ rear-panel ground screw).
    than improvising on production equipment. Re-run the `limiti` sweep
    (smua @1e-4A, smub @1e-3A) after any such fix to see whether the offsets
    shrink/disappear - that would be the definitive confirm-and-fix.
+
+### Ground-loop theory ABANDONED, switch-matrix-internal leakage REOPENED as leading theory
+
+User ran the handheld tests documented above directly:
+- **Chuck-to-wafer-die: isolated** (no continuity). The wafer backside is
+  NOT electrically touching the chuck on this setup - the needle→wafer→
+  chuck→prober-ground return path this theory depended on does not exist.
+- **Grounds (chuck vs SMU/switch mainframe): matched**, no meaningful
+  potential difference found.
+
+**This kills the ground-loop/chuck-contact theory.** Both of its physical
+preconditions were checked directly and both came back negative.
+
+**Second, more important new fact: the same over-limit anomaly reproduces
+on the "GAUGE" calibration wafer (`references/gauge example.xlsx`'s own
+wafer), not just real LAMP dies, when run against THIS SMU (2636B/
+Accretech).** This reframes the whole investigation - it is very unlikely
+to be "LAMP's real dies are unusually leaky" if a purpose-built
+calibration wafer shows the identical problem on this exact electrical
+chain. (Recall the ORIGINAL gauge data referenced earlier in this doc was
+from the 2400/Electroglas side, a different instrument entirely, and
+showed a clean tight clamp - this new observation is the SAME gauge wafer
+concept, but actually run through THIS bench's SMU/switch matrix, and it
+is NOT clean here.)
+
+Combined with the earlier "isolation test" (switch fully open, nothing
+closed -> SMU+cabling alone is clean) and "control test" (switch closed,
+needle NOT touching anything -> also clean), plus now "any wafer, once
+actually touched and routed through the switch -> anomalous," the leading
+theory reverts to the ORIGINAL suspect from the first deep-dive session,
+now with much stronger support: **something inside the Keithley 707B's
+own matrix cards, backplane, or the cabling downstream of it - a leaky/
+marginal relay or row-specific crosstalk (SMU-A on rows A/B vs SMU-B on
+rows C/D) - not anything wafer/die/chuck/ground-specific.**
+
+**Proposed next test - 100% GPIB, no physical/manual work needed**: close
+a crosspoint on the SAME rows (A/B for smua, C/D for smub) but a COLUMN
+with no physical needle wired to it at all (a "dead"/unused column on the
+same matrix card slot, beyond whatever `lampaccr`'s PIN rows actually
+use). Bias the SMU exactly as in the earlier limiti-sweep/voltage-sweep
+tests and check the current:
+- Clean (sub-pA, compliance=false) -> leakage genuinely requires
+  something touched at the far end; wafer-adjacent theories aren't fully
+  dead, worth reconsidering what "touched" is doing electrically even
+  without a chuck-ground path.
+- Still shows the same channel-specific offset (~12 µA smua / ~126 µA
+  smub range, or whatever the current clean values are) -> conclusive
+  proof it's entirely internal to the switch matrix/backplane/cabling,
+  independent of any wafer, chuck, or ground reference.
+
+Which columns are actually unused needs to be derived from the probe
+card's own PIN rows (`\\prober\M\ETL\proberautomation\LAMPATA\
+probe_cards\LaMP_HP_b.csv`'s `PIN` rows list every pin actually in use;
+anything on slot 2/4 not listed there, within the card's 12-column range,
+is fair game) - not yet done as of this update.
 
 ### Suggested next steps (session 3)
 
