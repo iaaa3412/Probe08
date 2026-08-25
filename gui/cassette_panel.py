@@ -39,7 +39,6 @@ class CassettePanel(ttk.Frame):
         self._build_topbar()
         self._build_wafer_list()
         self._build_export()
-        self._build_manual()
         self._build_progress()
 
     # ------------------------------------------------------------------ UI
@@ -56,6 +55,14 @@ class CassettePanel(ttk.Frame):
         self._stop_btn.pack(side="left", padx=4)
         ttk.Button(bar, text="🔄 Reset to Slot #1",
                   command=self._reset_slot).pack(side="left", padx=4)
+        # U was found to error out often when used as part of cassette
+        # advance (see cassette_unload_and_load_next's own comment) - "L"
+        # is what automation uses now. This button is for a deliberate,
+        # standalone unload only (e.g. pulling a bad wafer), not a
+        # replacement for L - it warns every time and never auto-advances
+        # the slot list, so a reset is required before resuming automation.
+        ttk.Button(bar, text="⏏ Unload Wafer",
+                  command=self._manual_unload).pack(side="left", padx=4)
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(bar, text="Pass yield ≥").pack(side="left")
@@ -125,31 +132,9 @@ class CassettePanel(ttk.Frame):
         self._export_format_cb.bind("<<ComboboxSelected>>", lambda _e: None)
         ttk.Button(ef, text="↻", width=3, command=self._refresh_export_formats).pack(side="left")
 
-    def _build_manual(self):
-        mf = ttk.LabelFrame(
-            self, text="Manual Command Test (exercise each cassette-workflow "
-                       "command on its own, without running full automation)",
-            padding=6)
-        mf.grid(row=3, column=0, sticky="ew", padx=6, pady=(2, 2))
-
-        ttk.Button(mf, text="Read STB",
-                   command=self._manual_read_stb).pack(side="left", padx=2)
-        ttk.Button(mf, text="Get Wafer Status (w)",
-                   command=self._manual_wafer_status).pack(side="left", padx=2)
-        ttk.Button(mf, text="Get Cassette Status (x)",
-                   command=self._manual_cassette_status).pack(side="left", padx=2)
-        ttk.Button(mf, text="Wait for Wafer Ready (STB=65)",
-                   command=self._manual_wait_ready).pack(side="left", padx=2)
-        ttk.Button(mf, text="Send J (Next Die)",
-                   command=self._manual_next_die).pack(side="left", padx=2)
-        ttk.Button(mf, text="Send U (Unload Only)",
-                   command=self._manual_unload_only).pack(side="left", padx=2)
-        ttk.Button(mf, text="Send L (Unload / Load Next Wafer)",
-                   command=self._manual_unload_next).pack(side="left", padx=2)
-
     def _build_progress(self):
         pf = ttk.LabelFrame(self, text="Cassette Automation Log", padding=6)
-        pf.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        pf.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
         pf.rowconfigure(0, weight=1)
         pf.columnconfigure(0, weight=1)
 
@@ -299,97 +284,23 @@ class CassettePanel(ttk.Frame):
         self._redraw_slots()
         self._log_event(1, "", "Reset — next Arm will start tracking from slot #1.")
 
-    # --------------------------------------------------- manual command test
+    # --------------------------------------------------------- manual unload
 
-    def _manual_wait_ready(self):
+    def _manual_unload(self):
         drv = self._drv()
         if not drv:
-            self._log("[CASSETTE] Wait for Wafer Ready: prober not connected.")
+            self._log("[CASSETTE] Unload Wafer: prober not connected.")
             return
-        def _run():
-            self._log("[CASSETTE] Polling for STB=65 (wafer ready)...")
-            stb = drv.cassette_wait_for_wafer_ready(timeout_s=30)
-            if stb == 65:
-                self._log("[CASSETTE] << STB=65 — wafer ready, Die #1 in contact.")
-            else:
-                self._log("[CASSETTE] Timed out waiting for STB=65.")
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _manual_next_die(self):
-        drv = self._drv()
-        if not drv:
-            self._log("[CASSETTE] Send J: prober not connected.")
-            return
-        def _run():
-            self._log("[CASSETTE] >> J  (Next Die)")
-            stb = drv.cassette_next_die(timeout_s=60)
-            if stb == 66:
-                self._log("[CASSETTE] << STB=66  (next die arrived)")
-            elif stb == 67:
-                self._log("[CASSETTE] << STB=67  (end of wafer map)")
-            else:
-                self._log("[CASSETTE] Timed out waiting for STB=66/67.")
-        threading.Thread(target=_run, daemon=True).start()
-
-    # 4.81 w response layout, confirmed against real hardware output:
-    # [cassette-1 ID][25 per-slot codes] "." [cassette-2 ID][25 per-slot
-    # codes] - 1 + 25 + 1 + 1 + 25 = 53 chars after the leading "w".
-    _CASSETTE_ID_DESC = {"0": "No cassette", "1": "Ready to test",
-                         "2": "Testing under way", "3": "Testing finished",
-                         "4": "Rejected wafer cassette"}
-    _SLOT_STATUS_DESC = {"0": "No wafer", "1": "Not done",
-                         "2": "Finished", "3": "Under way"}
-
-    def _manual_wafer_status(self):
-        drv = self._drv()
-        if not drv:
-            self._log("[CASSETTE] Get Wafer Status: prober not connected.")
-            return
-        def _run():
-            raw = drv.get_wafer_status()
-            self._log(f"[CASSETTE] << w (wafer status): {raw!r}")
-            body = raw[1:] if raw[:1] == "w" else raw
-            if len(body) != 53 or body[26] != ".":
-                self._log("[CASSETTE]    (unexpected length/format - not "
-                          "parsed, see raw string above)")
-                return
-            for cass_no, block in ((1, body[0:26]), (2, body[27:53])):
-                cid, slots = block[0], block[1:]
-                self._log(f"[CASSETTE]    Cassette {cass_no}: "
-                          f"{self._CASSETTE_ID_DESC.get(cid, cid)}")
-                for i, ch in enumerate(slots, start=1):
-                    if ch != "0":
-                        self._log(f"[CASSETTE]      slot {i}: "
-                                  f"{self._SLOT_STATUS_DESC.get(ch, ch)}")
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _manual_cassette_status(self):
-        drv = self._drv()
-        if not drv:
-            self._log("[CASSETTE] Get Cassette Status: prober not connected.")
-            return
-        def _run():
-            raw = drv.get_cassette_status()
-            self._log(f"[CASSETTE] << x (cassette status): {raw!r}")
-            body = raw[1:] if raw[:1] == "x" else raw
-            if len(body) != 6 or not body.isdigit():
-                self._log("[CASSETTE]    (unexpected length/format - not "
-                          "parsed, see raw string above)")
-                return
-            not_finished, chuck_slot, id1, id2 = (
-                int(body[0:2]), int(body[2:4]), body[4], body[5])
-            self._log(f"[CASSETTE]    Not-yet-tested wafers remaining: "
-                      f"{not_finished}; wafer on chuck came from slot "
-                      f"{chuck_slot}")
-            self._log(f"[CASSETTE]    Cassette 1: "
-                      f"{self._CASSETTE_ID_DESC.get(id1, id1)}; "
-                      f"Cassette 2: {self._CASSETTE_ID_DESC.get(id2, id2)}")
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _manual_unload_only(self):
-        drv = self._drv()
-        if not drv:
-            self._log("[CASSETTE] Send U: prober not connected.")
+        if not messagebox.askyesno(
+            "Unload Wafer",
+            "This unloads the wafer on the chuck ONLY - it does not load "
+            "the next one, and it does NOT advance cassette automation's "
+            "slot tracking.\n\n"
+            "If automation is armed/paused, you must press "
+            "🔄 Reset to Slot #1 (or otherwise re-sync the slot list "
+            "yourself) before resuming it, or it will get out of sync "
+            "with what's physically in the cassette.\n\n"
+            "Continue?"):
             return
         def _run():
             self._log("[CASSETTE] >> U  (Unload only)")
@@ -399,31 +310,7 @@ class CassettePanel(ttk.Frame):
                           "waits for the next load command, it will NOT "
                           "auto-advance to the next wafer on its own)")
             else:
-                self._log(f"[CASSETTE] << STB={stb}  (unexpected - see Read STB)")
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _manual_unload_next(self):
-        drv = self._drv()
-        if not drv:
-            self._log("[CASSETTE] Send L: prober not connected.")
-            return
-        def _run():
-            self._log("[CASSETTE] >> L  (Unload / Load Next Wafer)")
-            stb = drv.cassette_unload_and_load_next(timeout_s=120)
-            if stb == 70:
-                self._log("[CASSETTE] << STB=70  (next wafer loaded, start die positioned, chuck DOWN)")
-            else:
-                self._log("[CASSETTE] No next wafer — cassette empty / idle / timed out.")
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _manual_read_stb(self):
-        drv = self._drv()
-        if not drv:
-            self._log("[CASSETTE] Read STB: prober not connected.")
-            return
-        def _run():
-            stb, desc = drv.read_stb_decoded()
-            self._log(f"[CASSETTE] STB={stb}  {desc}")
+                self._log(f"[CASSETTE] << STB={stb}  (unexpected)")
         threading.Thread(target=_run, daemon=True).start()
 
     # ------------------------------------------------------------- automation
