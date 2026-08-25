@@ -76,16 +76,17 @@ class CassettePanel(ttk.Frame):
         self._state_lbl.pack(side="right", padx=8)
 
     def _build_wafer_list(self):
-        lf = ttk.LabelFrame(
-            self, text="Cassette Slots — one Wafer ID per physical wafer, in slot order "
-                       "(slot #1 is whatever the operator already manually loaded/started). "
-                       "Lot ID below applies to every wafer in the cassette.",
-            padding=6)
+        lf = ttk.LabelFrame(self, text="Cassette Slots", padding=6)
         lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 2))
         lf.columnconfigure(0, weight=1)
 
         btns = ttk.Frame(lf)
         btns.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(btns, text="Lot ID (all wafers):").pack(side="left")
+        self._lot_id_var = tk.StringVar()
+        ttk.Entry(btns, textvariable=self._lot_id_var, width=20).pack(
+            side="left", padx=(4, 0))
+        ttk.Separator(btns, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Button(btns, text="＋ Add Slot", command=self._add_slot).pack(side="left", padx=2)
         ttk.Button(btns, text="✎ Edit", command=self._edit_slot).pack(side="left", padx=2)
         ttk.Button(btns, text="🗑 Remove", command=self._remove_slot).pack(side="left", padx=2)
@@ -94,12 +95,6 @@ class CassettePanel(ttk.Frame):
         ttk.Button(btns, text="▼", width=3, command=lambda: self._move_slot(1)).pack(
             side="left", padx=2)
         ttk.Button(btns, text="🗑 Clear All", command=self._clear_slots).pack(side="left", padx=(10, 2))
-
-        ttk.Separator(btns, orient="vertical").pack(side="left", fill="y", padx=10)
-        ttk.Label(btns, text="Lot ID (all wafers):").pack(side="left")
-        self._lot_id_var = tk.StringVar()
-        ttk.Entry(btns, textvariable=self._lot_id_var, width=20).pack(
-            side="left", padx=(4, 0))
 
         cols = ("slot", "lot", "wafer")
         self._slot_tree = ttk.Treeview(lf, columns=cols, show="headings", height=5,
@@ -112,8 +107,7 @@ class CassettePanel(ttk.Frame):
         self._slot_tree.bind("<Double-1>", lambda _e: self._edit_slot())
 
     def _build_export(self):
-        ef = ttk.LabelFrame(self, text="Auto-Export (after every wafer, using the ATA Folder "
-                                       "tab's own Export Directory/Format)", padding=6)
+        ef = ttk.LabelFrame(self, text="Auto-Export", padding=6)
         ef.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 2))
 
         self._auto_export_var = tk.BooleanVar(value=True)
@@ -344,10 +338,7 @@ class CassettePanel(ttk.Frame):
         self._redraw_slots()
         self._log_event(
             self._slot_idx + 1, self._lot_id(),
-            "Armed — if this wafer's run isn't already going, start it normally "
-            "(▶ Full Die or ▶ Test Selected on the Run tab) and this panel will "
-            "take over from there, repeating whichever one you used for every "
-            "later slot.")
+            "Cassette started, go to run tab, start a run")
 
     def _disarm(self, reason: str = ""):
         self._armed = False
