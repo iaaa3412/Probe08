@@ -458,6 +458,54 @@ way, every run so far, with different-but-all-large magnitudes.
   value) - comparing "what the source thinks it's doing" vs "what the
   ammeter reads" could reveal a sense-vs-source mismatch.
 
+## Update: manual channel A/B isolation test (real bench data)
+
+User ran a manual test, both `smua` and `smub` on each die, 5 reads each,
+via the raw GPIB/TSP path (not the recipe engine):
+
+| die | channel | measure.v() | measure.i() (5 reads, µA) | compliance |
+|---|---|---|---|---|
+| first  | A (smua) | overflow (9.91e37) | -36.25, -36.25, -36.27, -36.33, -36.21 | true |
+| first  | B (smub) | overflow (9.91e37) | -113.20, -113.16, -113.00, -112.98, -113.02 | true |
+| second | A (smua) | overflow (9.91e37) | -65.07, -64.49, -64.28, -64.32, -64.31 | true |
+| second | B (smub) | overflow (9.91e37) | -182.42, -182.28, -182.20, -182.19, -182.03 | true |
+| third  | A (smua) | overflow (9.91e37) | -62.13, -61.74, -61.59, -61.33, -61.28 | true |
+| third  | B (smub) | overflow (9.91e37) | -188.68, -188.59, -188.62, -188.34, -188.35 | true |
+| fourth | A (smua) | overflow (9.91e37) | -55.45, -55.39, -55.32, -55.29, -55.42 | true |
+| fourth | B (smub) | overflow (9.91e37) | -170.10, -169.33, -168.76, -168.12, -167.26 | true |
+
+Pattern, confirmed across all 4 dies:
+- Current is **flat/stable across the 5 reads** (well under 1% spread) -
+  this weakens ranked hypothesis #2 above (SMU control-loop ringing on a
+  hard short) - a genuine transient/instability would show read-to-read
+  variation, not this.
+- `measure.v()` overflows (the Keithley invalid/overflow sentinel,
+  9.9e37-ish) on literally every single reading, both channels, every die.
+- **Channel B reads a consistent ~3.0-3.1x channel A's current, on every
+  die** (113/36.3≈3.1, 182/64.3≈2.8, 188/61.6≈3.1, 169/55.4≈3.1). A fixed
+  ratio holding across four electrically independent dies argues against
+  four independent per-die semiconductor faults, and argues FOR something
+  structural/shared across the whole rig - most likely channel A and
+  channel B are not cleanly isolated from each other (shared/common LO
+  line between smua/smub, or both channels' switch-matrix relays
+  inadvertently closed at once during the manual test), so each channel's
+  compliance loop is fighting the other's forced 10V through a
+  not-fully-isolated shared path rather than each seeing an independent
+  die.
+
+**New leading hypothesis (supersedes the old #1/#2 ranking above):
+channel A/B cross-coupling or a shared return path, not independent
+per-die faults and not SMU ringing.**
+
+**Most decisive next test, not yet done**: repeat this exact manual
+measurement but explicitly confirm the OTHER channel's output is OFF
+before each read - i.e. measure smua alone with smub.source.output
+verified OFF, then smub alone with smua.source.output verified OFF. If
+the anomaly disappears once properly isolated, that confirms cross-
+channel/shared-path interference. If it persists even fully isolated,
+that rules this out and points back at the switch matrix/probe card
+wiring itself (independent of channel A/B interaction).
+
 ## Suggested concrete next steps
 
 1. **Ask the user what `hi`/`lo`'s colon-separated values mean** for this
