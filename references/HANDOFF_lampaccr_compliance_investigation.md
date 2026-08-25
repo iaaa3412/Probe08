@@ -1107,3 +1107,121 @@ presents, which is neither a clean 0 ohm nor a clean infinite-impedance
 node from this SMU's perspective. This continues to point at something
 dynamic/capacitive in the real contact interaction rather than anything
 resistive, matching the leading theory above.
+
+### NPLC sweep RUN under real contact + broad SMU-settings battery -
+quantitative confirmation of a periodic/AC disturbance (fresh session,
+same day, GPIB only, wafer touching, pins 7/8 reconnected)
+
+Die 'third' (`2A08`/`2B07` = `smua`, `2C08`/`2D07` = `smub`, pins 7/8
+reconnected to the switch per the user), real wafer in contact. Six-part
+battery, all at 10 V:
+
+**Part 1 - NPLC sweep at each channel's own LOOSE/clean `limiti`
+(1e-4 `smua`, 1e-3 `smub`) - does the settled current's MAGNITUDE depend on
+integration time?**
+
+| NPLC | smua current | smub current |
+|---|---|---|
+| 0.01 | -8.13 µA | -46.26 µA |
+| 0.1  | -9.07 µA | -45.52 µA |
+| 1    | -4.68 µA | -42.90 µA |
+| 10   | -2.63 µA | -40.19 µA |
+| 25   | -1.03 µA | -37.23 µA |
+
+**Yes, clearly.** `smua`'s current drops ~8x from NPLC=0.1 to NPLC=25, and
+from NPLC=1 upward scales almost exactly as 1/NPLC (current x NPLC is
+roughly constant: 4.68, 26.3, 25.75) - the textbook signature of a
+periodic disturbance being progressively averaged out by longer
+integration, not a fixed real DC leakage (which NPLC would not change).
+`smub` moves the same direction but far more weakly (~20% drop end to
+end) - another channel-A-vs-B asymmetry, on top of every other one
+recorded in this doc, suggesting a different coupling strength/path for
+the two channels' rows rather than a fixed universal artifact. `measure.v()`
+stayed valid at every point (`compliance=false` throughout, since this is
+the loose-limit regime).
+
+**Part 2 - same NPLC sweep at the REAL recipe `limiti`=1e-6A - does any
+integration time let the source actually converge?**
+
+| NPLC | smua current | smub current |
+|---|---|---|
+| 0.01 | -55.86 µA | -161.5 µA |
+| 0.1  | -55.44 µA | -161.9 µA |
+| 1    | -52.05 µA | -160.3 µA |
+| 10   | -39.42 µA | -150.7 µA |
+| 25   | -33.71 µA | -150.1 µA |
+
+Same downward-with-NPLC trend, but **`measure.v()` overflowed and
+`compliance`=true at every single NPLC value tested, on both channels** -
+even the best case (NPLC=25) leaves a current 30-150x over the 1 µA limit,
+so longer integration alone cannot rescue this measurement at the recipe's
+actual intended limit. NPLC averaging clearly suppresses part of what's
+happening but there is a large residual left over even at maximum
+integration - this is not simply "integrate longer and the recipe's own
+numbers would have worked."
+
+**Part 3 - `source.highc` (compensation network tuned for driving high-
+capacitance/reactive loads) forced ON, tight limiti=1e-6A, both channels:**
+made things WORSE, not better - both `measure.v()` AND `measure.i()`
+overflowed (`9.91e37`), where with the default `highc=0` only voltage did.
+This is a genuine surprise and pushes back against a simple "just needs
+capacitive-load compensation" framing of the leading theory - whatever
+this load looks like to the source's control loop, the compensation network
+built for capacitive loads makes it less stable, not more.
+
+**Part 4 - `measure.autozero`** (OFF / ONCE / AUTO), `smua` only, tight
+limit: no meaningful difference (-45.8/-46.5/-47.4 µA respectively, all
+still overflow/compliant). Rules out autozero timing/internal-offset-
+recalibration cycling as a factor.
+
+**Part 5 - filter type MEDIAN vs REPEAT_AVG** (count=10), `smua` only,
+tight limit: no meaningful difference (-47.5/-44.3 µA, both still
+overflow/compliant). A median filter should reject sparse outliers/spikes
+far better than an average would if the noise were spiky - getting the
+same answer either way argues the disturbance is a persistent, continuous
+signal rather than intermittent glitches.
+
+**Part 6 - reversed source/measure roles**: sourced a small FIXED CURRENT
+instead (1 nA, matching the gauge reference's real-leakage scale) with
+`limitv`=10V, `smua` only. Hit the voltage ceiling (`measure.v()`=10.0019V,
+i.e. voltage-compliant - could not source even 1 nA within 10 V, meaning
+the true leakage at this node needs less than 1 nA at 10 V, consistent with
+the DMM's near-infinite finding) - but `measure.i()` ALSO overflowed
+(`9.91e37`) and `source.compliance`=true. So the disturbance overwhelms the
+measurement in EITHER source mode (voltage- or current-sourcing), not just
+the voltage-source configuration the recipe happens to use.
+
+**Updated understanding**: the NPLC dependence is the strongest,
+quantitative confirmation yet of a real periodic/AC-like disturbance riding
+on the contact node (not a one-time capacitive transient, not a fixed DC
+leak) - "flat, non-decaying across repeated reads" from the earlier
+observation and "shrinks close to 1/NPLC" from this test are two
+independent lines of evidence for the same thing. It is channel-A-vs-B
+asymmetric in EXACTLY the way every other test in this doc has been. It is
+NOT fixed by `highc` (gets worse), autozero mode, or filter type
+(median vs average makes no difference - not spiky), and NPLC alone cannot
+rescue the measurement back within the recipe's actual 1 µA limit even at
+maximum integration. The disturbance is large enough to blow past the ADC
+in current-source mode too, at a 1 nA target - i.e. it isn't specific to
+how the SMU happens to be configured, it's present and dominant regardless
+of source mode.
+
+**Suggested next steps, updated**:
+1. The 1/NPLC scaling (Part 1) is specific enough to be worth checking
+   `localnode.linefreq`/the instrument's assumed line frequency against the
+   ACTUAL bench mains frequency directly (a wall outlet frequency meter or
+   scope trigger, not GPIB) - a mismatch there is a very concrete,
+   fixable candidate for exactly this signature.
+2. Since `highc` made it worse rather than better, don't keep chasing a
+   pure-capacitance framing - an oscilloscope or spectrum-style
+   measurement at the point of contact (needle/probe-card connector) that
+   can show actual frequency content, not just "is there voltage," is the
+   most direct remaining way to identify what this signal actually is.
+3. The channel A-vs-B asymmetry (present in literally every test in this
+   document, including this NPLC one) is consistent enough across
+   completely different test types that it is worth tracing physically -
+   compare the actual cable runs / connector positions for rows A/B vs
+   rows C/D between the switch matrix and wherever they terminate, since a
+   real pickup mechanism (proximity to a noise source, loop area, shielding
+   quality) would plausibly differ that way, while a software/firmware
+   explanation would not.
