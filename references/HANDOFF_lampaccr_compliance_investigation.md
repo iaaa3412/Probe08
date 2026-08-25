@@ -993,3 +993,48 @@ are BOTH ruled out as of the dangling-pin-1/2 test above)
    found and fixed, a loosened compliance, or the offset characterized/
    subtracted, and none of those should happen before step 2 above narrows
    it further.
+
+### Suggested next steps item 2 RUN - dangling a REAL die column is ALSO
+clean (fresh session, same day, GPIB only)
+
+Physical precondition per the user (not GPIB-verifiable): **pins 7 and 8's
+probe-card-side wires manually disconnected**, dangling, nothing
+downstream - this time NOT spare columns, but die **'third'**'s own actual
+recipe crosspoints (`2A08,2B07` for `smua`, mirrored as `2C08,2D07` for
+`smub` on channel B's rows) - the exact columns that read ~-55 to -62 µA
+with voltage overflow every single time a real wafer was in contact.
+
+Same procedure as the pins-1/2 test: matrix opened fully first (both
+outputs confirmed off, error queue confirmed empty beforehand), then per
+channel - close its HI/LO crosspoints on columns 7/8, source 10 V,
+`limiti` at that channel's established clean threshold (`smua`=1e-4A,
+`smub`=1e-3A), read `measure.v()`/`measure.i()` x5/`source.compliance`,
+output off, crosspoints open.
+
+**Result - clean on both channels, same as pins 1/2:**
+- `smua` (`2A08`+`2B07`, limiti=1e-4): `measure.v()`=10.0005 V (valid),
+  `measure.i()` x5 = 5.15e-13 -> 2.45e-13 A (decaying, sub-picoamp),
+  `compliance`=false.
+- `smub` (`2C08`+`2D07`, limiti=1e-3): `measure.v()`=10.0008 V (valid),
+  `measure.i()` x5 = 8.20e-13 -> 6.14e-13 A (decaying, sub-picoamp),
+  `compliance`=false. Error queue stayed at 0 throughout (the earlier
+  stale entries are gone as of this session - unrelated to this result).
+
+**This is the decisive version of the test.** Per the interpretation this
+was designed against: a clean result on the SAME columns that are
+anomalous under real wafer contact means the fault is not in that column's
+own cabling/connector/routing up to the disconnect point - it requires the
+far end to actually be touching a wafer. Combined with everything already
+eliminated this investigation (switch matrix rows in general - both spare
+and real columns dangling behave identically; cross-channel interference;
+chuck-to-wafer DC continuity; chuck/SMU/switch ground potential), essentially
+every candidate is now ruled out except the real needle-to-wafer contact
+interaction itself. Since the DC-based checks (continuity, ground potential)
+came back negative, the leading remaining theory is something **AC/
+capacitive rather than DC** - e.g. a capacitive coupling path between the
+needle/pad and some reference (chuck, adjacent structure, or the wafer body
+itself) that only exists under actual mechanical contact and wouldn't show
+up on a handheld DC meter at all. Not yet isolated further; a scope or LCR-
+style AC measurement at the point of contact (not a plain ohmmeter) would be
+the natural way to test this next, if the bench has one - outside GPIB
+script scope for now.
