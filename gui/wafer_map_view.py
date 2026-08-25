@@ -333,6 +333,21 @@ class WaferMapPanel(ttk.LabelFrame):
         _die_status persisting across those."""
         self._die_status.clear()
 
+    def reset_all_statuses(self):
+        """Same idea as clear_status, but for "the operator pressed Reset
+        Counts" rather than a new folder loading - also repaints every
+        already-drawn die rect back to UNTESTED right now, since nothing
+        else is about to trigger a redraw the way loading a new map does.
+        Without this, clearing the pass/fail counters left every square
+        still showing its last PASS/FAIL colour."""
+        self._die_status.clear()
+        untested = self._STATUS_COLORS["UNTESTED"]
+        for item in self.dies.values():
+            try:
+                self.canvas.itemconfig(item, fill=untested)
+            except tk.TclError:
+                pass
+
     def load_from_ata(self, folder_path, filename="ata_wafer_map_gds.csv",
                       pitch=(1.0, 1.0)):
         self.clear_status()

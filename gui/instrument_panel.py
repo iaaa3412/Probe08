@@ -3012,6 +3012,20 @@ class MainLayout(ttk.Frame):
         # one. What cannot be interrupted is a reading already in flight -
         # that is a single blocking GPIB call, and abandoning it mid-transfer
         # would leave the bus out of step for everything after it.
+        #
+        # Idempotency guard: this can genuinely be called twice for one
+        # real stop - the operator's own Stop Run press racing
+        # _exec2_zup_measure_zdown's own automatic abort-on-failed-Z-down
+        # safety check (a real run-thread call, not a UI click) - and with
+        # no guard the emergency_stop/K/es commands below went out on the
+        # wire twice per stop. self._exec2_aborted is reset to False by
+        # every run starter (_exec2_start_full_die_walk/_start_site_list/
+        # _start_minor_moves), so it is exactly "a stop was already
+        # processed for the run in progress, nothing new has started
+        # since" - not just "not currently running".
+        if self._exec2_aborted:
+            self._exec2_log("[RUN] ⏹ Stop Run: already stopped — ignoring the repeat.")
+            return
         eg_run = getattr(self, "eg_pma_run", None)
         eg_was_running = bool(getattr(eg_run, "_running", False))
         if eg_run is not None:
@@ -6030,6 +6044,21 @@ class MainLayout(ttk.Frame):
                 reset()
             except Exception:
                 pass
+        # Accretech has no equivalent per-touchdown record of its own - the
+        # colour lives directly on the wafer map widgets (and
+        # controller.die_status, cmd_save_csv's own persistent copy) - same
+        # "counters reset but squares still show the old PASS/FAIL" gap.
+        try:
+            self.controller.die_status.clear()
+        except Exception:
+            pass
+        for wm in (getattr(self, "_exec2_wafer_map", None),
+                  getattr(self, "_results_wafer_map", None)):
+            if wm is not None and hasattr(wm, "reset_all_statuses"):
+                try:
+                    wm.reset_all_statuses()
+                except Exception:
+                    pass
         self._exec2_die_num = 0
         if total_dies is not None:
             self._exec2_total_dies = total_dies

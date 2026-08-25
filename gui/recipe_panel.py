@@ -1261,6 +1261,18 @@ class RecipePanel(ttk.Frame):
         ttk.Button(bar, text="🗑 Clear all",
                    command=self._sites_clear).pack(side="left", padx=(6, 0))
 
+        # Basic map-only builders: fill the table below and nothing else -
+        # no map highlighting, no auto-save. ➡ Push to map / 💾 Save (both
+        # already exist) are the separate, explicit next steps, same as a
+        # hand-picked list from ⬅ Take from map selection.
+        ttk.Button(bar, text="🎯 Pull shots",
+                   command=self._sites_pull_shots).pack(side="left", padx=(16, 0))
+        ttk.Button(bar, text="🔎 Find all",
+                   command=self._sites_find_all).pack(side="left", padx=(6, 0))
+        self._find_all_var = tk.StringVar(value="")
+        ttk.Entry(bar, textvariable=self._find_all_var, width=14).pack(
+            side="left", padx=(4, 0))
+
         cols = ("n", "die_id", "row", "col")
         self._site_tree = ttk.Treeview(sf, columns=cols, show="headings", height=6)
         for cid, text, width, anchor in (("n", "#", 40, "center"),
@@ -1361,6 +1373,107 @@ class RecipePanel(ttk.Frame):
             f"die(s) with an ID from the map"
             + (f" and saved to probe card '{card}'." if saved
                else " — NOT saved (no probe card); press 💾 Save."))
+
+    def _sites_pull_shots(self):
+        """Basic touchdown-list builder: one pick per shot on the loaded
+        map - the die Wafer Builder's Shot tab numbers #1 in each. Only
+        fills the table below (➡ Push to map / 💾 Save stay separate,
+        explicit steps) - matches the "any die within the shot" touchdown
+        style (see instrument_panel._exec2_prepare_shot_geometry), just
+        picking THE specific one that is #1."""
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        gen = getattr(ui, "recipe_gen", None)
+        if gen is None:
+            messagebox.showinfo("Touchdowns", "The Wafer Builder tab is not available.")
+            return
+        shot_rows, shot_cols = gen._shot_dims()
+        if shot_rows * shot_cols <= 1:
+            messagebox.showinfo(
+                "Touchdowns",
+                "The Wafer Builder Shot template is a single die - there is "
+                "nothing to pick 'the first die of each shot' from.")
+            return
+        if not getattr(ui, "_exec2_overlay_offset_confirmed", False):
+            messagebox.showinfo(
+                "Touchdowns",
+                "No confirmed Overlay alignment - press Overlay… and 🖌 Overlay "
+                "on Map on the Run tab first, so a real (row, col) on the map "
+                "can be resolved into a shot.")
+            return
+        from recipe_gen_panel import shot_die_rc as _shot_die_rc  # deferred: avoids
+        # a module-load-time circular import (recipe_gen_panel -> wafer_map_view
+        # -> recipe_panel), same reason other cross-panel imports in this file
+        # are done lazily inside the function that needs them.
+        die1_rc = _shot_die_rc(dict(gen._shot_cells), shot_rows, shot_cols, 1)
+        if die1_rc is None:
+            messagebox.showinfo("Touchdowns",
+                                "The Wafer Builder Shot template has no die #1 defined.")
+            return
+        slot_r1, slot_c1 = die1_rc
+        row_offset = ui._exec2_overlay_row_offset
+        col_offset = ui._exec2_overlay_col_offset
+        overlay = getattr(ui, "_exec2_overlay_die_ids", None) or {}
+        picks = []
+        for row, col in wm.dies:
+            wb_row, wb_col = row - row_offset, col - col_offset
+            shot_row, shot_col = wb_row // shot_rows, wb_col // shot_cols
+            slot_row = wb_row - shot_row * shot_rows
+            slot_col = wb_col - shot_col * shot_cols
+            if (slot_row, slot_col) == (slot_r1, slot_c1):
+                picks.append((row, col))
+        if not picks:
+            messagebox.showinfo(
+                "Touchdowns",
+                "No die #1 positions found on the loaded map - check the "
+                "Overlay alignment and Shot template.")
+            return
+        picks.sort()
+        sites = [{"die_id": overlay.get(rc) or wm.die_ids.get(rc, ""),
+                 "row": rc[0], "col": rc[1]} for rc in picks]
+        self._sites[:] = sites
+        self._store_form()
+        self._refresh_sites()
+        self.controller.log(
+            f"[RECIPE] '{self._current}': touchdown list set to {len(sites)} "
+            "shot(s) - die #1 of each - from the loaded map. Not saved yet - "
+            "press 💾 Save when ready.")
+
+    def _sites_find_all(self):
+        """Basic touchdown-list builder: every die on the loaded map whose
+        ID exactly matches the typed text. Only fills the table below,
+        same as 🎯 Pull shots - no map highlighting, no auto-save."""
+        ui = self._run_panel()
+        wm = getattr(ui, "_exec2_wafer_map", None)
+        if wm is None:
+            messagebox.showinfo("Touchdowns", "The Run tab's wafer map is not available.")
+            return
+        target = (self._find_all_var.get() or "").strip()
+        if not target:
+            messagebox.showinfo("Touchdowns", "Type a die ID to search for first.")
+            return
+        overlay = getattr(ui, "_exec2_overlay_die_ids", None) or {}
+        picks = []
+        for rc in wm.dies:
+            die_id = overlay.get(rc) or wm.die_ids.get(rc, "")
+            if die_id == target:
+                picks.append(rc)
+        if not picks:
+            messagebox.showinfo("Touchdowns",
+                                f"No dies on the loaded map are labeled '{target}'.")
+            return
+        picks.sort()
+        sites = [{"die_id": target, "row": rc[0], "col": rc[1]} for rc in picks]
+        self._sites[:] = sites
+        self._store_form()
+        self._refresh_sites()
+        self.controller.log(
+            f"[RECIPE] '{self._current}': touchdown list set to {len(sites)} "
+            f"die(s) labeled '{target}' from the loaded map. Not saved yet - "
+            "press 💾 Save when ready.")
 
     def _sites_to_map(self):
         ui = self._run_panel()
