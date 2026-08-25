@@ -1553,18 +1553,9 @@ class MainLayout(ttk.Frame):
             "", "end", text=f"📁 {os.path.basename(folder_path)}",
             open=True, tags=("section",))
 
-        # -- Key ATA files --------------------------------------------
-        key_id = tree.insert(root_id, "end", text="📄 Key ATA Files",
-                             open=True, tags=("section",))
-        for fname, (desc, owner) in ATA_KEY_FILES.items():
-            if owner not in ("shared", self._system):
-                continue
-            found = fname in all_files
-            tree.insert(key_id, "end", text=fname,
-                       values=("✔" if found else "–", desc),
-                       tags=("found" if found else "missing",))
-
-        # -- Probe cards + each system's own recipe file ---------------
+        # -- Probe cards + each system's own recipe file (default: open,
+        # and listed above Key ATA Files - the more actionable of the two,
+        # and the one an incident like LAMP's "lampaccr" gap shows up in)
         cards_dir = os.path.join(folder_path, "probe_cards")
         card_bases = set()
         if os.path.isdir(cards_dir):
@@ -1586,7 +1577,7 @@ class MainLayout(ttk.Frame):
             for base in sorted(card_bases):
                 mark = "  (active)" if base == active_card else ""
                 card_id = tree.insert(cards_id, "end", text=base + mark,
-                                     tags=("found",))
+                                     open=True, tags=("found",))
                 for system in ("accretech", "electroglas"):
                     n = self._card_recipe_count(cards_dir, base, system)
                     label = system.capitalize()
@@ -1602,6 +1593,18 @@ class MainLayout(ttk.Frame):
             tree.insert(cards_id, "end", text="(none yet)",
                        values=("–", "create one on the Probe Card tab"),
                        tags=("missing",))
+
+        # -- Key ATA files - collapsed by default, less immediately
+        # actionable than the probe cards/recipes above --------------
+        key_id = tree.insert(root_id, "end", text="📄 Key ATA Files",
+                             open=False, tags=("section",))
+        for fname, (desc, owner) in ATA_KEY_FILES.items():
+            if owner not in ("shared", self._system):
+                continue
+            found = fname in all_files
+            tree.insert(key_id, "end", text=fname,
+                       values=("✔" if found else "–", desc),
+                       tags=("found" if found else "missing",))
 
         # -- Subfolders, one level of contents each --------------------
         if subfolders:
