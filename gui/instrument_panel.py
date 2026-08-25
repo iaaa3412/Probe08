@@ -5421,6 +5421,17 @@ class MainLayout(ttk.Frame):
                                 smu.set_voltage(smu_ch, float(lvl))
                                 if limit:
                                     smu.set_current_limit(smu_ch, float(limit))
+                                    if hasattr(smu, "get_current_limit"):
+                                        try:
+                                            readback = smu.get_current_limit(smu_ch)
+                                        except Exception:
+                                            readback = None
+                                        if readback is not None and abs(
+                                                readback - float(limit)) > abs(float(limit)) * 0.01:
+                                            self._exec2_log(
+                                                f"[MEASURE]    ⚠ asked for current limit "
+                                                f"{float(limit):.4g} A, instrument reports "
+                                                f"{readback:.4g} A")
                                 smu.turn_output_on(smu_ch)
                                 last_set_voltage_by_ch[smu_ch] = float(lvl)
                                 did_bias = True

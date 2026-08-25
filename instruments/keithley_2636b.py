@@ -29,6 +29,13 @@ class Keithley2636B(GPIBInstrument):
     def set_current_limit(self, channel, amps):
         self.write(f"{channel}.source.limiti = {amps}")
 
+    def get_current_limit(self, channel):
+        reading = self.query(f"print({channel}.source.limiti)")
+        try:
+            return float(reading)
+        except Exception:
+            return None
+
     def set_voltage_limit(self, channel, volts):
         self.write(f"{channel}.source.limitv = {volts}")
 
