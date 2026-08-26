@@ -1260,17 +1260,45 @@ of source mode.
    real pickup mechanism (proximity to a noise source, loop area, shielding
    quality) would plausibly differ that way, while a software/firmware
    explanation would not.
-4. Alternative source/measure pair, if the line-frequency check comes back
-   negative: force ~10 V via the Keysight 33512B wave gen's "DC" output
-   shape instead of the SMU, on the same die/columns, and measure the
-   resulting current in series with the Keysight 34461A DMM instead of the
-   SMU's own ammeter. Note per `switch_topology.py`'s own "wave" step
-   convention, the return/LO side still routes through the SMU-A LO row
-   (row B) - not a fully independent instrument swap, only the sourcing/
-   sensing electronics change. Same current still appearing would further
-   rule out a 2636B-specific quirk; a clean result would be a significant,
-   surprising pivot needing reconciliation against the open/short bracket
-   tests above.
+4. **Alternative source/measure pair - CORRECTED methodology (the line-
+   frequency test below has since ruled that theory out, making this the
+   leading next test).** Original version of this item wrongly assumed the
+   DMM could be wired "in series" through the switch matrix to read
+   current directly - it can't. The 707B is a crossbar: closing a row onto
+   a column only ties that instrument in PARALLEL onto that column's one
+   physical wire. There is no way to splice an instrument in series
+   without physically breaking the wire (the same kind of manual step as
+   the pin-disconnect tests earlier), so a true series ammeter reading via
+   the DMM is not possible through crosspoints alone.
+
+   **Corrected test**, using die 'third' (columns 8=HI, 7=LO, per its own
+   `conn="2A08,2B07"`) as the concrete example - four crosspoints closed
+   AT THE SAME TIME, two for biasing, two for sensing, both pairs landing
+   on the exact same two physical columns:
+   - Bias: close `2G08` (WGEN CH1, row G, onto column 8) and `2B07` (SMU-A
+     LO, row B, onto column 7 - reused as the return per
+     `switch_topology.py`'s own "wave" step convention). WGEN sources
+     ~10 V DC (its "DC" output shape) across pins 7/8, same as the SMU
+     normally does, just with WGEN supplying the HI side.
+   - Sense: close `2F08` (DMM HI, row F, onto the SAME column 8) and
+     `2E07` (DMM LO, row E, onto the SAME column 7) - **in parallel** with
+     the bias, not in series. This only works because the DMM, in VOLTAGE
+     mode, is high-impedance (megaohms) and barely loads the node - like
+     clipping a voltmeter across a live wire without cutting it. **The DMM
+     must stay in voltage mode** - in current/ammeter mode this same
+     parallel wiring would look like a near dead-short across the WGEN's
+     output.
+   - Current is not read directly - it's inferred. The WGEN's output has a
+     known, fixed source impedance (typically 50 ohm) and, unlike the SMU,
+     does not actively servo to hold 10 V under load - its actual output
+     voltage sags proportional to whatever current is drawn. So: read the
+     real voltage at the pad with the DMM, then
+     `I = (10 V - V_measured) / 50 ohm`.
+   - Same offset current (inferred) still appearing this way -> further
+     rules out a 2636B-specific quirk, since neither the sourcing nor the
+     sensing instrument is the 2636B anymore. A clean/near-10V result
+     instead would be a significant, surprising pivot needing
+     reconciliation against the open/short bracket tests above.
 
 ### Line-frequency test RUN (step 1 above) - checked, then directly swap-
 tested - RULED OUT (fresh session, same day, GPIB only)
