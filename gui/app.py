@@ -773,6 +773,16 @@ class AtomicaDashboard(tk.Tk):
         self._connect_instruments(acc_ui,
                                   self._by_system["accretech"]["drivers"], connections)
         self.check_system_ready()
+        # A fresh connect should never inherit whatever crosspoints were left
+        # closed from a previous session/run - start every connect from a
+        # known, fully-open state.
+        switch_drv = self._by_system["accretech"]["drivers"].get("switch")
+        if switch_drv and switch_drv.inst:
+            try:
+                switch_drv.open_all()
+                self.log("[SYSTEM] SW_MATRIX: opened all crosspoints.")
+            except Exception as e:
+                self.log(f"[SYSTEM] SW_MATRIX open-all failed: {e}")
         if "prober" in self._by_system["accretech"]["drivers"] \
                 and hasattr(acc_ui, "_exec2_get_xy"):
             acc_ui._exec2_get_xy()
