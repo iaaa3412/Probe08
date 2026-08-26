@@ -2138,3 +2138,86 @@ above) that this only removes the ONE specific trigger that was
 confirmed - the underlying GPIB link's persistent-lag capability itself
 was not root-caused, so a different trigger could still in principle
 desync a long enough run, just without this exact recognizable signature.
+
+## Real recipe CSV bug found: `fourth` step's `nplc` differs from `first`/`second`/`third`, and correcting it clears the anomaly on a fresh contact
+
+While live-testing manually (physical power cycles, hand-set SMU config,
+reversed hi/lo wiring) on die `third`, reversing hi/lo on a die that had
+previously read clean (-5.5 to -8.8 nA, ~1-2 GOhm, compliance correctly
+`false`) immediately reproduced the bad signature: voltage overshoot to
+~18-20V (programmed level was 10V) with `compliance=true` despite current
+(~85 nA) being ~10x *under* the 1 uA limit. Reverting the wiring back to
+normal on that same contact did **not** revert the reading - it got
+worse instead (`smua.measure.v()` returned `9.91e+37`, the 2600-series'
+own overflow/invalid-reading sentinel, with current now at -8.8 to
+-9.4 uA, genuinely over limit). A true physical power cycle (confirmed
+via factory-default readback: `limiti=0.1`, `levelv=0`, `nplc=1`,
+`rangei=1e-9`) partially recovered it - no more overflow voltage, current
+back down to -41 to -43 nA - but voltage still hadn't settled to 10V
+within a ~2s window (0.27V -> 7.78V -> 8.18V) and `compliance=true` was
+still being reported despite the current being far under limit. Net: a
+contact that has been driven into the bad state once appears to carry a
+residual disturbance that persists across both reverting the wiring and
+power-cycling the SMU, at least on the timescale tested.
+
+Separately, the user reported die `fourth` "consistently messing up" and
+manually tried fixing its recipe row without success. Pulling the real
+CSV rows for `first`/`second`/`third`/`fourth` side by side surfaced a
+genuine, concrete bug:
+
+| die | conn | nplc |
+|---|---|---|
+| first | 4A05,4B06 | **10** |
+| second | 4A07,4B08 | **10** |
+| third | 2A08,2B07 | **10** |
+| fourth | 2A06,2B05 | **1** |
+
+`fourth` is the only row with `nplc=1` - everything else that matters for
+SMU config (`level=10`, `limit=1e-6`, `avg_count=1`, `avg_delay=0`,
+`settle_delay=200`) is identical across all four rows. This looks like a
+simple data-entry error on this one row, not an intentional difference.
+
+Tested in three steps, each with output capped hard under 5s (per updated
+safety constraint - full SMU state captured beforehand each time, single
+combined `print(v, i, compliance)` queries during the power-on window
+plus a live elapsed-time watchdog, to keep real GPIB round-trip latency
+from blowing past the cap the way an earlier, unbudgeted script did
+(9.09s overrun - caught and fixed immediately)):
+
+1. **Fresh `fourth` contact, recipe's own settings exactly as written
+   (`nplc=1`)**: glitched almost instantly - within 0.34s, voltage went
+   4.40V -> **-9.70V -> -10.22V** (sign flip, diverging away from the
+   +10V setpoint), current steady at -3.1 to -3.3 uA (genuinely over the
+   1 uA limit, `compliance=true` correctly matches this time).
+2. **Same (already-glitched) contact, config matched to `first`
+   (`nplc=10`, wiring kept as `fourth`'s own `2A06`/`2B05`)**: current
+   dropped ~40x to -69 to -76 nA (back under limit), no more sign flip,
+   but voltage still overshot to 15-16V instead of settling at 10V, and
+   `compliance=true` was still reported despite current being far under
+   limit.
+3. **Fresh `fourth` contact, same matched-to-`first` config
+   (`nplc=10`)**: clean - voltage settled to **10.0007V**, current stayed
+   at -167 to -696 nA (under limit throughout), and `compliance` correctly
+   read **`false`** on every read. No overshoot, no sign flip, no flag
+   mismatch.
+
+**Conclusion so far:** the `nplc=1` vs `10` mismatch in `fourth`'s row is
+a real, confirmed contributor - correcting it is necessary to get a clean
+reading. But it is not sufficient on its own once a contact has already
+been driven into the bad state (step 2 above); the fix only produced a
+fully clean result on a contact that had never been glitched (step 3).
+This is consistent with the `third`-die reversal finding above: something
+about having briefly been in the over-compliance state leaves a residual
+effect on that specific contact that a settings correction alone doesn't
+immediately clear. **Action item: audit every row in the CSV for
+similar one-off `nplc` (or other field) typos, not just `fourth`'s.**
+
+Also worth noting for recipe tuning: even in the fully clean fresh-contact
+run (step 3), the first read (taken right after `settle_delay=200ms`)
+still showed voltage mid-transient (3.62V, not yet 10V) while the second
+and third reads (roughly 0.6-0.8s after output-on, given real GPIB
+latency) had fully settled. If the real recipe engine's `avg_count=1`
+takes only the first post-settle reading, it may sometimes capture this
+transient rather than the settled value - a longer `settle_delay`, or
+averaging/discarding the first sample, may be worth considering
+independent of the `nplc` fix.
