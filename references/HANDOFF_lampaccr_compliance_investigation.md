@@ -1362,17 +1362,20 @@ biasN    (wave/apply/WGEN/CH1/DC/10V)  - closes WGEN HI (row G) + SMU-A LO
                                           own "wave" convention) onto the
                                           die's real HI/LO columns
 waitN    (delay, 200ms)                - settle after bias-on, before read
-readN    (voltage/measure/DMM)         - closes DMM HI/LO (rows F/E) onto
+readN    (current/measure/DMM)         - closes DMM HI/LO (rows F/E) onto
                                           the SAME two columns, in parallel
-                                          with the still-live bias
+                                          with the still-live bias, DMM in
+                                          DC CURRENT mode (changed from the
+                                          original voltage-mode design - see
+                                          "readN switched to current" below)
 settleN  (delay, 100ms)                - mirrors lampaccr's own post-
                                           measure pacing
 checkN   (passfail, target=readN,
-          min=9.9, max=10.1)           - PASS = voltage held near 10V (no
-                                          real load); FAIL = it sagged
-                                          (something's drawing current) -
-                                          the diagnostic signal this whole
-                                          recipe exists to produce
+          min=0, max=1e-07)            - PASS = current stayed near-zero
+                                          (real leakage-scale); FAIL = a
+                                          large current was drawn - mirrors
+                                          lampaccr's own tightened check
+                                          spec convention
 openbiasN (open, target=biasN)         - releases the WGEN crosspoints
                                           (and turns its output off, since
                                           biasN is mode=apply)
@@ -1380,16 +1383,31 @@ openreadN (open, target=readN)         - releases the DMM crosspoints
 delayN   (delay, 200ms)                - pacing before the next die
 ```
 
-**Not yet run** - this adds the recipe so it can be loaded and run through
-the normal Accretech Run tab (Test Selected/Full Die) like any other
-recipe, rather than needing another one-off raw-terminal script. `min`/
-`max`=9.9/10.1 on each `checkN` is a first-pass guess at "no real load
-detected" - since the actual voltage sag corresponding to the already-
-measured offset currents (tens to ~150 µA into a 50 ohm source impedance)
-would only be on the order of a few mV, not enough to trip a 9.9V floor by
-itself - **this threshold may need tightening once real data comes back**,
-the important number to actually look at is the raw recorded voltage per
-die, not just the pass/fail verdict.
+**readN switched to current (this update)**: originally `voltage`/measure -
+see "IMPORTANT CAVEAT" and the "WGEN+DMM test actually RUN" section below
+for why a single reading of either kind at this specific node has already
+been shown to be unreliable. Worth being explicit about what DC CURRENT
+mode means electrically here, since it's different from the voltage-mode
+case: the DMM's ammeter input is LOW impedance (by design - an ammeter
+needs a low burden voltage), so closing it in parallel onto the same two
+columns as the WGEN's bias doesn't just "tap" the node non-invasively the
+way voltage mode did - it creates a real near-short path across the WGEN's
+own HI/LO output, in parallel with whatever the actual contact impedance
+is. The "current-mode version" test already run (see below) measured
+-2.70 to -3.83 nA this way, which does NOT match a simple "~10V into a
+near-short through the DMM's ammeter" expectation (that would imply
+current dominated by the WGEN's own ~50 ohm output impedance, i.e. tens of
+mA, not nanoamps) - the mismatch between that expectation and the actual
+reading is exactly what triggered the deeper isolation work below, and
+that work's own conclusion (step 4, the decisive test) is that a single
+reading here - current OR voltage, from any instrument - is not a
+reliable/repeatable characterization of this node at all. Changing to
+current mode does not resolve that; it's logged as requested, with this
+caveat attached.
+
+**Not yet re-run since this change** - `min`/`max`=0/1e-07 A is a
+first-pass guess mirroring `lampaccr`'s own tightened check spec, not
+validated against this recipe's own real data yet.
 
 **IMPORTANT CAVEAT, not a fully SMU-free test**: `smua`'s LO row (row B)
 is still closed onto each die's LO column, reused as the WGEN's return
