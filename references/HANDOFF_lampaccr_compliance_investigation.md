@@ -2138,3 +2138,149 @@ above) that this only removes the ONE specific trigger that was
 confirmed - the underlying GPIB link's persistent-lag capability itself
 was not root-caused, so a different trigger could still in principle
 desync a long enough run, just without this exact recognizable signature.
+
+## Real recipe CSV bug found: `fourth` step's `nplc` differs from `first`/`second`/`third`, and correcting it clears the anomaly on a fresh contact
+
+While live-testing manually (physical power cycles, hand-set SMU config,
+reversed hi/lo wiring) on die `third`, reversing hi/lo on a die that had
+previously read clean (-5.5 to -8.8 nA, ~1-2 GOhm, compliance correctly
+`false`) immediately reproduced the bad signature: voltage overshoot to
+~18-20V (programmed level was 10V) with `compliance=true` despite current
+(~85 nA) being ~10x *under* the 1 uA limit. Reverting the wiring back to
+normal on that same contact did **not** revert the reading - it got
+worse instead (`smua.measure.v()` returned `9.91e+37`, the 2600-series'
+own overflow/invalid-reading sentinel, with current now at -8.8 to
+-9.4 uA, genuinely over limit). A true physical power cycle (confirmed
+via factory-default readback: `limiti=0.1`, `levelv=0`, `nplc=1`,
+`rangei=1e-9`) partially recovered it - no more overflow voltage, current
+back down to -41 to -43 nA - but voltage still hadn't settled to 10V
+within a ~2s window (0.27V -> 7.78V -> 8.18V) and `compliance=true` was
+still being reported despite the current being far under limit. Net: a
+contact that has been driven into the bad state once appears to carry a
+residual disturbance that persists across both reverting the wiring and
+power-cycling the SMU, at least on the timescale tested.
+
+Separately, the user reported die `fourth` "consistently messing up" and
+manually tried fixing its recipe row without success. Pulling the real
+CSV rows for `first`/`second`/`third`/`fourth` side by side surfaced a
+genuine, concrete bug:
+
+| die | conn | nplc |
+|---|---|---|
+| first | 4A05,4B06 | **10** |
+| second | 4A07,4B08 | **10** |
+| third | 2A08,2B07 | **10** |
+| fourth | 2A06,2B05 | **1** |
+
+`fourth` is the only row with `nplc=1` - everything else that matters for
+SMU config (`level=10`, `limit=1e-6`, `avg_count=1`, `avg_delay=0`,
+`settle_delay=200`) is identical across all four rows. This looks like a
+simple data-entry error on this one row, not an intentional difference.
+
+Tested in three steps, each with output capped hard under 5s (per updated
+safety constraint - full SMU state captured beforehand each time, single
+combined `print(v, i, compliance)` queries during the power-on window
+plus a live elapsed-time watchdog, to keep real GPIB round-trip latency
+from blowing past the cap the way an earlier, unbudgeted script did
+(9.09s overrun - caught and fixed immediately)):
+
+1. **Fresh `fourth` contact, recipe's own settings exactly as written
+   (`nplc=1`)**: glitched almost instantly - within 0.34s, voltage went
+   4.40V -> **-9.70V -> -10.22V** (sign flip, diverging away from the
+   +10V setpoint), current steady at -3.1 to -3.3 uA (genuinely over the
+   1 uA limit, `compliance=true` correctly matches this time).
+2. **Same (already-glitched) contact, config matched to `first`
+   (`nplc=10`, wiring kept as `fourth`'s own `2A06`/`2B05`)**: current
+   dropped ~40x to -69 to -76 nA (back under limit), no more sign flip,
+   but voltage still overshot to 15-16V instead of settling at 10V, and
+   `compliance=true` was still reported despite current being far under
+   limit.
+3. **Fresh `fourth` contact, same matched-to-`first` config
+   (`nplc=10`)**: clean - voltage settled to **10.0007V**, current stayed
+   at -167 to -696 nA (under limit throughout), and `compliance` correctly
+   read **`false`** on every read. No overshoot, no sign flip, no flag
+   mismatch.
+
+**Conclusion so far:** the `nplc=1` vs `10` mismatch in `fourth`'s row is
+a real, confirmed contributor - correcting it is necessary to get a clean
+reading. But it is not sufficient on its own once a contact has already
+been driven into the bad state (step 2 above); the fix only produced a
+fully clean result on a contact that had never been glitched (step 3).
+This is consistent with the `third`-die reversal finding above: something
+about having briefly been in the over-compliance state leaves a residual
+effect on that specific contact that a settings correction alone doesn't
+immediately clear. **Action item: audit every row in the CSV for
+similar one-off `nplc` (or other field) typos, not just `fourth`'s.**
+
+Also worth noting for recipe tuning: even in the fully clean fresh-contact
+run (step 3), the first read (taken right after `settle_delay=200ms`)
+still showed voltage mid-transient (3.62V, not yet 10V) while the second
+and third reads (roughly 0.6-0.8s after output-on, given real GPIB
+latency) had fully settled. If the real recipe engine's `avg_count=1`
+takes only the first post-settle reading, it may sometimes capture this
+transient rather than the settled value - a longer `settle_delay`, or
+averaging/discarding the first sample, may be worth considering
+independent of the `nplc` fix.
+
+## Order-vs-slot A/B test: slot 2 (third/fourth) is intrinsically bad regardless of order; slot 4 (first/second) shows a milder, order-dependent carryover effect
+
+Follow-up to the `fourth`-die `nplc` finding above. Real recipe wiring
+per die: `first`=`4A05`(HI)/`4B06`(LO), `second`=`4A07`/`4B08`,
+`third`=`2A08`/`2B07`, `fourth`=`2A06`/`2B05` - note `first`/`second` live
+on switch matrix **slot 4**, `third`/`fourth` on **slot 2**. All four
+tested with identical settings (10V, 1e-6 limit, nplc=10 for all -
+including `fourth` with its CSV bug corrected), single `smua` channel,
+same hard 5s / soft 3s power-on budget per die, on a single fresh shot
+(no chuck movement between dies - one touchdown, switched sequentially).
+
+**Pass 1 (order: first, second, third, fourth):**
+
+| die | V | I | compliance |
+|---|---|---|---|
+| first | 10.00V (settled) | -5.6 to -7.2 nA | false (correct) |
+| second | 1.3-1.75V (stuck low) | -0.7 to -1.4 nA | true (wrong) |
+| third | 9.91e+37 (overflow) | -6.7 to -7.8 uA (over limit) | true |
+| fourth | 9.91e+37 (overflow) | -10.2 to -10.3 uA (over limit) | true |
+
+**Pass 2, same fresh shot, REVERSED order (fourth, third, second,
+first)** - run specifically to separate "slot 2 is just bad" from
+"testing slot 4 first carried something over":
+
+| die | V | I | compliance |
+|---|---|---|---|
+| fourth (tested 1st) | 9.91e+37 (overflow) | -11.8 to -11.9 uA (over limit) | true |
+| third (tested 2nd) | 9.91e+37 (overflow) | -4.9 to -5.4 uA (over limit) | true |
+| second (tested 3rd) | 1.5V -> 14.7V -> 15.4V (overshoot) | -66 to -69 nA | true (wrong) |
+| first (tested 4th) | 6.7-7.7V (never fully settled) | -36 to -40 nA | true (wrong) |
+
+**Conclusion - two separate effects, not one:**
+
+1. **Slot 2 (`third`/`fourth`) is catastrophic regardless of test
+   order** - it glitched immediately even when tested first, with
+   nothing touched beforehand on this fresh shot. That rules out pure
+   carryover for these two and points at something intrinsic to **slot
+   2's switch matrix wiring itself** (rows/columns for 05-08 on that
+   slot), independent of the `nplc` recipe bug found earlier and
+   independent of any prior contact history.
+2. **Slot 4 (`first`/`second`) shows a real but much milder,
+   order-dependent effect.** Clean when genuinely tested first (Pass 1's
+   `first`: exact 10.00V, single-digit nA, correct `compliance=false`),
+   but visibly degraded once tested *after* slot 2 has already glitched
+   in the same session (Pass 2's `second`/`first`: voltage doesn't settle
+   cleanly, `compliance` flag turns wrong) - though it never reaches slot
+   2's severity (stays in the tens-of-nA range, never jumps to a
+   over-limit uA reading or an overflow voltage). This is consistent with
+   the earlier `third`-die reversal finding: whatever state slot 2's
+   catastrophic glitch puts `smua`/the switch matrix into does not fully
+   clear before the next die is tested, and bleeds into subsequent
+   readings even on an otherwise-healthy pad pair.
+
+**Action item:** given slot 2 is bad even when tested first, on a fresh
+shot, with the `nplc` bug already corrected - this now looks like a
+switch-matrix-slot-specific hardware issue rather than a
+recipe-settings or die-history issue. Worth physically inspecting slot
+2's connections/cabling on the 707B directly, and/or testing whether
+`third`/`fourth`'s pad pairs behave differently if rewired through a
+different, unused slot on the switch matrix (if the probe card
+permits), to confirm the fault travels with the slot rather than with
+the pads.
