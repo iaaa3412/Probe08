@@ -25,8 +25,6 @@ from instruments import accretech_profiles
 import export_formats as xfmt
 import app_settings
 
-ACCRETECH_INSTRUMENT_NAMES = ["UF200R Prober", "SMU (2636B)", "DMM (34461A)",
-                              "SW_MATRIX", "Wave Gen (33512B)"]
 # Every display name _EG_DRIVERS can produce, in the order eg_profiles.EG_KEYS
 # connects them, so the sidebar reads top-to-bottom as the sweep progresses.
 # A name missing from here has no status label, and the connect loop cannot
@@ -69,6 +67,24 @@ _ACCRETECH_SLOT_INFO = {
     "switch_matrix": ("SW_MATRIX",          "switch"),
     "wave_gen":      ("Wave Gen",           "wave_gen"),
 }
+
+# Every display name init_hardware()'s connections list can produce -
+# "{display} ({model})" for every model a slot can ever hold, generated from
+# the two dicts above rather than hand-listed, so a status row exists for
+# every model a bench might be switched to (see Setup tab's Model dropdown),
+# not just whichever one happened to be active when this list was last
+# edited. This IS the sidebar's actual row set (status_labels is built from
+# it once at startup) - a name produced by init_hardware() that isn't in
+# here has no row to update and silently never appears, which is exactly
+# what happened before this was generated: the sidebar was still built from
+# a hand-written list ("SMU (2636B)") that predated the "{display} ({model})"
+# naming init_hardware() switched to ("SMU (Keithley2636B)") - nothing
+# matched, so the whole Instruments panel showed no rows at all.
+ACCRETECH_INSTRUMENT_NAMES = [
+    f"{display} ({model})"
+    for key, (display, _drv_key) in _ACCRETECH_SLOT_INFO.items()
+    for model in _ACCRETECH_MODELS.get(key, {})
+]
 
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
 # No "smu"/"power_supply" for the same reason - requiring them would hold the
