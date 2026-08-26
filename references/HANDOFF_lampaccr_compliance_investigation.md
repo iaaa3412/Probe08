@@ -1338,3 +1338,55 @@ with longer integration for unrelated reasons. The next items in the list
 above (oscilloscope/spectrum check at the contact point; the WGEN+DMM
 alternative source/measure pair) are now the more promising directions,
 since the line-frequency-specific fix is closed off.
+
+### New recipe added: `lampaccr_wgen` - runs the corrected WGEN+DMM test
+through the actual Recipe/Run tab, not just an ad hoc GPIB script
+
+Added directly to `\\prober\M\ETL\proberautomation\LAMPATA\probe_cards\
+LaMP_HP_b.csv` (34 new rows: 1 `RECIPE` header row + 33 `STEP` rows -
+backup saved alongside as `LaMP_HP_b.csv.bak_before_lampaccr_wgen_add`).
+Verified by reading it back with `csv.DictReader` - all fields land in the
+right named columns, existing `lampaccr` content untouched (line-by-line
+diff against the pre-edit file showed zero changes to any existing row).
+
+Mirrors `lampaccr`'s own per-die structure (touch -> 4 die blocks -> each
+followed by a settle/check/open/delay sequence), but implements the
+corrected WGEN+DMM methodology from the "Alternative source/measure pair"
+item above instead of the SMU, for all four of `lampaccr`'s real dies -
+same columns each die already uses (`first`=4/5,6 `second`=4/7,8
+`third`=2/8,7 `fourth`=2/6,5), same die-attribution field. Per die N:
+
+```
+biasN    (wave/apply/WGEN/CH1/DC/10V)  - closes WGEN HI (row G) + SMU-A LO
+                                          (row B, reused per switch_topology's
+                                          own "wave" convention) onto the
+                                          die's real HI/LO columns
+waitN    (delay, 200ms)                - settle after bias-on, before read
+readN    (voltage/measure/DMM)         - closes DMM HI/LO (rows F/E) onto
+                                          the SAME two columns, in parallel
+                                          with the still-live bias
+settleN  (delay, 100ms)                - mirrors lampaccr's own post-
+                                          measure pacing
+checkN   (passfail, target=readN,
+          min=9.9, max=10.1)           - PASS = voltage held near 10V (no
+                                          real load); FAIL = it sagged
+                                          (something's drawing current) -
+                                          the diagnostic signal this whole
+                                          recipe exists to produce
+openbiasN (open, target=biasN)         - releases the WGEN crosspoints
+                                          (and turns its output off, since
+                                          biasN is mode=apply)
+openreadN (open, target=readN)         - releases the DMM crosspoints
+delayN   (delay, 200ms)                - pacing before the next die
+```
+
+**Not yet run** - this adds the recipe so it can be loaded and run through
+the normal Accretech Run tab (Test Selected/Full Die) like any other
+recipe, rather than needing another one-off raw-terminal script. `min`/
+`max`=9.9/10.1 on each `checkN` is a first-pass guess at "no real load
+detected" - since the actual voltage sag corresponding to the already-
+measured offset currents (tens to ~150 µA into a 50 ohm source impedance)
+would only be on the order of a few mV, not enough to trip a 9.9V floor by
+itself - **this threshold may need tightening once real data comes back**,
+the important number to actually look at is the raw recorded voltage per
+die, not just the pass/fail verdict.
