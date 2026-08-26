@@ -2001,3 +2001,73 @@ the real needle-to-wafer contact condition. Nothing left to isolate via
 GPIB alone from here - an oscilloscope or spectrum-analyzer-style
 measurement directly at the point of contact remains the most direct
 remaining way to characterize what that condition actually is.
+
+### SEPARATE, IMPORTANT FINDING: a full recipe run's results (user-
+supplied `test_test_results.csv`, ~660-die map, real `lampaccr` run
+2026-08-26) shows the GPIB response-desync bug (found and worked around
+earlier in this document) very likely corrupting the recipe engine's own
+recorded values partway through a run - not the same thing as the real-
+contact instability, and worth fixing separately
+
+User ran the actual `lampaccr` recipe across many shots via the normal
+Run tab and shared the raw results CSV. Up to timestamp `09:19:08`, every
+recorded current value has real, varying decimal precision (e.g.
+`3.10581e-08`, `-4.40348e-08`, `1.93793e-12`) - consistent with genuine
+(if still anomalous-per-the-rest-of-this-doc) ADC readings. **From
+timestamp `09:19:22` onward, EVERY recorded current value, for every die,
+for the rest of the entire run (dozens of shots), reads exactly `1e-06` -
+bit-for-bit identical, zero decimal noise, completely independent of wafer
+position.** Real measurements never do this - noise never vanishes to
+exactly zero and stays there across unrelated physical locations.
+
+`1e-06` is exactly the recipe's programmed `limiti`. This session already
+found and proved (see the "root cause found" and "double-query workaround"
+sections above) that this exact SMU's GPIB connection develops a
+**persistent one-query response lag** - every reply is actually the answer
+to the PREVIOUS query, not the current one, and it does not self-correct.
+The recipe engine reads back `source.limiti` for verification on every
+single measurement step (`gui/instrument_panel.py` ~line 5470,
+`smu.get_current_limit(smu_ch)`, added this session per the "read back the
+SMU's actual current limit, flag mismatch" work), immediately followed by
+the real `measure.i()` query for the same step. **If the persistent lag
+develops partway through a long run, the current-measurement query
+receives the STALE answer to the immediately-preceding limit-readback
+query instead of a real reading - which is always exactly the programmed
+limit, explaining the exact symptom observed:** frozen at `1e-06`,
+unaffected by die position, and (per the user's own follow-up test)
+unaffected by reversing polarity or swapping which pin is HI/LO, because
+there is no real measurement happening any more for those changes to
+affect.
+
+**This is a separate bug from the real-contact instability this document
+is mainly about** - it's a code/GPIB-infrastructure issue (the recipe
+engine's own query sequence is vulnerable to the same desync already
+documented), not a wafer, die, or contact-electrical-behavior finding.
+Left unfixed, any recipe run long enough to trigger the underlying lag
+will silently start reporting a constant, meaningless `limiti`-echo value
+as if it were real die data for every subsequent die in that run - a
+serious data-integrity issue independent of the compliance-anomaly
+investigation.
+
+**Not yet fixed** (per the user's own instruction, GUI code was not
+edited this session) - the fix belongs in `gui/instrument_panel.py`'s SMU
+query sequence (e.g. don't interleave a readback query with the
+measurement query, add an explicit resync/flush step, or apply the same
+double-query workaround validated in this document), and ideally the
+underlying GPIB lag itself should be root-caused (possibly a VISA/ADLINK-
+layer retry or buffering issue - never identified at the root, only
+worked around) rather than patched symptom-by-symptom in each call site.
+
+**Caveat for reading the rest of this document**: the persistent GPIB
+lag was only actually discovered and verified partway through this
+session (the "double-query workaround" section above). Earlier stages in
+this document that did NOT explicitly verify sync before trusting a
+reading could in principle be affected by the same issue - though the
+key decisive results (the real 39 kohm resistor test, the short-through-
+switch test, the dangling-column tests) are corroborated by internal
+consistency (e.g. exact agreement with Ohm's law at multiple limits,
+symmetric behavior in both polarities) that a stale/constant echoed value
+would not reproduce, so those specific conclusions are not considered at
+risk - but any single anomalous-looking reading from before this
+discovery that wasn't cross-checked should be treated with slightly more
+caution than it was at the time.
