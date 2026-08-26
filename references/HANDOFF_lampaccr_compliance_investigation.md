@@ -2221,3 +2221,66 @@ takes only the first post-settle reading, it may sometimes capture this
 transient rather than the settled value - a longer `settle_delay`, or
 averaging/discarding the first sample, may be worth considering
 independent of the `nplc` fix.
+
+## Order-vs-slot A/B test: slot 2 (third/fourth) is intrinsically bad regardless of order; slot 4 (first/second) shows a milder, order-dependent carryover effect
+
+Follow-up to the `fourth`-die `nplc` finding above. Real recipe wiring
+per die: `first`=`4A05`(HI)/`4B06`(LO), `second`=`4A07`/`4B08`,
+`third`=`2A08`/`2B07`, `fourth`=`2A06`/`2B05` - note `first`/`second` live
+on switch matrix **slot 4**, `third`/`fourth` on **slot 2**. All four
+tested with identical settings (10V, 1e-6 limit, nplc=10 for all -
+including `fourth` with its CSV bug corrected), single `smua` channel,
+same hard 5s / soft 3s power-on budget per die, on a single fresh shot
+(no chuck movement between dies - one touchdown, switched sequentially).
+
+**Pass 1 (order: first, second, third, fourth):**
+
+| die | V | I | compliance |
+|---|---|---|---|
+| first | 10.00V (settled) | -5.6 to -7.2 nA | false (correct) |
+| second | 1.3-1.75V (stuck low) | -0.7 to -1.4 nA | true (wrong) |
+| third | 9.91e+37 (overflow) | -6.7 to -7.8 uA (over limit) | true |
+| fourth | 9.91e+37 (overflow) | -10.2 to -10.3 uA (over limit) | true |
+
+**Pass 2, same fresh shot, REVERSED order (fourth, third, second,
+first)** - run specifically to separate "slot 2 is just bad" from
+"testing slot 4 first carried something over":
+
+| die | V | I | compliance |
+|---|---|---|---|
+| fourth (tested 1st) | 9.91e+37 (overflow) | -11.8 to -11.9 uA (over limit) | true |
+| third (tested 2nd) | 9.91e+37 (overflow) | -4.9 to -5.4 uA (over limit) | true |
+| second (tested 3rd) | 1.5V -> 14.7V -> 15.4V (overshoot) | -66 to -69 nA | true (wrong) |
+| first (tested 4th) | 6.7-7.7V (never fully settled) | -36 to -40 nA | true (wrong) |
+
+**Conclusion - two separate effects, not one:**
+
+1. **Slot 2 (`third`/`fourth`) is catastrophic regardless of test
+   order** - it glitched immediately even when tested first, with
+   nothing touched beforehand on this fresh shot. That rules out pure
+   carryover for these two and points at something intrinsic to **slot
+   2's switch matrix wiring itself** (rows/columns for 05-08 on that
+   slot), independent of the `nplc` recipe bug found earlier and
+   independent of any prior contact history.
+2. **Slot 4 (`first`/`second`) shows a real but much milder,
+   order-dependent effect.** Clean when genuinely tested first (Pass 1's
+   `first`: exact 10.00V, single-digit nA, correct `compliance=false`),
+   but visibly degraded once tested *after* slot 2 has already glitched
+   in the same session (Pass 2's `second`/`first`: voltage doesn't settle
+   cleanly, `compliance` flag turns wrong) - though it never reaches slot
+   2's severity (stays in the tens-of-nA range, never jumps to a
+   over-limit uA reading or an overflow voltage). This is consistent with
+   the earlier `third`-die reversal finding: whatever state slot 2's
+   catastrophic glitch puts `smua`/the switch matrix into does not fully
+   clear before the next die is tested, and bleeds into subsequent
+   readings even on an otherwise-healthy pad pair.
+
+**Action item:** given slot 2 is bad even when tested first, on a fresh
+shot, with the `nplc` bug already corrected - this now looks like a
+switch-matrix-slot-specific hardware issue rather than a
+recipe-settings or die-history issue. Worth physically inspecting slot
+2's connections/cabling on the 707B directly, and/or testing whether
+`third`/`fourth`'s pad pairs behave differently if rewired through a
+different, unused slot on the switch matrix (if the probe card
+permits), to confirm the fault travels with the slot rather than with
+the pads.
