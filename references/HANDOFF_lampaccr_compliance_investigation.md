@@ -1650,3 +1650,63 @@ forward the CURRENT-mode side of the validated methodology (the
 still-unresolved voltage-mode contradiction noted just above is not yet
 built into a recipe - would need its own variant with `readN` set back to
 `voltage` if that gets tested with the same 10-trial structure next).
+
+### Two real problems found checking `lampaccr_wgen`/`lampaccr_wgen_repeat`
+directly - NOT ready to trust as-is (fresh session, same day)
+
+User asked directly "is `lampaccr_wgen` good?" Checked the actual CSV rows
+on the network share and the real pass/fail code - two separate, concrete
+issues, independent of each other:
+
+**1. The passfail checks will FAIL every die regardless of the actual
+result.** `gui/instrument_panel.py`'s passfail evaluation
+(`verdict = ((not mn or value >= float(mn)) and (not mx or value <=
+float(mx)))`) compares the RAW SIGNED recorded value directly - no
+implicit `abs()`. That only happens if the read step's own `abs_value`
+field is set (`_exec2_maybe_abs`, applied once at the read step, not the
+check step). Checked both recipes' actual `readN` rows on the CSV
+directly - `abs_value` is empty on every one of them. Every current
+reading observed in this entire investigation, from any instrument on any
+die, has come back NEGATIVE. With `check1-4` at `min=0, max=1e-07`, a
+real reading like -3e-09 fails the `>= 0` bound immediately regardless of
+its magnitude - **both recipes as currently written will show FAIL on
+every single die, every run**, independent of whether the die is actually
+good. Fix: set `abs_value` on the `readN` steps (or change `min` to
+something negative, e.g. `-1e-07`, to make the range symmetric).
+
+**2. Bigger problem - the reading doesn't actually respond to the wafer at
+all.** User put the chuck back down (no contact) and asked to verify the
+method still makes sense. Ran the exact validated circuit (`2G08`+`2B07`
+bias, `smua` output off/passive return, `2F08`+`2E07` DMM current mode),
+5 independent trials, chuck down:
+
+```
+trial 1: -2.40e-09, -2.09e-09, -3.43e-09 A
+trial 2: -2.29e-09, -2.88e-09, -2.40e-09 A
+trial 3: -1.88e-09, -1.87e-09, -2.79e-09 A
+trial 4: -2.56e-09, -1.98e-09, -1.81e-09 A
+trial 5: -2.07e-09, -3.69e-09, -2.32e-09 A
+```
+
+**-1.8 nA to -3.7 nA - essentially indistinguishable from the in-contact
+10-trial result (-2.5 to -4.5 nA) recorded above.** The reading does not
+change whether a real wafer is touching the needle or not. This means the
+~3 nA number that looked like a clean validation of the WGEN+DMM method is
+actually a **fixed offset baked into the WGEN/DMM/row-B measurement path
+itself** (most likely a real, small leakage/offset current in the wave
+gen's own output stage, the DMM's input bias current, or the row-B/switch-
+matrix path - not yet isolated further), not a measurement of the die at
+all. It is repeatable, but it is not sensing the DUT.
+
+**Practical consequence**: even after fixing problem 1's sign bug, neither
+recipe can currently distinguish "real contact with a good (near-infinite)
+die" from "nothing connected at all" - both read the same ~2-4 nA. It
+would still likely catch a genuinely bad/leaky/shorted die if that fault
+draws current well above this few-nA floor (a real short would blow past
+it easily), but it cannot resolve down to the gauge reference's own
+~0.6-1 nA "good die" scale - the method's own floor is already 3-5x above
+that, before any real die leakage is even added in. **Do not treat this as
+a validated replacement for `lampaccr`'s SMU-based check yet** - it needs
+its own offset characterized and subtracted (or the offset's source found
+and removed) before the small-signal numbers it produces mean anything
+about the actual die.
