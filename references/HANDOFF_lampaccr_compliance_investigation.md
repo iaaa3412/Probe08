@@ -1717,3 +1717,44 @@ a validated replacement for `lampaccr`'s SMU-based check yet** - it needs
 its own offset characterized and subtracted (or the offset's source found
 and removed) before the small-signal numbers it produces mean anything
 about the actual die.
+
+**Problem 1 fixed (this update)**: `abs_value` set to `1` on all four
+`readN` steps in `lampaccr_wgen` (verified - only those 4 fields changed,
+backup `LaMP_HP_b.csv.bak_before_wgen_abs_value_fix`). Problem 2 (the
+fixed-offset/not-sensing-the-die issue) is NOT fixed by this and has no
+simple mechanical fix - `lampaccr_wgen` still should not be trusted as a
+real pass/fail check until that's resolved.
+
+### Where this leaves "is the SMU broken" - both textbook extremes already
+passed; next step is a known-value load, not another instrument swap
+
+Both true-open and true-short tests earlier in this doc came back
+perfectly clean on the 2636B (sub-picoamp on open, pinned exactly at
+`limiti` on short, on both channels) - the SMU already passed the two most
+basic checks you can throw at it electrically, which argues against a
+simple hardware fault in this unit. The WGEN+DMM comparison that looked
+like it was building toward "a different instrument reads this cleanly"
+has since been invalidated (the offset-doesn't-track-contact finding just
+above) - it was never actually sensing the die, so it isn't evidence about
+the SMU's correctness either way anymore.
+
+**Most useful next GPIB-only test, not yet tried**: a KNOWN-VALUE load,
+not another open/short extreme. If a precision resistor (ideally in the
+1-10 Mohm range, closer to what a real high-impedance DUT should look
+like than a dead short or true open) is available, connect it directly to
+the SMU - bypassing the switch matrix and probe card entirely - source
+10 V, and confirm the reading matches the resistor's known value to
+within normal accuracy spec. Open and short only test the two extremes;
+this tests whether the SMU is accurate on a real, moderate, non-trivial
+impedance, which is closer to what the actual node under contact should
+resemble if it's behaving like a real (if very high) resistance.
+
+**Most direct way to test the specific chassis, if available**: swap in a
+genuinely different physical SMU (a second 2636B, or any working bench
+SMU) in place of this one and repeat the real-contact test on die 'third'
+unchanged otherwise. Same anomaly on a different physical unit -> not this
+chassis's hardware, a real property of the contact that any properly
+functioning SMU would show. Clean result on the different unit -> points
+specifically at this chassis (calibration, an internal fault, firmware) -
+worth then checking this unit's calibration due date/status too, a
+non-technical thing to rule out first if easy to check.
