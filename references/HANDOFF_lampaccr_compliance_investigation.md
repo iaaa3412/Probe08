@@ -1650,3 +1650,10 @@ forward the CURRENT-mode side of the validated methodology (the
 still-unresolved voltage-mode contradiction noted just above is not yet
 built into a recipe - would need its own variant with `readN` set back to
 `voltage` if that gets tested with the same 10-trial structure next).
+
+**REMOVED (this update)** - user didn't need 10 trials in recipe form.
+All 322 rows deleted from `LaMP_HP_b.csv` (backup saved as
+`LaMP_HP_b.csv.bak_before_lampaccr_wgen_repeat_remove`, verified `lampaccr`
+and `lampaccr_wgen` both untouched). The validated methodology and its
+30-reading result are still fully documented above if needed again -
+just not present as a loadable recipe on the card anymore.
