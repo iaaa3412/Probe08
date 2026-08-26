@@ -1824,3 +1824,74 @@ mode) as a stand-in for `lampaccr`'s SMU-based check, and do not trust
 `lampaccr_wgen`/`lampaccr_wgen_repeat`'s recorded values as meaningful
 until row G (or whatever the real root cause turns out to be) is
 independently confirmed working.
+
+### ROOT CAUSE FOUND: it's row B, not row G - confirmed by swapping the
+sensing instrument (fresh session, same day, GPIB only) - plus a real
+infrastructure bug found and worked around along the way
+
+Per the suggested next step above, tried sensing a WGEN-driven column with
+`smub` (SMU channel B, rows C/D) instead of the DMM (rows F/E) - a
+completely independent sensing instrument, sharing nothing with the DMM
+setup except `smua`'s row B as the return. `smub` configured as a
+validated 0 A current-source high-Z voltmeter (same technique as earlier
+in this doc), with BOTH its HI and LO properly closed this time (unlike
+the earlier retracted "chaotic instability" test, which left `smub`/`smua`'s
+own LO floating - see the correction section above).
+
+**Infrastructure bug found first, before trusting any of this**: the very
+first attempt at this test returned nonsense - `smub.measure.v()` came
+back as the literal string `true`, and later reads showed an impossible
+~20 A "current" from a 0 A source. Diagnosed by sending distinctive marker
+queries (`print(999000)`, `print(999001)`, ...) and comparing expected vs
+actual: **every single response on this SMU connection was the answer to
+the PREVIOUS query, not the current one** - a persistent one-query lag
+that did not self-correct even after 6 additional flush attempts (each
+new query just perpetuates the same one-item offset). Root cause of the
+lag itself not identified (possibly a retry/duplicate-command artifact in
+the VISA/ADLINK layer - this session already logged one real `VI_ERROR_TMO`
+timeout on this same SMU earlier, so the link has shown at least one other
+communication irregularity). **Workaround verified and used for
+everything below**: send each query twice, keep the second response (the
+real, current answer to the first send) - confirmed against a known value
+(`smub.source.func` right after `reset()` correctly read exactly `1.0` =
+`DCVOLTS`, the true default, only once this workaround was applied).
+
+**With trustworthy reads confirmed, the actual result**:
+
+| state | smub.measure.v() (via rows C/D) |
+|---|---|
+| WGEN off (0 V) | -19.4 mV |
+| WGEN commanded to 10 V | 27.2, 35.2, 34.8, 37.4, 27.7 mV |
+
+Tight and repeatable, but **still nowhere near 10 V - and this is via
+completely different rows than the DMM's F/E.** Two independent sensing
+instruments (DMM and `smub`), sharing nothing but `smua`'s row B, both see
+the same collapse. This rules out the DMM specifically and rules out row G
+specifically (a bad row G would not explain why a *different* sensing
+path, through *different* rows, shows the identical symptom) - **the one
+thing common to every failed WGEN test in this document is `smua`'s row B
+being reused as the return.**
+
+**Conclusion: row B is not a passive, high-impedance return the way the
+"wave" step convention assumes - it is a real, low-impedance node that
+clamps the whole circuit low, regardless of what WGEN commands and
+regardless of which instrument senses the result.** This single
+explanation accounts for every "doesn't respond to load" finding in the
+entire WGEN investigation phase (the open/short/contact indistinguishability
+above, the flat ~2-4 nA current floor, the near-0 V voltage-mode readings)
+without needing a bad row G, a DMM-specific artifact, or any property of
+the DUT/contact at all. It does NOT explain the ORIGINAL SMU-based
+`lampaccr` anomaly (that circuit uses row A actively sourcing + row B as
+its OWN channel's return together, a properly closed loop, not row B
+borrowed passively by a different instrument) - this finding is specific
+to the WGEN-as-source experiments, not a new explanation for the original
+compliance mystery.
+
+**This also means a genuinely SMU-free WGEN test is still not possible via
+crosspoints alone** - not just "not fully independent" as flagged earlier,
+but actively invalidated by row B's real behavior. A true SMU-free test
+needs an actual physical low-impedance return for WGEN that is NOT row B -
+e.g. a physical clip lead from WGEN's own LO terminal to a genuine chassis
+ground point, bypassing the switch matrix's row assignments entirely (the
+same category of manual step as the pin-disconnect tests earlier this
+investigation).
