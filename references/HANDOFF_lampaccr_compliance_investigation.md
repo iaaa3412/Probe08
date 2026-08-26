@@ -1521,3 +1521,67 @@ actually characterize this instability (frequency, amplitude, whether
 it's periodic or chaotic) - everything GPIB-only has now been tried and
 consistently shows instability without being able to characterize its
 real nature further.
+
+### CORRECTION to the above: the "chaotic instability" (step 4/Stage W)
+was very likely my own methodology mistake, not a real finding - and the
+current-mode reading IS repeatable (fresh session, same day, GPIB only)
+
+The step-4 "decisive test" directly above closed `2A08` (row A, `smua`'s
+HI) and `2G08` (WGEN) together, with `smua` actively configured as a 0 A
+current source (`output=ON`) - **but `smua`'s own LO row (row B) was never
+closed at all in that test.** Running an SMU's active current-source loop
+with its own return/LO terminal completely disconnected from anything is
+an invalid measurement setup on its own - there is no way for that
+feedback loop to reference against anything real, and instability under
+those conditions doesn't require any real fault at the contact point at
+all. This was a real gap in that test's design, found while trying to
+reconcile it against the result below - retracting the strength of that
+"chaotic instability at the contact point" conclusion. It shouldn't have
+been presented as settled.
+
+**Direct repeatability check of the current-mode WGEN+DMM reading**
+(user's own test requirement is literally "bias 10 V, read current" - this
+checks whether that specific measurement, done via WGEN+DMM instead of the
+SMU, is actually trustworthy): 10 FULLY INDEPENDENT trials on die 'third'
+(`2G08`+`2B07` bias - `smua` output OFF this time, not actively sourcing
+anything, just lending its LO row as the return, exactly as the original
+current-mode test did; `2F08`+`2E07` DMM in DC current mode) - each trial
+a complete close -> bias-on -> read x3 -> bias-off -> open cycle, not just
+repeated reads within one continuous bias:
+
+```
+trial 1:  -2.54e-09, -3.28e-09, -2.75e-09 A
+trial 2:  -4.03e-09, -2.96e-09, -3.22e-09 A
+trial 3:  -3.17e-09, -4.47e-09, -2.93e-09 A
+trial 4:  -3.64e-09, -4.11e-09, -3.33e-09 A
+trial 5:  -3.98e-09, -3.81e-09, -3.20e-09 A
+trial 6:  -3.61e-09, -3.81e-09, -2.82e-09 A
+trial 7:  -2.76e-09, -3.78e-09, -3.30e-09 A
+trial 8:  -4.24e-09, -3.26e-09, -3.29e-09 A
+trial 9:  -3.18e-09, -4.13e-09, -3.01e-09 A
+trial 10: -4.30e-09, -3.15e-09, -3.53e-09 A
+```
+
+All 30 readings across 10 independent bias cycles land in a tight
+**-2.5 nA to -4.5 nA** band - genuinely repeatable, not a lucky single
+snapshot. This directly supports (contrary to this doc's immediately-
+preceding conclusion, and contrary to the caveat just attached to
+`lampaccr_wgen`'s `readN` current-mode change above) that **the WGEN(10V)
++ DMM(current mode) reading, with `smua` genuinely off and only lending
+its LO row as a passive return, IS a repeatable way to do "bias 10 V, read
+current" on this node** - it just doesn't match the SMU's own reading at
+all (nA here vs tens-to-hundreds of µA from the 2636B), and matches the
+gauge reference's real-leakage cluster far better than anything the SMU
+itself has produced on this bench.
+
+**Still unresolved, flagged rather than papered over**: the voltage-mode
+version of this exact same circuit (same crosspoints, `smua` in the same
+state, only the DMM's function changed) read near-0 V instead of the
+~9.9995 V that a genuine few-nA current into a very high DUT impedance
+should produce - directly contradicting the current-mode result's
+implied high impedance. That contradiction has NOT been explained yet -
+possible next step: repeat the voltage-mode version with the same 10-trial
+repeatability structure used here, to check whether IT is also repeatable
+(just at a value that doesn't match simple Ohm's-law expectations, meaning
+the DMM's own voltage-mode loading or some other effect needs
+accounting for) or whether it was itself a one-off anomaly.
