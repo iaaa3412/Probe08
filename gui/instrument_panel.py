@@ -4840,7 +4840,17 @@ class MainLayout(ttk.Frame):
         # on Electroglas the Wafer Builder map is the ground truth for die
         # IDs - loading a recipe (or a PMA-derived one) must only select/
         # highlight squares, never relabel them with its own touchdown data.
-        if self._system == "accretech":
+        #
+        # Minor Moves-only, too: that recipe type's own SITE table really
+        # does carry one row per real die it measures, each with its own
+        # true die_id (the comment above explains why that has to win over
+        # the shot-level overlay). A basic recipe's touchdown list is NOT
+        # that - e.g. Recipe tab's "Pull Shots" only ever fills in die #1 of
+        # each shot, so treating IT as "the complete overlay" here wiped
+        # every other die's label off the whole map (Run tab AND Results
+        # tab) the moment the recipe was saved, even though Pull Shots/Push
+        # to Map themselves never touch the map beyond highlighting.
+        if self._system == "accretech" and self.recipe_panel.is_minor_moves():
             ids = {(s["row"], s["col"]): s["die_id"] for s in records if s.get("die_id")}
             if ids:
                 self._exec2_clear_overlay()
