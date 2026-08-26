@@ -1758,3 +1758,69 @@ functioning SMU would show. Clean result on the different unit -> points
 specifically at this chassis (calibration, an internal fault, firmware) -
 worth then checking this unit's calibration due date/status too, a
 non-technical thing to rule out first if easy to check.
+
+### Short test + open-in-voltage-mode RUN - the whole WGEN+DMM+row-B
+measurement path does not respond to the external circuit AT ALL, in
+either mode (fresh session, same day, GPIB only) - SUPERSEDES the
+"validated, repeatable" framing given to the current-mode reading above
+
+User asked for a shorting test (bracketing the other DC extreme, "with
+limits on wavegen" since WGEN has no active current limit like the SMU -
+just a fixed ~50 ohm output impedance). Forced a hard short between two
+SPARE columns (01, 02 - not any real die) via WGEN CH2's row (H),
+otherwise unused all session, closed onto both columns at once - ties them
+together through that shared bus, no physical rewiring needed. Safety:
+`SOURce1:VOLTage:LIMit` set to +/-1 V and the test voltage itself reduced
+to 1 V (from the usual 10 V) before biasing into the short.
+
+| condition | current mode | voltage mode |
+|---|---|---|
+| open (dangling, no bridge, spare columns) | -2 to -4 nA (Stage Y, no-contact test above) | mostly -0.3 to -1 mV, one wild outlier at **-325.7 mV** |
+| real die, in contact (die 'third', 10 trials above) | -2.5 to -4.5 nA | ~-0.5 to -1.3 mV |
+| deliberate short (forced via row H, spare columns) | -1.7 to -4.5 nA | ~-0.9 to -1.5 µV |
+
+**Voltage mode reads near-0 V on all three conditions, including the
+genuine open circuit** - which should read close to the full commanded
+voltage (negligible current, negligible drop across WGEN's 50 ohm source
+impedance) and does not. Current mode reads the same ~2-4 nA regardless of
+load too. **Open, short, and real contact are electrically
+indistinguishable through this measurement path, in either mode.** This is
+not a property of the DUT or the contact - the measurement path itself
+(WGEN via row G, DMM via rows F/E, `smua`'s row B as the return) is not
+reflecting what is actually connected, under any of the three conditions
+tested.
+
+**This retracts the "validated, repeatable" framing given to the current-
+mode reading in the correction section above.** Repeatable is not the same
+as correct - the -2 to -4 nA number is real and reproducible, but it is
+reproducible because it does not respond to anything, not because it is
+measuring real leakage. That should have been caught by testing the open
+condition in voltage mode earlier; it wasn't, and the intervening
+conclusion overstated confidence in a number that turned out to be
+disconnected from the actual circuit.
+
+**Root cause not yet found** - leading suspect: row G (WGEN CH1's
+designated crosspoint row per `switch_topology.py`) may not actually
+deliver WGEN's signal to the switch matrix's columns at all. Every test in
+this document before today used only rows A/B/C/D/E/F - **row G (and H) has
+never been independently verified this entire investigation**, only
+assumed correct from the topology file's declared mapping. A bad/miswired
+row-G connection would explain every result above without needing any
+theory about the DUT, the contact, or a "measurement path artifact" at
+all - the column would simply never see WGEN's real signal regardless of
+what else is connected.
+
+**Suggested next step**: verify row G independently of everything else in
+this chain - e.g. with a handheld meter directly at the switch matrix's
+row-G terminal block (physical, not GPIB), or by finding a way to sense a
+column driven by row G using an instrument/row combination not yet tried
+in this investigation (rows C/D, the SMU's B-channel HI/LO, have also
+never been used to sense a WGEN-driven column - worth trying before
+assuming row G itself is bad, in case the issue is instead specific to
+how row B/E behave rather than row G).
+
+**Practical conclusion for now**: do not use the WGEN+DMM approach (either
+mode) as a stand-in for `lampaccr`'s SMU-based check, and do not trust
+`lampaccr_wgen`/`lampaccr_wgen_repeat`'s recorded values as meaningful
+until row G (or whatever the real root cause turns out to be) is
+independently confirmed working.
