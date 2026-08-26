@@ -1415,3 +1415,91 @@ need a physical clip lead from the WGEN's own LO terminal straight to a
 chassis ground point, bypassing the switch matrix's row assignments
 entirely - the same category of manual step as the earlier pin-disconnect
 tests, not something achievable via crosspoints alone.
+
+### WGEN+DMM test actually RUN (both variants) - result is NOT clean, and
+the real finding is bigger than either variant alone suggested (fresh
+session, same day, GPIB only, wafer touching, die 'third')
+
+Ran both the original (current-mode) and corrected (voltage-mode) WGEN+DMM
+methodology from the two sections above, then chased down why they
+disagreed. Four steps, in order:
+
+1. **Current-mode version** (`2G08`+`2B07` bias, `2F08`+`2E07` DMM in DC
+   current mode): DMM read **-2.70 to -3.83 nA** - looked like the clean
+   "real leakage" cluster from `references/gauge example.xlsx`.
+2. **Voltage-mode version** (same crosspoints, DMM switched to DC voltage,
+   current inferred via Ohm's law from WGEN's ~50 ohm source impedance):
+   DMM read only **-0.5 to -2.2 mV** (not the ~10 V a clean open should
+   show) - inferring **~200 mA**, wildly different from step 1 and not
+   physically sane for a die that DMM's own plain 2-wire check has always
+   read as open.
+3. **Isolating why**: tested row B (`smua`'s LO, reused as the return per
+   the "wave" convention) alone, output "off", on a spare column, DMM
+   voltage-tapped on that same node - readback was tighter/quieter
+   (~0.3-0.4 mV spread) than a genuinely floating pair on two different
+   spare columns with nothing closed at all (~6 mV spread). This pointed
+   at row B behaving as a low-impedance clamp rather than a passive wire
+   when `source.output=OFF` (consistent with `OUTPUT_HIGHZ` not being a
+   real constant on this instrument - confirmed nil earlier this session).
+   Tried the fix of putting `smua` into a genuine 0 A current-source mode
+   (`source.func=OUTPUT_DCAMPS`, `leveli=0`, `limitv=20`) instead of
+   "output off," which should present true high impedance - the isolated
+   test's noise level barely changed with the fix applied, which in
+   hindsight was because the ORIGINAL isolation test never closed a DMM LO
+   row either time, so it wasn't cleanly isolating the variable it meant
+   to (a genuine methodology gap - flagging honestly rather than standing
+   behind the row-B-is-a-clamp conclusion as confirmed).
+4. **The decisive test**: bypassed the DMM's differential setup entirely
+   and used `smua` itself - the SAME validated 0 A-current-source high-Z
+   voltmeter trick - wired directly onto die 'third's own HI column
+   (`2A08`+`2G08`, nothing else closed at all). Sanity check passed first:
+   with WGEN's output off, `smua` correctly railed to its own 20 V
+   compliance ceiling (`19.999 V`) - exactly what an ideal 0 A source
+   should do into a genuinely open node, confirming the technique itself
+   works. Then WGEN was commanded to 10 V and turned on:
+
+   | read | smua.measure.v() |
+   |---|---|
+   | 1 | 2.658 V |
+   | 2 | 0.813 V |
+   | 3 | 0.332 V |
+   | 4 | 4.207 V |
+   | 5 | 9.430 V |
+
+   **Five successive reads, no settling, no pattern, spanning nearly the
+   entire 0-10 V range.** `smua.measure.i()` overflowed (`9.91e37`) during
+   this too, even in current-source mode - the same overflow signature
+   seen throughout this whole document, now reproduced with a completely
+   different source instrument (WGEN) and a completely different SMU
+   operating mode (0 A current source, not voltage source).
+
+**This reframes steps 1-3 above and everything built on the "clean WGEN+
+DMM result" premise (including the newly-added `lampaccr_wgen` recipe's
+single-voltage-reading-per-die design)**: the physical contact node is not
+settling to any stable value when actively driven, by ANY instrument -
+SMU voltage-source, SMU current-source, and now WGEN, all three show
+invalid/unstable readings at this exact real-contact node while all
+reading perfectly clean on dangling wires, true shorts, and spare columns.
+Steps 1 and 2's very different-looking numbers (-3 nA vs ~200 mA-
+equivalent) were almost certainly both just single frozen snapshots of
+this same underlying chaos, sampled at different instants by different
+instruments with different aperture/integration behavior - neither
+represents a real, repeatable DC value. **A single voltage or current
+reading per die, from any instrument, is not a reliable way to
+characterize this specific real-contact condition** - `lampaccr_wgen`'s
+current design (one `readN` per die) should not be trusted to produce a
+repeatable pass/fail until this is accounted for (e.g. many rapid reads
+per die with the spread itself reported, not just one value against a
+fixed min/max).
+
+This is also now the single most concrete piece of evidence in the whole
+investigation for "real instability at the contact point" over any
+instrument-specific theory - it survived a complete change of both the
+sourcing instrument (WGEN instead of SMU) and the sensing method (SMU's
+own current-source-mode voltmeter, completely independent of the DMM's
+setup that produced steps 1-2's confusing numbers). The oscilloscope/
+spectrum check at the point of contact remains the most direct way to
+actually characterize this instability (frequency, amplitude, whether
+it's periodic or chaotic) - everything GPIB-only has now been tried and
+consistently shows instability without being able to characterize its
+real nature further.
