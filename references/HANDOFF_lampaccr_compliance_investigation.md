@@ -2049,14 +2049,25 @@ as if it were real die data for every subsequent die in that run - a
 serious data-integrity issue independent of the compliance-anomaly
 investigation.
 
-**Not yet fixed** (per the user's own instruction, GUI code was not
-edited this session) - the fix belongs in `gui/instrument_panel.py`'s SMU
-query sequence (e.g. don't interleave a readback query with the
-measurement query, add an explicit resync/flush step, or apply the same
-double-query workaround validated in this document), and ideally the
-underlying GPIB lag itself should be root-caused (possibly a VISA/ADLINK-
-layer retry or buffering issue - never identified at the root, only
-worked around) rather than patched symptom-by-symptom in each call site.
+**FIXED (this update)**: removed the `get_current_limit()` readback +
+mismatch-check entirely from the hot per-measurement path in
+`gui/instrument_panel.py`'s `_exec2_run_steps_once` (the `elif t ==
+"current":` SMU branch) - the simplest of the doc's own three suggested
+fixes ("don't interleave a readback query with the measurement query").
+`Keithley2636B.get_current_limit()` itself is untouched on the driver,
+still available for manual/on-demand checks via the Instruments tab's
+SCPI/TSP row - it just no longer runs automatically on every single
+measurement, so it can no longer land immediately before a `measure.i()`
+call and get its stale answer swapped in.
+
+The underlying GPIB lag itself is still NOT root-caused (possibly a
+VISA/ADLINK-layer retry or buffering issue) - only this specific,
+confirmed trigger for it corrupting recorded results has been removed.
+If the same "every reading is suspiciously constant" signature shows up
+again from a different call site that interleaves a query with the real
+measurement, the same category of fix (don't interleave, or use the
+double-query workaround validated earlier in this document) applies
+there too.
 
 **Caveat for reading the rest of this document**: the persistent GPIB
 lag was only actually discovered and verified partway through this
