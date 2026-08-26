@@ -1390,3 +1390,28 @@ would only be on the order of a few mV, not enough to trip a 9.9V floor by
 itself - **this threshold may need tightening once real data comes back**,
 the important number to actually look at is the raw recorded voltage per
 die, not just the pass/fail verdict.
+
+**IMPORTANT CAVEAT, not a fully SMU-free test**: `smua`'s LO row (row B)
+is still closed onto each die's LO column, reused as the WGEN's return
+path (see `biasN` above). `smua`'s HI row (row A) is never closed and
+`smua.source.output` stays off the whole time, so the SMU's ACTIVE
+sourcing/compliance circuitry plays no role in this test - but its LO
+terminal, and whatever internal reference/ground that terminal ties back
+to inside the instrument, is still physically part of the loop. This is
+not a topology mistake - `switch_topology.py`'s default 8-row layout has
+no dedicated WGEN LO row at all (all 8 rows are already SMU-A HI/LO,
+SMU-B HI/LO, DMM HI/LO, WGEN CH1/CH2 HI-only), and the DMM's own LO can't
+substitute as the return since it's a high-impedance sense input, not
+something that can carry real bias current - a signal generator needs a
+genuine low-impedance return, and SMU-A's LO row is the only one available
+here that provides one.
+
+Consequence for interpreting the result: an anomaly still appearing proves
+it doesn't need the SMU's active sourcing/compliance behavior (still
+meaningful) - it does NOT fully rule out the SMU's mere passive presence
+(via that still-connected LO/ground path) playing some role, since that
+path is genuinely still in the circuit. A truly SMU-free version would
+need a physical clip lead from the WGEN's own LO terminal straight to a
+chassis ground point, bypassing the switch matrix's row assignments
+entirely - the same category of manual step as the earlier pin-disconnect
+tests, not something achievable via crosspoints alone.
