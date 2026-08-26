@@ -2082,3 +2082,59 @@ would not reproduce, so those specific conclusions are not considered at
 risk - but any single anomalous-looking reading from before this
 discovery that wasn't cross-checked should be treated with slightly more
 caution than it was at the time.
+
+### Desync fix CONFIRMED directly, plus a new data point: which channel
+misbehaves is not fixed (fresh session, same day, GPIB only, real wafer
+contact)
+
+User applied the fix (`ac32e7a`) and reported the GUI no longer freezes
+at `1e-06`, but real values still exceed compliance on the actual wafer -
+exactly expected (two separate bugs, one fixed, one real and unresolved).
+Asked to verify the fix directly rather than trust a single observation.
+
+**Verification 1 - clean baseline, all 4 dies, both channels, double-query
+protected:**
+
+| die | smua | smub |
+|---|---|---|
+| first | overflow V, -65 to -72 µA, compliance=true | valid V (-100µV), **1.00011 µA exactly**, compliance=true |
+| second | valid V (-5.505V, not overflow this time), -0.52 to -3.9 µA, DECAYING across the 5 reads (not flat) | valid V (-162µV), 1.00011-1.00012 µA, compliance=true |
+| third | overflow V, -3.21 to -3.25 µA | valid V (-165µV), 1.00012 µA exactly |
+| fourth | overflow V, -55.7 to -64.1 µA | valid V (-98µV), 1.00011-1.00012 µA exactly |
+
+**Notable: `smub` reads a textbook-perfect clamp on ALL FOUR dies this
+run** - tight, positive, valid voltage, exactly like the 39 kohm resistor
+test. `smua` is now the channel showing the large anomalous currents -
+**the opposite of earlier in this investigation, where `smub` was
+consistently the worse channel (3-10x `smua`) on every test.** This is a
+real, new data point: which channel misbehaves is not fixed/permanent -
+it varies run to run. That argues against a fixed, permanent hardware
+fault localized to one specific channel, and further toward something
+genuinely variable at the contact itself (consistent with a flaky/
+inconsistent mechanical contact - real needle-to-wafer contact quality can
+plausibly vary between touchdowns in ways a hardware defect would not).
+Also notable: die 'second' via `smua` showed a DECAYING pattern across its
+5 reads (-3.9 -> -0.52 µA) rather than the FLAT, non-decaying pattern this
+document earlier used as evidence against a simple capacitive transient -
+the anomaly's own character is not even consistent run to run, let alone
+channel to channel.
+
+**Verification 2 - does the specific fixed bug (frozen at exactly
+`limiti`) actually stay fixed?** Replayed the recipe engine's real,
+current (post-fix) per-step query sequence exactly as written today -
+`set_voltage` / `set_current_limit` (write only, no readback) /
+`turn_output_on` / `set_nplc` / `measure_current` (the real reading) /
+`measure_voltage` / `in_compliance` / `turn_output_off` - deliberately
+WITHOUT the double-query workaround, across 32 consecutive shots (8 full
+passes x all 4 real dies, real wafer contact, `smua` throughout):
+
+**0 out of 32 readings were bit-exact to the compliance limit.** Every
+single value showed real, varying decimal precision (range -64.3 to
+-84.7 µA across the run, all overflow voltage, all compliance=true) -
+consistent with the real, ongoing anomaly, with no sign of the "frozen at
+`1e-06`" data-corruption pattern recurring. **The fix holds up under a
+direct, unprotected replay at least at this scale.** It remains true (see
+above) that this only removes the ONE specific trigger that was
+confirmed - the underlying GPIB link's persistent-lag capability itself
+was not root-caused, so a different trigger could still in principle
+desync a long enough run, just without this exact recognizable signature.
