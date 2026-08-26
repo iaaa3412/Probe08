@@ -1895,3 +1895,60 @@ e.g. a physical clip lead from WGEN's own LO terminal to a genuine chassis
 ground point, bypassing the switch matrix's row assignments entirely (the
 same category of manual step as the pin-disconnect tests earlier this
 investigation).
+
+### Hypothesis tested and NOT confirmed: "compliance doesn't clamp
+negative current" - but the underlying observation it came from is real
+and worth keeping (fresh session, same day, GPIB only)
+
+User ran the actual `lampaccr` recipe (SMU-based, real wafer contact) and
+observed: `9.02709e-08` A (90 nA, fine), `-1.15082e-05` A (-11.5 µA, way
+over the 1 µA limit), `9.9999e-07` A (999.9 nA, essentially exactly AT the
++1 µA limit), `9.9999e-07` A (same). Sharp observation: the only reading
+that blew through compliance was negative; the two that landed right at
+the limit were positive. Hypothesis: `smua.source.limiti` might not
+enforce the limit symmetrically - i.e. positive compliance works,
+negative doesn't.
+
+**Tested directly on a known, controlled short first** (same short-
+through-the-switch method validated earlier in this doc: HI+LO tied
+together on one column, `2A07`+`2B07` for `smua`, `2C07`+`2D07` for
+`smub`), at `+10V` and `-10V`, same `1e-6A` limit:
+
+| channel | +10V | -10V |
+|---|---|---|
+| smua | +1.00001 µA (clamped, valid V) | -1.00004 µA (clamped, valid V) |
+| smub | +1.00011 µA (clamped, valid V) | -0.99998 µA (clamped, valid V) |
+
+**Compliance clamps perfectly symmetrically in both directions on a real
+short, both channels.** This rules out "the limit doesn't affect
+negative" as a general instrument-level bug.
+
+**Then tested the more targeted version on the actual real die** (die
+'second', the -11.5 µA die from the user's screenshot, its real recipe
+crosspoints `4A07`+`4B08`, real wafer contact), at the recipe's normal
+`+10V` and then reversed to `-10V`:
+
+| | measure.v() | measure.i() (5x) | compliance |
+|---|---|---|---|
+| +10V (normal) | overflow | -11.66, -11.75, -11.76, -11.78, -11.76 µA | true |
+| -10V (reversed) | overflow | -63.5, -61.3, -57.4, -53.5, -50.4 µA | true |
+
+**The current stays negative in BOTH directions, and is actually LARGER
+at -10V.** This rules out the two clean explanations at once: not a
+compliance-sign bug (already proven false on a real short above), and not
+a simple diode/rectifying real structure either (reverse bias should flip
+the sign or shrink the current dramatically - it did neither). The sign
+does not track the applied voltage's sign or scale simply with its
+magnitude, on this specific real-contact anomaly - consistent with the
+earlier voltage-sweep finding in this same document (Stage H, current
+roughly flat across 0-10V at tight compliance) that the anomalous current
+here behaves like SMU control-loop instability against a difficult,
+marginal load, not a real sign-dependent leakage/diode current. The
+original observation (3 of 4 real dies landing exactly at +1 µA, one
+blowing far past it negative) is still real and worth keeping in mind,
+just not explained by an asymmetric compliance limit - more likely a
+coincidence of which dies happened to hit the unstable regime that
+particular run (recall from much earlier in this document: the same die
+has shown different magnitudes on different runs, e.g. -5.5, -15, -7.8 µA
+across various sessions - a die landing near +1 µA one run and something
+else the next would be consistent with that same run-to-run variability).
