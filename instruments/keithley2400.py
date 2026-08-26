@@ -10,8 +10,14 @@ def _read_element(raw, index, default=0.0):
 
 
 class Keithley2400(GPIBInstrument):
-    def __init__(self):
-        super().__init__('smu_eg')
+    def __init__(self, config_key='smu_eg'):
+        # Electroglas keeps its own default ('smu_eg') so every existing
+        # caller is unaffected. Accretech's model-swap option (Setup tab -
+        # picking a 2400 for the "smu" slot) passes config_key="smu" so it
+        # reads/writes the SAME instruments.yaml entry Keithley2636B would
+        # for that slot, instead of colliding with Electroglas's own
+        # 'smu_eg' entry.
+        super().__init__(config_key)
         # Opening the session proves nothing about whether the 2400 is powered
         # on, so this *RST raised straight out of the constructor whenever it
         # was not - and gui/app.py builds every driver before it starts

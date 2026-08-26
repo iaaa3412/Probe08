@@ -62,6 +62,8 @@ def machine_config_status() -> dict:
             gpib_base.get_machine_config_path("instruments.yaml")),
         "eg_probers.yaml": os.path.isfile(
             gpib_base.get_machine_config_path("eg_probers.yaml")),
+        "accretech_probers.yaml": os.path.isfile(
+            gpib_base.get_machine_config_path("accretech_probers.yaml")),
         "switch_topology.yaml": os.path.isfile(switch_topology.TOPOLOGY_PATH),
     }
 
@@ -82,6 +84,9 @@ def create_basic_machine_config() -> list:
         created.append("instruments.yaml")
     if gpib_base.create_default_eg_probers_yaml():
         created.append("eg_probers.yaml")
+    from instruments import accretech_profiles
+    if accretech_profiles.ensure_default_file():
+        created.append("accretech_probers.yaml")
     if switch_topology.ensure_default_file():
         created.append("switch_topology.yaml")
     return created

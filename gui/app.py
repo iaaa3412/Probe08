@@ -21,6 +21,7 @@ from instruments.hp6634b import Agilent6634B
 from instruments.hp_switchbox import HPSwitchbox
 from instruments.hp_e1326b import HPE1326B
 from instruments import eg_profiles
+from instruments import accretech_profiles
 import export_formats as xfmt
 import app_settings
 
@@ -37,6 +38,37 @@ ELECTROGLAS_INSTRUMENT_NAMES = ["Electroglas 2001X", "Keithley 2400", "HP 3458A"
 # Accretech is one machine for now. Electroglas benches come from
 # GUI System/eg_probers.yaml instead, because they genuinely differ.
 ACCRETECH_BENCHES = ("probe08",)
+
+# Driver classes per (slot, model) - resolved against the active bench's
+# accretech_profiles.py profile in init_hardware(), the Accretech analogue
+# of _EG_DRIVERS below. instruments/accretech_profiles.py's MODEL_CHOICES
+# holds the same model NAMES as plain strings (no driver imports there,
+# same separation eg_profiles.py keeps from this file's _EG_DRIVERS).
+#
+# The 2400 entry passes config_key="smu" explicitly - Keithley2400 defaults
+# to 'smu_eg' (Electroglas's own slot) so a plain Keithley2400() here would
+# silently read/write THAT entry instead of Accretech's own "smu" one,
+# colliding with a real Electroglas 2400 on the same machine. See
+# instruments/keithley2400.py.
+_ACCRETECH_MODELS = {
+    "prober":        {"AccretechUF200R": lambda: AccretechUF200R()},
+    "smu":           {"Keithley2636B": lambda: Keithley2636B(),
+                      "Keithley2400":  lambda: Keithley2400(config_key="smu")},
+    "dmm":           {"Keysight34461A": lambda: Keysight34461A()},
+    "switch_matrix": {"Keithley707B": lambda: Keithley707B()},
+    "wave_gen":      {"Keysight33512B": lambda: Keysight33512B()},
+}
+# (display label, controller.drivers key) per slot - the drivers-dict key is
+# an app-internal name unrelated to instruments.yaml's own key naming
+# (switch_matrix has always been "switch" here, everywhere else in the GUI
+# looks it up that way - kept exactly as before).
+_ACCRETECH_SLOT_INFO = {
+    "prober":        ("UF200R Prober",      "prober"),
+    "smu":           ("SMU",                "smu"),
+    "dmm":           ("DMM",                "dmm"),
+    "switch_matrix": ("SW_MATRIX",          "switch"),
+    "wave_gen":      ("Wave Gen",           "wave_gen"),
+}
 
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
 # No "smu"/"power_supply" for the same reason - requiring them would hold the
@@ -526,7 +558,11 @@ class AtomicaDashboard(tk.Tk):
         holder.pack(fill="both", expand=True)
 
     def accretech_benches(self) -> list:
-        return list(ACCRETECH_BENCHES)
+        try:
+            names = accretech_profiles.profile_names()
+        except Exception:
+            names = []
+        return names or list(ACCRETECH_BENCHES)
 
     def electroglas_benches(self) -> list:
         try:
@@ -550,6 +586,12 @@ class AtomicaDashboard(tk.Tk):
             try:
                 if bench != eg_profiles.active_name():
                     self.cmd_set_eg_profile(bench)
+            except Exception as e:
+                self.log(f"[SYSTEM] Could not select {bench!r}: {e}")
+        elif system == "accretech" and bench:
+            try:
+                if bench != accretech_profiles.active_name():
+                    self.cmd_set_accretech_bench(bench)
             except Exception as e:
                 self.log(f"[SYSTEM] Could not select {bench!r}: {e}")
         self._refresh_bench_picker()
@@ -757,17 +799,37 @@ class AtomicaDashboard(tk.Tk):
 
     def init_hardware(self):
         self._connected_systems.add("accretech")
-        self.log("[SYSTEM] Pinging Accretech hardware connections...")
-        connections = [
-            ("UF200R Prober",    "prober",   AccretechUF200R()),
-            ("SMU (2636B)",      "smu",      Keithley2636B()),
-            ("DMM (34461A)",     "dmm",      Keysight34461A()),
-            ("SW_MATRIX",        "switch",   Keithley707B()),
-            ("Wave Gen (33512B)","wave_gen", Keysight33512B()),
-        ]
+        bench = accretech_profiles.active_name() or ACCRETECH_BENCHES[0]
+        self.log(f"[SYSTEM] Pinging Accretech hardware connections ({bench})...")
+        # accretech_probers.yaml is the source of truth (address AND model
+        # per slot); instruments.yaml's flat Accretech keys are derived from
+        # it, same relationship Electroglas's profile has to instruments.yaml
+        # - make sure it matches the active bench before any driver reads an
+        # address out of it.
+        try:
+            accretech_profiles.apply_to_instruments_yaml(bench)
+        except Exception as e:
+            self.log(f"[SYSTEM] Could not apply Accretech profile {bench!r}: {e}")
+
+        connections = []
+        try:
+            profile_instruments = accretech_profiles.instruments(bench)
+        except Exception as e:
+            self.log(f"[SYSTEM] Could not read Accretech profile {bench!r}: {e}")
+            profile_instruments = {}
+        for key in accretech_profiles.ACCR_KEYS:
+            entry = profile_instruments.get(key) or {}
+            model = entry.get("model") or accretech_profiles.DEFAULT_MODEL.get(key)
+            factory = _ACCRETECH_MODELS.get(key, {}).get(model)
+            if factory is None:
+                self.log(f"[SYSTEM] {key}: unknown/unsupported model {model!r} — skipped")
+                continue
+            display, drv_key = _ACCRETECH_SLOT_INFO[key]
+            connections.append((f"{display} ({model})", drv_key, factory()))
+
         acc_ui = self._by_system["accretech"]["ui"]
         try:
-            acc_ui.set_bench_label(ACCRETECH_BENCHES[0])
+            acc_ui.set_bench_label(bench)
         except Exception:
             pass
         self._connect_instruments(acc_ui,
@@ -901,7 +963,37 @@ class AtomicaDashboard(tk.Tk):
                 self.init_hardware_eg()
             finally:
                 self._dismiss_switch_splash()
- 
+
+    def cmd_set_accretech_bench(self, name: str):
+        """Switch the Accretech bench and reconnect against it - same shape
+        as cmd_set_eg_profile, simpler since a recipe/probe card is not
+        tied to a bench the way an Electroglas recipe is (probe cards are
+        their own CSVs regardless of which SMU model is connected), so
+        there is no Recipe/Run tab state to refresh here."""
+        try:
+            changed = accretech_profiles.set_active(name)
+        except Exception as e:
+            self.log(f"[SYSTEM] Could not switch to {name!r}: {e}")
+            return
+        drivers = self._by_system["accretech"]["drivers"]
+        for drv in list(drivers.values()):
+            try:
+                drv.close()
+            except Exception:
+                pass
+        drivers.clear()
+        self.log(f"[SYSTEM] Accretech bench -> {accretech_profiles.label(name)}"
+                 + (f" ({len(changed)} address(es) updated)" if changed else ""))
+        self.log(accretech_profiles.summary(name))
+        # During startup the scheduled sweep has not run yet and will pick this
+        # bench up, so connecting here as well would just sweep the bus twice.
+        if self._startup_done:
+            self._show_switch_splash(f"Connecting to {accretech_profiles.label(name)}…")
+            try:
+                self.init_hardware()
+            finally:
+                self._dismiss_switch_splash()
+
     def check_system_ready(self):
         missing = []
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
@@ -1048,7 +1140,11 @@ class AtomicaDashboard(tk.Tk):
             except Exception as e:
                 self.log(f"[SYSTEM] Could not read prober profiles: {e}")
                 return []
-        return list(ACCRETECH_BENCHES)
+        try:
+            return self.accretech_benches()
+        except Exception as e:
+            self.log(f"[SYSTEM] Could not read Accretech prober profiles: {e}")
+            return list(ACCRETECH_BENCHES)
 
     def _active_bench(self) -> str:
         if self.active_system == "electroglas":
@@ -1056,7 +1152,10 @@ class AtomicaDashboard(tk.Tk):
                 return eg_profiles.active_name()
             except Exception:
                 return ""
-        return ACCRETECH_BENCHES[0]
+        try:
+            return accretech_profiles.active_name() or ACCRETECH_BENCHES[0]
+        except Exception:
+            return ACCRETECH_BENCHES[0]
 
     def _refresh_bench_picker(self):
         names = self._bench_names()
@@ -1071,6 +1170,13 @@ class AtomicaDashboard(tk.Tk):
                                        foreground="#1d4ed8")
             except Exception:
                 self._bench_lbl.config(text="", foreground="gray")
+        elif self.active_system == "accretech" and active:
+            try:
+                inst = accretech_profiles.instruments(active)
+                self._bench_lbl.config(text=f"{len(inst)} instruments",
+                                       foreground="#1d4ed8")
+            except Exception:
+                self._bench_lbl.config(text="", foreground="gray")
         else:
             self._bench_lbl.config(text="", foreground="gray")
         # A single-entry list is not a choice; make that visible rather than
@@ -1080,6 +1186,12 @@ class AtomicaDashboard(tk.Tk):
 
     def _on_bench_picker_selected(self):
         name = self._bench_picker_var.get()
+        if self.active_system == "accretech":
+            if name == accretech_profiles.active_name():
+                return
+            self.cmd_set_accretech_bench(name)
+            self._refresh_bench_picker()
+            return
         if self.active_system != "electroglas":
             return
         if name == eg_profiles.active_name():

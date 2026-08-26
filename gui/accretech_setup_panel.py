@@ -1,50 +1,28 @@
-"""Setup tab (Accretech) - edit the fixed instrument set's addresses/
-timeouts/protocol without hand-editing GUI System/instruments.yaml.
+"""Setup tab (Accretech) - add/edit prober benches, their instrument
+addresses, and (new) which MODEL occupies a given slot, without hand-editing
+GUI System/accretech_probers.yaml.
 
-DIFFERENT SHAPE FROM ELECTROGLAS ON PURPOSE. Electroglas has real per-bench
-profiles (instruments/eg_profiles.py, GUI System/eg_probers.yaml) because
-probe02 and probe03 are genuinely different benches with different
-instruments at different addresses. Accretech has no such thing today - one
-bench (probe08), five instrument keys hardcoded into
-AtomicaDashboard.init_hardware()'s own connections list (see gui/app.py) and
-read from flat top-level keys in instruments.yaml, not a per-bench profile.
-
-So this tab can genuinely EDIT those five keys' address/protocol/timeout,
-but "add a prober" has nothing to plug into yet - it would need
-init_hardware() itself to loop over a bench-selectable connections list the
-way Electroglas already does, which is a real architecture change, not a
-button here. The Add Prober button says so rather than pretending to work.
+Same shape as gui/eg_setup_panel.py on purpose - Accretech used to be one
+hardcoded bench with no per-instrument model choice at all (see
+instruments/accretech_profiles.py's own module docstring for why MODEL is
+the one real difference from the Electroglas version: eg profiles only vary
+which keys are fitted, never what class a key resolves to). Editing a
+bench's addresses/models here only pushes into instruments.yaml (the file
+the actual drivers open) for the bench that is currently ACTIVE - an
+already-open session keeps its old handle regardless, same "restart/Refresh
+Connections to take effect live" caveat the old single-bench version of this
+panel already carried.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
-import os
+from tkinter import ttk, messagebox, simpledialog
 
-import yaml
+from instruments import accretech_profiles
 
-from instruments.gpib_base import get_machine_config_path
-
-_YAML_PATH = "instruments.yaml"
-
-# The five keys AtomicaDashboard.init_hardware() actually connects, in the
-# order it connects them - see gui/app.py's ACCRETECH_REQUIRED_DRIVERS.
-_ACCRETECH_KEYS = ("prober", "smu", "dmm", "switch_matrix", "wave_gen")
 _KEY_LABELS = {
     "prober": "Prober", "smu": "SMU", "dmm": "DMM",
     "switch_matrix": "Switch Matrix", "wave_gen": "Wave Gen",
 }
-
-
-def _load_yaml() -> dict:
-    path = get_machine_config_path(_YAML_PATH)
-    with open(path, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
-
-
-def _save_yaml(data: dict) -> None:
-    path = get_machine_config_path(_YAML_PATH)
-    with open(path, "w", encoding="utf-8") as fh:
-        yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=False)
 
 
 class AccretechSetupPanel(ttk.Frame):
@@ -52,33 +30,97 @@ class AccretechSetupPanel(ttk.Frame):
         super().__init__(parent)
         self.controller = controller
         self._main_layout = main_layout
+        self._bench_var = tk.StringVar(value="")
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
+        self._build_bench_bar()
+        self._build_table()
+        self._refresh_benches()
+
+    def _log(self, msg: str):
+        try:
+            self.controller.log(msg)
+        except Exception:
+            pass
+
+    # -- bench bar ----------------------------------------------------------
+
+    def _build_bench_bar(self):
         bar = ttk.Frame(self, padding=6)
         bar.grid(row=0, column=0, sticky="ew")
-        ttk.Label(bar, text="Prober bench: probe08 (the only one Accretech "
-                            "connects today)",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        ttk.Button(bar, text="＋ Add Prober…", command=self._add_prober_info).pack(
-            side="left", padx=(12, 0))
+        ttk.Label(bar, text="Prober bench:").pack(side="left")
+        self._bench_cb = ttk.Combobox(bar, textvariable=self._bench_var,
+                                      state="readonly", width=16)
+        self._bench_cb.pack(side="left", padx=(4, 8))
+        self._bench_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_bench_picked())
+        ttk.Button(bar, text="＋ Add Prober…", command=self._add_prober).pack(
+            side="left", padx=2)
+        self._active_lbl = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self._active_lbl, foreground="#16a34a",
+                 font=("Segoe UI", 8, "italic")).pack(side="left", padx=(10, 0))
 
+    def _refresh_benches(self):
+        names = accretech_profiles.profile_names()
+        self._bench_cb.config(values=names)
+        if self._bench_var.get() not in names:
+            self._bench_var.set(accretech_profiles.active_name()
+                                or (names[0] if names else ""))
+        self._update_active_label()
+        self._refresh_table()
+
+    def _update_active_label(self):
+        active = accretech_profiles.active_name()
+        if self._bench_var.get() == active:
+            self._active_lbl.set(f"● currently active ({active})")
+        else:
+            self._active_lbl.set(f"active bench is {active!r} - "
+                                 "switch to it from the toolbar to test changes live")
+
+    def _on_bench_picked(self):
+        self._update_active_label()
+        self._refresh_table()
+
+    def _add_prober(self):
+        source = self._bench_var.get()
+        if not source:
+            messagebox.showerror("No Bench", "No existing prober to copy from.")
+            return
+        name = simpledialog.askstring(
+            "Add Prober",
+            f"New prober name (starts as a copy of {source!r} - "
+            "every instrument, address, and model comes along, ready to edit):",
+            parent=self)
+        if not name:
+            return
+        try:
+            accretech_profiles.add_profile(name.strip(), based_on=source)
+        except (ValueError, KeyError) as exc:
+            messagebox.showerror("Add Prober Failed", str(exc))
+            return
+        self._log(f"[SETUP] Added Accretech prober {name!r} (copy of {source!r})")
+        self._bench_var.set(name.strip())
+        self._refresh_benches()
+
+    # -- instrument table -----------------------------------------------------
+
+    def _build_table(self):
         frame = ttk.Frame(self, padding=(6, 0, 6, 6))
         frame.grid(row=1, column=0, sticky="nsew")
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
-        cols = ("key", "name", "protocol", "address", "timeout")
+        cols = ("key", "model", "name", "address", "timeout")
         self._tree = ttk.Treeview(frame, columns=cols, show="headings",
                                   selectmode="browse")
-        heads = [("key", "Slot", 100), ("name", "Instrument", 200),
-                 ("protocol", "Protocol", 90), ("address", "Address", 220),
+        heads = [("key", "Slot", 100), ("model", "Model", 150),
+                 ("name", "Instrument", 180), ("address", "GPIB Address", 200),
                  ("timeout", "Timeout (ms)", 90)]
         for cid, text, width in heads:
             self._tree.heading(cid, text=text)
             self._tree.column(cid, width=width,
-                              anchor="center" if cid in ("protocol", "timeout") else "w")
+                              anchor="center" if cid == "timeout" else "w")
         self._tree.grid(row=0, column=0, sticky="nsew")
         sb = ttk.Scrollbar(frame, orient="vertical", command=self._tree.yview)
         sb.grid(row=0, column=1, sticky="ns")
@@ -90,44 +132,27 @@ class AccretechSetupPanel(ttk.Frame):
         ttk.Button(btns, text="✎ Edit Selected…", command=self._edit_selected).pack(
             side="left")
         ttk.Label(btns, text="Restart the app (or Refresh Connections) for an "
-                             "address change to take effect on an open session.",
+                             "address/model change to take effect on an open session.",
                  foreground="#6b7280", font=("Segoe UI", 8)).pack(
                  side="left", padx=(10, 0))
 
-        self._refresh_table()
-
-    def _log(self, msg: str):
-        try:
-            self.controller.log(msg)
-        except Exception:
-            pass
-
-    def _add_prober_info(self):
-        messagebox.showinfo(
-            "Not Wired Up Yet",
-            "Accretech connects one fixed bench (probe08) - its five "
-            "instrument keys are hardcoded into AtomicaDashboard."
-            "init_hardware()'s own connect list, not read from a "
-            "per-bench profile the way Electroglas's probe02/probe03 "
-            "are.\n\nAdding a second real Accretech prober needs that "
-            "connect list to become bench-selectable first - not "
-            "something this button can do safely on its own.")
-
     def _refresh_table(self):
         self._tree.delete(*self._tree.get_children())
-        try:
-            data = _load_yaml()
-        except (OSError, yaml.YAMLError) as exc:
-            self._log(f"[SETUP] Could not read instruments.yaml: {exc}")
+        bench = self._bench_var.get()
+        if not bench:
             return
-        inst = data.get("instruments") or {}
-        for key in _ACCRETECH_KEYS:
+        try:
+            inst = accretech_profiles.instruments(bench)
+        except KeyError:
+            return
+        for key in accretech_profiles.ACCR_KEYS:
             entry = inst.get(key)
             if not entry:
                 continue
             self._tree.insert("", "end", iid=key, values=(
-                _KEY_LABELS.get(key, key), entry.get("name", key),
-                entry.get("protocol", "GPIB"), entry.get("address", ""),
+                _KEY_LABELS.get(key, key),
+                entry.get("model", accretech_profiles.DEFAULT_MODEL.get(key, "")),
+                entry.get("name", key), entry.get("address", ""),
                 entry.get("timeout_ms", 3000)))
 
     def _selected_key(self):
@@ -135,40 +160,51 @@ class AccretechSetupPanel(ttk.Frame):
         return sel[0] if sel else None
 
     def _edit_selected(self):
+        bench = self._bench_var.get()
         key = self._selected_key()
-        if not key:
+        if not bench or not key:
             return
-        try:
-            data = _load_yaml()
-        except (OSError, yaml.YAMLError) as exc:
-            messagebox.showerror("Read Failed", str(exc))
-            return
-        entry = (data.get("instruments") or {}).get(key, {})
+        entry = accretech_profiles.instruments(bench).get(key, {})
         dlg = _InstrumentDialog(
-            self, title=f"Edit {_KEY_LABELS.get(key, key)}",
-            initial=(entry.get("name", key), entry.get("protocol", "GPIB"),
-                    entry.get("address", ""), entry.get("timeout_ms", 3000)))
+            self, title=f"Edit {_KEY_LABELS.get(key, key)} on {bench!r}", key=key,
+            initial=(entry.get("model", accretech_profiles.DEFAULT_MODEL.get(key, "")),
+                    entry.get("name", key), entry.get("address", ""),
+                    entry.get("timeout_ms", 3000)))
         self.wait_window(dlg)
         if dlg.result is None:
             return
-        name, protocol, address, timeout_ms = dlg.result
-        data.setdefault("instruments", {}).setdefault(key, {})
-        data["instruments"][key].update({
-            "name": name, "protocol": protocol, "address": address,
-            "timeout_ms": timeout_ms,
-        })
+        model, name, address, timeout_ms = dlg.result
         try:
-            _save_yaml(data)
-        except OSError as exc:
-            messagebox.showerror("Save Failed", str(exc))
+            accretech_profiles.set_instrument(
+                bench, key, name=name, address=address,
+                timeout_ms=timeout_ms, model=model)
+        except (ValueError, KeyError) as exc:
+            messagebox.showerror("Edit Failed", str(exc))
             return
-        self._log(f"[SETUP] probe08: updated {_KEY_LABELS.get(key, key)} "
-                  f"({name!r} @ {address})")
+        self._log(f"[SETUP] {bench}: updated {_KEY_LABELS.get(key, key)} "
+                  f"({model}, {name!r} @ {address})")
+        self._after_edit(bench)
+
+    def _after_edit(self, bench: str):
         self._refresh_table()
+        # Only the ACTIVE bench's addresses feed the real drivers - editing a
+        # bench that is not currently selected in the toolbar just saves to
+        # the YAML for next time it IS selected.
+        if bench == accretech_profiles.active_name():
+            try:
+                accretech_profiles.apply_to_instruments_yaml(bench)
+            except Exception as exc:
+                self._log(f"[SETUP] Could not push {bench!r} into "
+                          f"instruments.yaml: {exc}")
 
 
 class _InstrumentDialog(tk.Toplevel):
-    def __init__(self, parent, title: str, initial: tuple):
+    """Edit form for one instrument slot - model, name, GPIB address,
+    timeout. `key` fixes which slot this is (Accretech's five are always
+    present on every bench, unlike Electroglas's add/remove-a-slot model),
+    so only the model dropdown's own choices vary by key."""
+
+    def __init__(self, parent, title: str, key: str, initial: tuple):
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
@@ -177,20 +213,22 @@ class _InstrumentDialog(tk.Toplevel):
 
         body = ttk.Frame(self, padding=10)
         body.pack(fill="both", expand=True)
-        name0, protocol0, addr0, timeout0 = initial
+        model0, name0, addr0, timeout0 = initial
 
         row = 0
+        ttk.Label(body, text="Model:").grid(row=row, column=0, sticky="e", pady=3)
+        self._model_var = tk.StringVar(value=model0)
+        choices = accretech_profiles.MODEL_CHOICES.get(key, (model0,))
+        model_cb = ttk.Combobox(body, textvariable=self._model_var,
+                                state="readonly" if len(choices) > 1 else "disabled",
+                                values=choices, width=29)
+        model_cb.grid(row=row, column=1, sticky="w", padx=6, pady=3)
+
+        row += 1
         ttk.Label(body, text="Name:").grid(row=row, column=0, sticky="e", pady=3)
         self._name_var = tk.StringVar(value=name0)
         ttk.Entry(body, textvariable=self._name_var, width=32).grid(
             row=row, column=1, sticky="w", padx=6, pady=3)
-
-        row += 1
-        ttk.Label(body, text="Protocol:").grid(row=row, column=0, sticky="e", pady=3)
-        self._protocol_var = tk.StringVar(value=protocol0)
-        ttk.Combobox(body, textvariable=self._protocol_var, state="readonly",
-                    values=("GPIB", "USB_TMC"), width=12).grid(
-                    row=row, column=1, sticky="w", padx=6, pady=3)
 
         row += 1
         ttk.Label(body, text="Address:").grid(row=row, column=0, sticky="e", pady=3)
@@ -226,5 +264,5 @@ class _InstrumentDialog(tk.Toplevel):
             messagebox.showerror("Invalid Timeout", "Timeout (ms) must be a whole number.",
                                  parent=self)
             return
-        self.result = (name, self._protocol_var.get(), address, timeout_ms)
+        self.result = (self._model_var.get(), name, address, timeout_ms)
         self.destroy()
