@@ -1952,3 +1952,52 @@ particular run (recall from much earlier in this document: the same die
 has shown different magnitudes on different runs, e.g. -5.5, -15, -7.8 µA
 across various sessions - a die landing near +1 µA one run and something
 else the next would be consistent with that same run-to-run variability).
+
+### Real 39 kohm resistor test - textbook-perfect on every axis, closes
+off "it's a generic SMU/compliance bug" for good (fresh session, same day,
+GPIB only, no switch matrix at all)
+
+User's own idea, and a very good one: wire a real, known, physically
+symmetric resistor DIRECTLY to an SMU channel's HI/LO terminals - no
+switch matrix, no wafer, no ambiguity about what's actually connected -
+and deliberately try to hit compliance, reverse polarity, sweep NPLC,
+toggle `highc`, everything this document has tried against the real
+contact anomaly. First attempt used `smua` and the resistor turned out not
+to be connected yet (~1e14 ohm estimated - open circuit, caught and
+corrected). Second attempt found it was wired to `smub`, not `smua` -
+corrected, and got a clean read: **~39,160 ohm measured at a loose limit,
+matching the user's own ~39k estimate exactly.**
+
+Full battery at the real recipe condition and beyond, all via `smub`:
+
+| test | prediction (Ohm's law, R=39.16k) | actual |
+|---|---|---|
+| 10V / 1e-6A limit (recipe's real condition) | V=39mV, I=1.000µA, compliance=true | V=39.16mV, I=1.00012-1.00013µA, compliance=true |
+| -10V / 1e-6A limit | V=-39mV, I=-1.000µA, compliance=true | V=-39.19mV, I=-0.999984 to -0.999990µA, compliance=true |
+| voltage sweep 0/1/2/5/8/10V, 1e-6A limit | identical clamp once V exceeds ~39mV | identical V≈39mV/I≈1.0001µA at 1V through 10V; near-zero at 0V (correctly not clamped) |
+| `limiti` sweep 1e-7/1e-6/1e-5/1e-4/1e-3 A | I and V scale exactly with Ohm's law at each limit; NOT in compliance at 1e-3A (since 10V/39k = 256µA < 1mA) | matches at every single limit - 1e-7A: V=3.80mV/I=99.98nA; 1e-6A: as above; 1e-5A: V=391.7mV/I=10.004µA; 1e-4A: V=3.916V/I=100.011µA; 1e-3A: V=10.0007V/I=255.384µA, **compliance correctly FALSE** (256µA is under the 1mA limit) |
+| NPLC sweep 0.01/0.1/1/10/25 | should be flat if this is a real, stable resistor | **completely flat** - I=1.0000-1.0002µA at every NPLC value, no dependence at all |
+| `source.highc` 0 vs 1 | shouldn't matter for a purely resistive load | **no difference** - V≈39.1-39.2mV, I≈1.00012-1.00024µA either way |
+
+**Every single reading across every single condition matches simple Ohm's
+law exactly.** No overflow, no instability, no negative-sign anomaly
+regardless of polarity, no NPLC dependence (contrast: the real die showed
+current dropping ~8x from NPLC 0.1->25), no `highc` sensitivity (contrast:
+`highc=1` made the real die's overflow WORSE). This is the same physical
+channel (`smub`) that reads 150-190 µA with overflow and instability on
+the real wafer, behaving with textbook precision on a real 39 kohm load
+that genuinely needs to clamp 256x over the 1 µA limit.
+
+**This closes off the last remaining "maybe it's a generic SMU/compliance
+bug" theory.** The 2636B correctly implements Ohm's law and current-limit
+clamping for any normal resistive load, including one that legitimately
+needs to hit compliance hard, with excellent precision, on both channels
+(the earlier short-through-the-switch test already showed the same for
+both channels at a dead short - see above), in both polarities, across
+every NPLC and `highc` setting tried. The instability documented
+throughout this entire investigation is not something this SMU model or
+this specific unit does generically under compliance - it is specific to
+the real needle-to-wafer contact condition. Nothing left to isolate via
+GPIB alone from here - an oscilloscope or spectrum-analyzer-style
+measurement directly at the point of contact remains the most direct
+remaining way to characterize what that condition actually is.
