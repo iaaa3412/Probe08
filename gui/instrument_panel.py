@@ -5465,17 +5465,25 @@ class MainLayout(ttk.Frame):
                                 smu.set_voltage(smu_ch, float(lvl))
                                 if limit:
                                     smu.set_current_limit(smu_ch, float(limit))
-                                    if hasattr(smu, "get_current_limit"):
-                                        try:
-                                            readback = smu.get_current_limit(smu_ch)
-                                        except Exception:
-                                            readback = None
-                                        if readback is not None and abs(
-                                                readback - float(limit)) > abs(float(limit)) * 0.01:
-                                            self._exec2_log(
-                                                f"[MEASURE]    ⚠ asked for current limit "
-                                                f"{float(limit):.4g} A, instrument reports "
-                                                f"{readback:.4g} A")
+                                    # NOT reading the limit back here anymore -
+                                    # see references/HANDOFF_lampaccr_
+                                    # compliance_investigation.md's "GPIB
+                                    # response-desync" finding. This readback
+                                    # query, immediately before the real
+                                    # measure.i() query for the same step, is
+                                    # exactly what a persistent one-query GPIB
+                                    # lag (confirmed real on this bench, does
+                                    # not self-correct) turns into silent data
+                                    # corruption: once desynced, every
+                                    # measure.i() call receives THIS query's
+                                    # answer instead of its own - which is
+                                    # always exactly limiti, explaining a real
+                                    # run's results freezing at a constant
+                                    # 1e-06 for every die for the rest of the
+                                    # run. get_current_limit() is still on the
+                                    # driver for manual/on-demand checks (the
+                                    # SCPI/TSP row on the Instruments tab), just
+                                    # not auto-called in this hot path anymore.
                                 smu.turn_output_on(smu_ch)
                                 last_set_voltage_by_ch[smu_ch] = float(lvl)
                                 did_bias = True
