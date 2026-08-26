@@ -1585,3 +1585,68 @@ repeatability structure used here, to check whether IT is also repeatable
 (just at a value that doesn't match simple Ohm's-law expectations, meaning
 the DMM's own voltage-mode loading or some other effect needs
 accounting for) or whether it was itself a one-off anomaly.
+
+### New recipe added: `lampaccr_wgen_repeat` - the validated 10-trial
+repeatability method as a real, runnable recipe (different structure from
+`lampaccr_wgen`)
+
+`lampaccr_wgen` (added earlier) does ONE bias-on/read/open cycle per die -
+that structure was never actually what confirmed repeatability above; the
+10-independent-cycles test was. Rather than editing `lampaccr_wgen` again,
+added a separate recipe so both remain available side by side. Added
+directly to `LaMP_HP_b.csv` (322 new rows: 1 `RECIPE` header + 321 `STEP`
+rows - backup saved as
+`LaMP_HP_b.csv.bak_before_lampaccr_wgen_repeat_add`). Verified via
+`csv.DictReader` after writing - 321 unique STEP names, exactly 10
+`current`-type read steps per die, `avg_count=3` on every read, correct
+values in every named column - and a line-by-line diff against the
+pre-edit file confirmed zero changes to any existing row (`lampaccr` and
+`lampaccr_wgen` both untouched).
+
+Same four real dies/columns as the other two recipes. Per die, the exact
+validated structure repeated for **10 independent trials**, each its own
+full close -> bias -> read -> open cycle (not just repeated reads within
+one continuous connection):
+
+```
+bias{die}_{trial}    (wave/apply/WGEN/CH1/DC/10V) - closes WGEN HI (row G)
+                                                      + smua's LO (row B,
+                                                      passive return only -
+                                                      smua.source.output is
+                                                      never turned on
+                                                      anywhere in this
+                                                      recipe, matching the
+                                                      validated test's own
+                                                      setup, NOT the
+                                                      retracted "smua as
+                                                      active 0A current
+                                                      source" methodology)
+wait{die}_{trial}    (delay, 200ms)
+read{die}_{trial}    (current/measure/DMM, avg_count=3) - three real,
+                                                      independent DMM
+                                                      queries per trial
+                                                      ("read x3"), DMM
+                                                      closed in parallel
+                                                      onto the same two
+                                                      columns as the bias
+settle{die}_{trial}  (delay, 100ms)
+check{die}_{trial}   (passfail, target=read{die}_{trial}, min=0,
+                       max=1e-07) - mirrors lampaccr's own tightened spec
+openbias{die}_{trial} (open, target=bias{die}_{trial}) - closes WGEN
+                                                      output + opens its
+                                                      crosspoints
+openread{die}_{trial} (open, target=read{die}_{trial}) - opens the DMM's
+                                                      crosspoints
+delay{die}_{trial}   (delay, 200ms)
+```
+
+**Not yet run.** Once it is, the results table will have 4 dies x 10
+trials x 3 reads = 120 individual current readings, plus the 10-trials-x-1
+averaged value the passfail/results logic actually records per trial - a
+direct, repeatable stand-in for the raw 30-per-die numbers already
+gathered manually above, but reusable going forward through the normal
+Run tab instead of another one-off script. Note this recipe only carries
+forward the CURRENT-mode side of the validated methodology (the
+still-unresolved voltage-mode contradiction noted just above is not yet
+built into a recipe - would need its own variant with `readN` set back to
+`voltage` if that gets tested with the same 10-trial structure next).
