@@ -89,6 +89,17 @@ class AtomicaDashboard(tk.Tk):
         self.title("Electrical Prober")
         self.geometry("1400x800")
         self._check_machine_config_folder()
+        # Self-healing, independent of the dialog above: accretech_probers.yaml
+        # is new (this machine's GUI System folder predates it), and
+        # ensure_default_file() never guesses or overwrites - it either
+        # migrates real addresses already sitting in instruments.yaml or
+        # writes a blank probe08 shell. Without this, declining/missing that
+        # one-time dialog silently left profile_names() empty forever, which
+        # is why the Setup tab's bench picker had no probe08 to show.
+        try:
+            accretech_profiles.ensure_default_file()
+        except Exception:
+            pass
         self._splash = None
         self._switch_splash = None
         self._switch_splash_depth = 0
