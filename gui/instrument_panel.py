@@ -2246,7 +2246,18 @@ class MainLayout(ttk.Frame):
                 if hasattr(self, "pin_wiring") else False),
             switch_card=lambda name: (self.pin_wiring.switch_to_card(name)
                                       if hasattr(self, "pin_wiring") else None),
-            get_card_names=lambda: (self.pin_wiring.get_card_names_for_system()
+            # get_card_names() (unfiltered), not get_card_names_for_system():
+            # that filter drops any card whose PIN table isn't a subset of
+            # this bench's own addressing scheme (Accretech's plain "1".."24"
+            # switch_topology numbers, or Electroglas's per-bench
+            # wired_pin_labels - empty for every bench but probe02). A card
+            # wired with a different pin format (e.g. Peanut's "J1".."J48",
+            # or LaMP_HP's original "A9"/"B32" labels) isn't invalid - it's
+            # just a real card from a different project/bench - but the
+            # filter silently emptied the whole Recipe tab picker for it
+            # while the Probe Card tab (already unfiltered) kept working,
+            # which is exactly the "dropdown is blank" bug this fixes.
+            get_card_names=lambda: (self.pin_wiring.get_card_names()
                                     if hasattr(self, "pin_wiring") else []),
             get_ata_folder=lambda: self._ata_folder,
             get_die_pins=lambda: (self.pin_wiring.get_die_pins()
