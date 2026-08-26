@@ -528,6 +528,14 @@ class MainLayout(ttk.Frame):
             command=lambda: threading.Thread(
                 target=self._query_all_status, daemon=True).start(),
         ).pack(side="left", padx=4, pady=4)
+        tk.Button(
+            rst,
+            text="↩ Release All To Local",
+            bg="#1e3a5f", fg="white",
+            activebackground="#1e40af", activeforeground="white",
+            font=("Segoe UI", 9), relief="flat", bd=0,
+            command=self._release_all_to_local,
+        ).pack(side="left", padx=4, pady=4)
 
         sbar = tk.Frame(tab, bg="#0f172a")
         sbar.grid(row=1, column=0, sticky="ew")
@@ -1114,6 +1122,31 @@ class MainLayout(ttk.Frame):
 
         log("[RESET] Global reset complete")
 
+    def _release_all_to_local(self):
+        """Release every connected instrument's remote lock so its own
+        front-panel keys work again - one GTL per instrument, not a single
+        bus-wide REN deassert, so nothing else on the same GPIB line gets
+        pulled out of remote along with it. Session stays open; the next
+        write/query from this app re-asserts remote automatically."""
+        released, failed = [], []
+        for key, drv in self.controller.drivers.items():
+            if not drv or not getattr(drv, "inst", None):
+                continue
+            try:
+                if drv.go_to_local():
+                    released.append(key)
+                else:
+                    failed.append(key)
+            except Exception as e:
+                failed.append(key)
+                self.controller.log(f"[LOCAL] {key}: {e}")
+        if released:
+            self.controller.log(f"[LOCAL] Released to local: {', '.join(released)}")
+        if failed:
+            self.controller.log(f"[LOCAL] Could not release: {', '.join(failed)}")
+        if not released and not failed:
+            self.controller.log("[LOCAL] No instruments connected.")
+
     def _query_all_status(self):
         def _sv(key, text):
             v = self._inst_status_vars.get(key)
@@ -1316,6 +1349,17 @@ class MainLayout(ttk.Frame):
                 resp_var.set(f"ERR: {e}")
 
         ttk.Button(row, text="Send", command=send).pack(side="left")
+
+        def go_local():
+            drv = self.controller.drivers.get(driver_key)
+            if not drv or not drv.inst:
+                self.controller.log(f"[{driver_key.upper()}] Go To Local: not connected")
+                return
+            ok = drv.go_to_local()
+            self.controller.log(f"[{driver_key.upper()}] Go To Local: "
+                                f"{'released' if ok else 'failed - see console'}")
+
+        ttk.Button(row, text="↩ Go To Local", command=go_local).pack(side="left", padx=(4, 0))
 
         resp_row = ttk.Frame(parent)
         resp_row.pack(fill="x", padx=6, pady=(0, 8))

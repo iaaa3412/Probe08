@@ -228,6 +228,34 @@ class GPIBInstrument:
             return self.inst.query(command).strip()
         return None
 
+    def go_to_local(self) -> bool:
+        """Release remote control so the instrument's own front-panel keys
+        work again, without closing the VISA session (a later write/query
+        just re-asserts remote automatically, same as any other command).
+
+        Real GPIB resources support control_ren(); this sends GTL to just
+        this address rather than deasserting REN on the whole bus, so other
+        instruments on the same GPIB line stay under remote control. USB488
+        instruments (the DMM) have no control_ren() at all in pyvisa, so
+        fall back to the SCPI command every one of them accepts for this -
+        SYSTem:LOCal is meaningless to the TSP-speaking SMU/switch and the
+        prober's own ASCII protocol, so only try it as a fallback, not
+        instead of control_ren.
+        """
+        if not self.inst:
+            return False
+        try:
+            self.inst.control_ren(pyvisa.constants.VI_GPIB_REN_DEASSERT_GTL)
+            return True
+        except Exception:
+            pass
+        try:
+            self.inst.write("SYSTem:LOCal")
+            return True
+        except Exception as e:
+            print(f"[GPIB] go_to_local failed: {e}")
+            return False
+
     def close(self):
         if self.inst:
             self.inst.close()
