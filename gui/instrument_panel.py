@@ -3108,24 +3108,27 @@ class MainLayout(ttk.Frame):
             "STOPPING…" if eg_was_running else "STOPPED", "#dc2626"))
         self._exec2_log("[RUN] ⏹ Stop — channels opened, chuck separated, "
                         "run position reset; ▶ Run will start from the beginning.")
-        # Accretech-only: emergency_stop (K) and send_es (buzzer clear) are
-        # both UF200R commands with no Electroglas equivalent - the EG
-        # driver stubs both as _not_implemented, so this used to fire on
-        # every Electroglas Stop Run too, always failing and logging an
-        # "es error" for a command that was never going anywhere.
+        # Accretech-only: send_es (buzzer clear) is a UF200R command with no
+        # Electroglas equivalent - the EG driver stubs it as
+        # _not_implemented, so this used to fire on every Electroglas Stop
+        # Run too, always failing and logging an "es error" for a command
+        # that was never going anywhere.
+        #
+        # emergency_stop (K) is NOT sent here anymore - Stop Run is a
+        # graceful stop (open channels, separate the chuck via D, reset run
+        # state) and K is a genuinely different, blunter hardware command.
+        # It stays reserved for Prober Debug's own dedicated
+        # "⏹ Emergency Stop (K)" button, not fired automatically on every
+        # ordinary Stop Run press.
         prober = self.controller.drivers.get("prober")
         if prober and prober.inst and self._system == "accretech":
-            def _stop_and_clear():
-                try:
-                    prober.emergency_stop()
-                except Exception as e:
-                    self._exec2_log(f"[RUN] Emergency stop error: {e}")
+            def _clear_buzzer():
                 try:
                     prober.send_es()
                     self._exec2_log("[RUN] es sent (buzzer clear)")
                 except Exception as e:
                     self._exec2_log(f"[RUN] es error: {e}")
-            threading.Thread(target=_stop_and_clear, daemon=True).start()
+            threading.Thread(target=_clear_buzzer, daemon=True).start()
 
     def _exec2_safe_after(self, fn):
         """self.after(0, fn), swallowing the rare "main thread is not in
@@ -3219,6 +3222,14 @@ class MainLayout(ttk.Frame):
 
         if row is not None and col is not None:
             self._exec2_color_shot_squares(shot_geom, shot_row, shot_col, row, col, ok)
+
+        if self._exec2_aborted:
+            # Stop Run already separated the chuck (its own D, sent the
+            # moment it was pressed) - sending a second D here for the
+            # in-flight measurement that just finished would be a real
+            # duplicate command, not a safety margin.
+            self._exec2_log("[RUN] Skipping Separate (D) — already sent by Stop Run.")
+            return ok
 
         z_down_confirmed = True
         try:
