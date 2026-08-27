@@ -4778,6 +4778,17 @@ class MainLayout(ttk.Frame):
         map_lf.columnconfigure(0, weight=1)
         self._exec2_overlay_map = WaferMapPanel(map_lf, show_title=False, show_axis_grid=True)
         self._exec2_overlay_map.grid(row=0, column=0, sticky="nsew")
+        # Same reason the Run tab's own map wires these: die-ID labels are
+        # only drawn once a die is big enough on screen to hold the text
+        # (_exec2_labels_fit) - without a hook here, zooming this preview
+        # in (what an operator actually needs to do to read the IDs and
+        # judge whether the overlay is centered correctly) never re-checked
+        # that and the labels just never appeared, or stayed wherever they
+        # were before the zoom. _reset_view (double-click) already routes
+        # through on_zoom too (see WaferMapPanel), so one hook covers both.
+        self._exec2_overlay_map.on_zoom = self._exec2_debounced(
+            "_exec2_overlay_zoom_debounce_id", self._exec2_overlay_tab_recompute)
+        self._exec2_overlay_map.on_redraw = self._exec2_overlay_tab_recompute
 
     def _exec2_overlay_tab_recompute(self, *_a):
         accretech_rc = self._exec2_overlay_accretech_rc()
