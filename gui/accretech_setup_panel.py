@@ -94,13 +94,32 @@ class AccretechSetupPanel(ttk.Frame):
             parent=self)
         if not name:
             return
+        name = name.strip()
         try:
-            accretech_profiles.add_profile(name.strip(), based_on=source)
+            accretech_profiles.add_profile(name, based_on=source)
         except (ValueError, KeyError) as exc:
             messagebox.showerror("Add Prober Failed", str(exc))
             return
         self._log(f"[SETUP] Added Accretech prober {name!r} (copy of {source!r})")
-        self._bench_var.set(name.strip())
+        # Recipes written for `source` (e.g. lampaccr, tagged bench=source)
+        # would otherwise be invisible on the new bench - see
+        # RecipePanel._visible_recipe_names. Wafer Builder maps need no
+        # equivalent step: they are keyed by system, not bench, so every
+        # bench already sees the same ones.
+        try:
+            from wafer_map_view import clone_bench_recipes
+            cloned = clone_bench_recipes(source, name)
+        except Exception as exc:
+            cloned = []
+            self._log(f"[SETUP] Could not clone {source!r}'s recipes to {name!r}: {exc}")
+        if cloned:
+            by_file = {}
+            for path, recipe_name in cloned:
+                by_file.setdefault(path, []).append(recipe_name)
+            for path, names in by_file.items():
+                self._log(f"[SETUP]   {path}: {', '.join(names)}")
+            self._log(f"[SETUP] Cloned {len(cloned)} recipe(s) from {source!r} to {name!r}.")
+        self._bench_var.set(name)
         self._refresh_benches()
 
     # -- instrument table -----------------------------------------------------

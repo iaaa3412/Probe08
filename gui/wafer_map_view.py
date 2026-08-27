@@ -687,6 +687,103 @@ def _safe_card_filename(name: str) -> str:
     return "".join(c for c in name.strip() if c.isalnum() or c in " _-").strip() or "card"
 
 
+def clone_bench_recipes(old_bench: str, new_bench: str) -> list:
+    """Walk every ATA project folder under the current working directory
+    and, in each probe card CSV, clone any RECIPE (with its STEP/SITE rows)
+    tagged for `old_bench` under a new name tagged for `new_bench` - so
+    Setup tab's "+ Add Prober" (which copies old_bench's instrument profile
+    to make new_bench) also comes with working copies of every recipe that
+    was written specifically for old_bench, without a manual per-project
+    CSV edit (this automates exactly the lampaccr_probe08new-style port
+    done by hand before this existed - see
+    references/HANDOFF_lampaccr_compliance_investigation.md history).
+
+    Recipes with NO bench tag already show on every bench (see
+    RecipePanel._visible_recipe_names) and are left alone - nothing to
+    clone. A file with no "bench" column at all (some older probe cards
+    predate bench-tagging) has nothing tagged for old_bench either, so it
+    is skipped the same way. Idempotent: a target name already present is
+    left as-is, not duplicated - safe to call again (e.g. Add Prober run
+    twice, or a project folder added after the fact).
+
+    Wafer Builder maps are not bench-scoped at all (wafer_builder_maps/
+    _default_<system>.txt is keyed by system, not bench) so there is
+    nothing to copy for those - every bench on a system already sees the
+    same maps.
+
+    Returns [(csv_path, cloned_recipe_name), ...] for logging.
+    """
+    import workdir
+    root = workdir.get_current_working_dir()
+    cloned = []
+    if not root or not os.path.isdir(root):
+        return cloned
+    for proj in sorted(os.listdir(root)):
+        cards_dir = os.path.join(root, proj, "probe_cards")
+        if not os.path.isdir(cards_dir):
+            continue
+        for fname in sorted(os.listdir(cards_dir)):
+            if not fname.lower().endswith(".csv"):
+                continue
+            if ".recipes." in fname.lower() or ".movelist." in fname.lower():
+                continue
+            path = os.path.join(cards_dir, fname)
+            if os.path.isfile(path):
+                cloned.extend(_clone_bench_recipes_in_file(path, old_bench, new_bench))
+    return cloned
+
+
+def _clone_bench_recipes_in_file(path: str, old_bench: str, new_bench: str) -> list:
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+    except OSError:
+        return []
+    if not rows:
+        return []
+    header = rows[0]
+    try:
+        kind_i = header.index("kind")
+        recipe_i = header.index("recipe")
+        bench_i = header.index("bench")
+    except ValueError:
+        # No "bench" column at all - an older card, predating bench tags.
+        # Nothing on it could be tagged for old_bench, so there is nothing
+        # to clone (see this function's own docstring).
+        return []
+
+    def _get(row, i):
+        return row[i] if i < len(row) else ""
+
+    existing_names = {_get(r, recipe_i) for r in rows[1:] if _get(r, recipe_i)}
+    to_clone = sorted({
+        _get(r, recipe_i) for r in rows[1:]
+        if _get(r, kind_i) == "RECIPE" and _get(r, bench_i) == old_bench
+    })
+
+    new_rows = []
+    cloned = []
+    for name in to_clone:
+        target = f"{name}_{new_bench}"
+        if target in existing_names:
+            continue
+        for r in rows[1:]:
+            if _get(r, kind_i) in ("RECIPE", "STEP", "SITE") and _get(r, recipe_i) == name:
+                nr = list(r)
+                while len(nr) <= bench_i:
+                    nr.append("")
+                nr[recipe_i] = target
+                if nr[kind_i] == "RECIPE":
+                    nr[bench_i] = new_bench
+                new_rows.append(nr)
+        cloned.append((path, target))
+
+    if new_rows:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerows(rows + new_rows)
+    return cloned
+
+
 class ProbeCardWiringFrame(ttk.LabelFrame):
 
     def __init__(self, parent, get_folder=None, log_fn=None, on_card_change=None,
