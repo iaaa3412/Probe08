@@ -36,6 +36,12 @@ class CassettePanel(ttk.Frame):
         # first run has even finished once still falls back to the old
         # Full Die behavior.
         self._run_mode = "full"
+        # One entry per wafer actually finished this lot (not aborted runs -
+        # nothing real to report for those) - {"wafer_id", "pass_n",
+        # "fail_n", "tested", "pct"}, in slot order. Shown in the "lot
+        # complete" popup (_show_lot_summary); cleared by _reset_slot, same
+        # "start the whole list over" action that resets _slot_idx.
+        self._lot_summary: list = []
 
         self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
@@ -291,6 +297,7 @@ class CassettePanel(ttk.Frame):
             messagebox.showerror("Automation Armed", "Stop automation before resetting.")
             return
         self._slot_idx = 0
+        self._lot_summary = []
         self._redraw_slots()
         self._log_event(1, "", "Reset — next Arm will start tracking from slot #1.")
 
@@ -414,6 +421,7 @@ class CassettePanel(ttk.Frame):
                             "All slots in the list are complete — cassette automation finished.")
             self._set_state("CASSETTE COMPLETE", "#16a34a")
             self._redraw_slots()
+            self._show_lot_summary()
             return
         self._armed = True
         self.ui._exec2_on_run_finished = self._on_wafer_finished
@@ -464,6 +472,8 @@ class CassettePanel(ttk.Frame):
         self._log_event(self._slot_idx + 1, lot_id,
                         f"Run finished — {pass_n}/{tested} pass ({pct:.1f}%), "
                         f"{total_n} die(s) on the wafer map.")
+        self._lot_summary.append({"wafer_id": wafer_id, "pass_n": pass_n,
+                                  "fail_n": fail_n, "tested": tested, "pct": pct})
 
         if self._auto_export_var.get():
             self._export_current(lot_id, wafer_id)
@@ -485,11 +495,27 @@ class CassettePanel(ttk.Frame):
                             "All slots in the list are complete — cassette automation finished.")
             self._disarm()
             self._set_state("CASSETTE COMPLETE", "#16a34a")
+            self._show_lot_summary()
             return
 
         self._set_state("SWAPPING CASSETTE", "#f97316")
         self._redraw_slots()
         threading.Thread(target=self._advance_thread, daemon=True).start()
+
+    def _show_lot_summary(self):
+        """Popup shown once the whole lot is done (list exhausted, from
+        either _on_wafer_finished or _continue_after_pause) - every
+        wafer's yield, plus where this lot's exports actually went."""
+        if self._lot_summary:
+            lines = [f"{s['wafer_id']}:  {s['pass_n']}/{s['tested']} pass "
+                    f"({s['pct']:.1f}%)" for s in self._lot_summary]
+        else:
+            lines = ["(no wafers finished this lot)"]
+        messagebox.showinfo(
+            "Cassette Lot Complete",
+            f"Lot {self._lot_id()!r} — {len(self._lot_summary)} wafer(s):\n\n"
+            + "\n".join(lines)
+            + f"\n\nExported to: {self.ui.export_path_var.get()}")
 
     def _export_current(self, lot_id: str, wafer_id: str):
         self.ui.lot_id.set(lot_id)
