@@ -9,7 +9,8 @@ import threading
 import time
 
 from wafer_map_view import (WaferMapPanel, PadLayoutPanel, ProbeCardWiringFrame,
-                            ATA_KEY_FILES, WAFER_MAP_SOURCES, _pz_bind)
+                            ATA_KEY_FILES, WAFER_MAP_SOURCES, _pz_bind,
+                            recipe_file_path, copy_recipe, copy_probe_card, copy_wafer_map)
 from execution_panel import ExecutionDashboard
 from gds_parser_panel import GdsParserPanel
 from switch_debug_panel import SwitchDebugPanel
@@ -1534,6 +1535,8 @@ class MainLayout(ttk.Frame):
         self._ata_tree.tag_configure("missing", foreground="#999999")
         self._ata_tree.tag_configure("other",   foreground="#333333")
         self._ata_tree.tag_configure("section", font=("Segoe UI", 9, "bold"))
+        self._ata_tree_meta = {}
+        self._ata_tree.bind("<Button-3>", self._ata_tree_on_right_click)
 
         # Still built, just never gridded - this tab no longer SHOWS a
         # wafer map (see _build_internal_tree), but self.wafer_map's data
@@ -1556,10 +1559,7 @@ class MainLayout(ttk.Frame):
     #     LAMP's real LaMP_HP_b.csv, which carries "lampaccr" this way.
     @staticmethod
     def _card_recipe_names(card_dir: str, base: str, system: str):
-        if system == "accretech":
-            path = os.path.join(card_dir, f"{base}.csv")
-        else:
-            path = os.path.join(card_dir, f"{base}.recipes.{system}.csv")
+        path = recipe_file_path(card_dir, base, system)
         if not os.path.isfile(path):
             return None
         try:
@@ -1584,6 +1584,11 @@ class MainLayout(ttk.Frame):
         tree = self._ata_tree
         for item in tree.get_children():
             tree.delete(item)
+        # item id -> {"kind": "recipe"/"wafer_map"/"probe_card", ...} for
+        # the right-click Copy menu (_ata_tree_on_right_click) - only rows
+        # a copy actually makes sense for get an entry; anything else (Key
+        # ATA Files, Subfolders, Other Files) is left out on purpose.
+        self._ata_tree_meta = {}
         if not folder_path or not os.path.isdir(folder_path):
             return
 
@@ -1622,6 +1627,7 @@ class MainLayout(ttk.Frame):
                 mark = "  (active)" if base == active_card else ""
                 card_id = tree.insert(cards_id, "end", text=base + mark,
                                      open=True, tags=("found",))
+                self._ata_tree_meta[card_id] = {"kind": "probe_card", "base": base}
                 for system in ("accretech", "electroglas"):
                     names = self._card_recipe_names(cards_dir, base, system)
                     label = system.capitalize()
@@ -1634,10 +1640,44 @@ class MainLayout(ttk.Frame):
                                         values=("✔", f"{len(names)} recipe(s)"),
                                         tags=("found",))
                     for name in names:
-                        tree.insert(sys_id, "end", text=name, tags=("found",))
+                        recipe_item = tree.insert(sys_id, "end", text=name, tags=("found",))
+                        self._ata_tree_meta[recipe_item] = {
+                            "kind": "recipe", "card_base": base,
+                            "system": system, "name": name}
         else:
             tree.insert(cards_id, "end", text="(none yet)",
                        values=("–", "create one on the Probe Card tab"),
+                       tags=("missing",))
+
+        # -- Wafer Builder maps - one saved map per .json in
+        # wafer_builder_maps/ (each is a self-contained Shot/Shot Map/Die
+        # Map snapshot - see recipe_gen_panel's map save/load); _default.txt
+        # names whichever one autoloads for this system, same convention
+        # probe cards use their own _default_<system>.txt marker for.
+        maps_dir = os.path.join(folder_path, "wafer_builder_maps")
+        map_names = []
+        if os.path.isdir(maps_dir):
+            map_names = sorted(f[:-5] for f in os.listdir(maps_dir)
+                               if f.lower().endswith(".json"))
+        default_map = ""
+        default_marker = os.path.join(maps_dir, "_default.txt")
+        if os.path.isfile(default_marker):
+            try:
+                with open(default_marker, encoding="utf-8") as f:
+                    default_map = f.read().strip()
+            except OSError:
+                pass
+        maps_id = tree.insert(root_id, "end",
+                              text=f"🗺 Wafer Builder Maps ({len(map_names)})",
+                              open=True, tags=("section",))
+        if map_names:
+            for name in map_names:
+                mark = "  (default)" if name == default_map else ""
+                map_item = tree.insert(maps_id, "end", text=name + mark, tags=("found",))
+                self._ata_tree_meta[map_item] = {"kind": "wafer_map", "name": name}
+        else:
+            tree.insert(maps_id, "end", text="(none yet)",
+                       values=("–", "create one on the Wafer Builder tab"),
                        tags=("missing",))
 
         # -- Key ATA files - collapsed by default, less immediately
@@ -1680,6 +1720,215 @@ class MainLayout(ttk.Frame):
                                    open=False, tags=("section",))
             for fname in others:
                 tree.insert(other_id, "end", text=fname, tags=("other",))
+
+    # -- Internal tab: right-click Copy -----------------------------------
+
+    def _ata_tree_on_right_click(self, event):
+        tree = self._ata_tree
+        item = tree.identify_row(event.y)
+        if not item:
+            return
+        meta = self._ata_tree_meta.get(item)
+        if not meta:
+            return
+        tree.selection_set(item)
+        menu = tk.Menu(self, tearoff=0)
+        label = {"recipe": "📋 Copy Recipe…", "wafer_map": "📋 Copy Wafer Map…",
+                "probe_card": "📋 Copy Probe Card…"}[meta["kind"]]
+        menu.add_command(label=label, command=lambda: self._ata_copy_dialog(meta))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _ata_copy_dialog(self, meta: dict):
+        kind = meta["kind"]
+        dlg = tk.Toplevel(self)
+        dlg.title({"recipe": "Copy Recipe", "wafer_map": "Copy Wafer Map",
+                  "probe_card": "Copy Probe Card"}[kind])
+        dlg.transient(self.winfo_toplevel())
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        row = 0
+
+        def _label(text):
+            nonlocal row
+            ttk.Label(frm, text=text).grid(row=row, column=0, sticky="e",
+                                           padx=(0, 6), pady=3)
+
+        if kind == "recipe":
+            src_desc = (f"{meta['name']}  (card {meta['card_base']!r}, "
+                       f"{meta['system'].capitalize()})")
+        elif kind == "wafer_map":
+            src_desc = meta["name"]
+        else:
+            src_desc = meta["base"]
+        _label("Source:")
+        ttk.Label(frm, text=src_desc, font=("Segoe UI", 9, "bold")).grid(
+            row=row, column=1, columnspan=2, sticky="w", pady=3)
+        row += 1
+
+        dest_folder_var = tk.StringVar(value=self._ata_folder or "")
+        _label("Destination ATA folder:")
+        ttk.Entry(frm, textvariable=dest_folder_var, width=42).grid(
+            row=row, column=1, sticky="w", pady=3)
+
+        def _browse_dest_folder():
+            picked = filedialog.askdirectory(
+                initialdir=dest_folder_var.get() or self._ata_folder or "",
+                title="Destination ATA Folder")
+            if picked:
+                dest_folder_var.set(picked)
+                _refresh_dest_choices()
+        ttk.Button(frm, text="Browse...", command=_browse_dest_folder).grid(
+            row=row, column=2, sticky="w", padx=(4, 0))
+        row += 1
+
+        dest_system_var = tk.StringVar(
+            value=meta["system"] if kind == "recipe" else "")
+        dest_card_var = tk.StringVar(
+            value=meta.get("card_base") or meta.get("base") or "")
+        if kind == "recipe":
+            _label("Destination system:")
+            sys_cb = ttk.Combobox(frm, textvariable=dest_system_var, state="readonly",
+                                  width=14, values=("accretech", "electroglas"))
+            sys_cb.grid(row=row, column=1, sticky="w", pady=3)
+            row += 1
+
+            _label("Destination probe card:")
+            card_cb = ttk.Combobox(frm, textvariable=dest_card_var, width=24)
+            card_cb.grid(row=row, column=1, sticky="w", pady=3)
+            row += 1
+
+            def _refresh_dest_choices(*_a):
+                cards_dir = os.path.join(dest_folder_var.get() or "", "probe_cards")
+                names = []
+                if os.path.isdir(cards_dir):
+                    for fname in os.listdir(cards_dir):
+                        if fname.lower().endswith(".csv"):
+                            b = fname[:-4]
+                            for marker in (".recipes.", ".movelist."):
+                                idx = b.lower().find(marker)
+                                if idx != -1:
+                                    b = b[:idx]
+                                    break
+                            if b not in names:
+                                names.append(b)
+                card_cb.config(values=sorted(names))
+            sys_cb.bind("<<ComboboxSelected>>", _refresh_dest_choices)
+            _refresh_dest_choices()
+
+            _label("New recipe name:")
+            name_var = tk.StringVar(value=meta["name"])
+            ttk.Entry(frm, textvariable=name_var, width=26).grid(
+                row=row, column=1, sticky="w", pady=3)
+            row += 1
+
+            _label("Bench tag (blank = keep as-is):")
+            bench_var = tk.StringVar(value="")
+            ttk.Entry(frm, textvariable=bench_var, width=16).grid(
+                row=row, column=1, sticky="w", pady=3)
+            row += 1
+
+            note_var = tk.StringVar(value="")
+            ttk.Label(frm, textvariable=note_var, foreground="#b45309",
+                     font=("Segoe UI", 8), wraplength=360, justify="left").grid(
+                     row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
+            row += 1
+
+            def _update_note(*_a):
+                cards_dir = os.path.join(dest_folder_var.get() or "", "probe_cards")
+                main_path = os.path.join(cards_dir, f"{dest_card_var.get()}.csv")
+                if dest_card_var.get() and not os.path.isfile(main_path):
+                    note_var.set("⚠ This probe card doesn't exist yet at the "
+                                 "destination - it will be created with just this "
+                                 "recipe, no pin table. Use Copy Probe Card first "
+                                 "if you also need the wiring.")
+                else:
+                    note_var.set("")
+            dest_card_var.trace_add("write", _update_note)
+            dest_folder_var.trace_add("write", _update_note)
+            _update_note()
+        elif kind == "wafer_map":
+            def _refresh_dest_choices(*_a):
+                pass
+            _label("New map name:")
+            default_name = meta["name"]
+            if os.path.normpath(dest_folder_var.get() or "") == os.path.normpath(
+                    self._ata_folder or ""):
+                default_name = meta["name"] + "_copy"
+            name_var = tk.StringVar(value=default_name)
+            ttk.Entry(frm, textvariable=name_var, width=26).grid(
+                row=row, column=1, sticky="w", pady=3)
+            row += 1
+        else:  # probe_card
+            def _refresh_dest_choices(*_a):
+                pass
+            _label("New probe card name:")
+            default_name = meta["base"]
+            if os.path.normpath(dest_folder_var.get() or "") == os.path.normpath(
+                    self._ata_folder or ""):
+                default_name = meta["base"] + "_copy"
+            name_var = tk.StringVar(value=default_name)
+            ttk.Entry(frm, textvariable=name_var, width=26).grid(
+                row=row, column=1, sticky="w", pady=3)
+            row += 1
+
+        def _do_copy():
+            dest_folder = (dest_folder_var.get() or "").strip()
+            dest_name = (name_var.get() or "").strip()
+            if not dest_folder or not os.path.isdir(dest_folder):
+                messagebox.showerror("Invalid Destination",
+                                     "Pick a real destination ATA folder first.",
+                                     parent=dlg)
+                return
+            if not dest_name:
+                messagebox.showerror("Missing Name", "Enter a destination name.",
+                                     parent=dlg)
+                return
+
+            if kind == "recipe":
+                dest_card = (dest_card_var.get() or "").strip()
+                dest_system = dest_system_var.get()
+                if not dest_card:
+                    messagebox.showerror("Missing Probe Card",
+                                         "Enter a destination probe card name.",
+                                         parent=dlg)
+                    return
+                src_cards_dir = os.path.join(self._ata_folder, "probe_cards")
+                src_path = recipe_file_path(src_cards_dir, meta["card_base"], meta["system"])
+                dst_cards_dir = os.path.join(dest_folder, "probe_cards")
+                dst_path = recipe_file_path(dst_cards_dir, dest_card, dest_system)
+                bench = (bench_var.get() or "").strip() or None
+                err = copy_recipe(src_path, meta["name"], dst_path, dest_name, dst_bench=bench)
+            elif kind == "wafer_map":
+                src_dir = os.path.join(self._ata_folder, "wafer_builder_maps")
+                dst_dir = os.path.join(dest_folder, "wafer_builder_maps")
+                err = copy_wafer_map(src_dir, meta["name"], dst_dir, dest_name)
+            else:
+                src_dir = os.path.join(self._ata_folder, "probe_cards")
+                dst_dir = os.path.join(dest_folder, "probe_cards")
+                err = copy_probe_card(src_dir, meta["base"], dst_dir, dest_name)
+
+            if err:
+                messagebox.showerror("Copy Failed", err, parent=dlg)
+                self.controller.log(f"[INTERNAL] Copy {kind} {src_desc!r} failed: {err}")
+                return
+            self.controller.log(
+                f"[INTERNAL] Copied {kind} {src_desc!r} -> "
+                f"{dest_name!r} in {dest_folder}")
+            if os.path.normpath(dest_folder) == os.path.normpath(self._ata_folder or ""):
+                self._build_internal_tree(self._ata_folder)
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=row, column=0, columnspan=3, sticky="e", pady=(10, 0))
+        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="left", padx=4)
+        ttk.Button(btns, text="Copy", command=_do_copy).pack(side="left")
+
+        dlg.update_idletasks()
+        dlg.grab_set()
 
     def load_ata_folder(self, folder_path):
         self._ata_folder = folder_path

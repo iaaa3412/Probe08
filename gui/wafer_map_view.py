@@ -784,6 +784,144 @@ def _clone_bench_recipes_in_file(path: str, old_bench: str, new_bench: str) -> l
     return cloned
 
 
+def recipe_file_path(cards_dir: str, base: str, system: str) -> str:
+    """Which file a card's recipes for `system` actually live in - Accretech
+    keeps RECIPE/STEP/SITE rows in the card's own <base>.csv; Electroglas
+    keeps them in a separate <base>.recipes.electroglas.csv side file. Same
+    row shape either way (rows_to_recipes/recipes_to_rows don't care which
+    file they came from), so copying a recipe between systems/cards is just
+    picking the right file on each end."""
+    if system == "accretech":
+        return os.path.join(cards_dir, f"{base}.csv")
+    return os.path.join(cards_dir, f"{base}.recipes.{system}.csv")
+
+
+def copy_recipe(src_path: str, src_name: str, dst_path: str, dst_name: str,
+                dst_bench: "str | None" = None) -> "str | None":
+    """Copy one recipe (RECIPE + its STEP/SITE rows) from `src_path` to
+    `dst_name` in `dst_path`, creating dst_path (with a bare CARD_CSV_FIELDS
+    header, no PIN rows) if it does not exist yet - a recipe can be copied
+    onto a brand new Electroglas side file this way even though the card's
+    own main CSV already exists separately. dst_bench, if given, overwrites
+    the RECIPE row's own bench tag (see RecipePanel._visible_recipe_names) -
+    leave it None to carry the source's tag over unchanged.
+
+    Returns an error string on failure (source not found, name collision),
+    or None on success. Same read/write pattern as clone_bench_recipes:
+    plain csv.reader/writer, no dependency on a live ProbeCardWiringFrame.
+    """
+    try:
+        with open(src_path, newline="", encoding="utf-8-sig") as f:
+            src_rows = list(csv.reader(f))
+    except OSError as exc:
+        return f"Could not read {src_path}: {exc}"
+    if not src_rows:
+        return f"{src_path} is empty."
+    src_header = src_rows[0]
+    try:
+        kind_i = src_header.index("kind")
+        recipe_i = src_header.index("recipe")
+    except ValueError:
+        return f"{src_path} has no 'kind'/'recipe' column."
+    bench_i = src_header.index("bench") if "bench" in src_header else None
+
+    def _get(row, i):
+        return row[i] if i is not None and i < len(row) else ""
+
+    to_copy = [r for r in src_rows[1:]
+              if _get(r, kind_i) in ("RECIPE", "STEP", "SITE")
+              and _get(r, recipe_i) == src_name]
+    if not to_copy:
+        return f"Recipe {src_name!r} not found in {src_path}."
+
+    if os.path.isfile(dst_path):
+        try:
+            with open(dst_path, newline="", encoding="utf-8-sig") as f:
+                dst_rows = list(csv.reader(f))
+        except OSError as exc:
+            return f"Could not read {dst_path}: {exc}"
+        dst_header = dst_rows[0] if dst_rows else list(CARD_CSV_FIELDS)
+    else:
+        dst_rows = []
+        dst_header = list(CARD_CSV_FIELDS)
+
+    try:
+        dst_kind_i = dst_header.index("kind")
+        dst_recipe_i = dst_header.index("recipe")
+    except ValueError:
+        return f"{dst_path} has no 'kind'/'recipe' column."
+    dst_bench_i = dst_header.index("bench") if "bench" in dst_header else None
+    existing_names = {_get(r, dst_recipe_i) for r in dst_rows[1:] if _get(r, dst_recipe_i)}
+    if dst_name in existing_names:
+        return f"{dst_name!r} already exists in {dst_path}."
+
+    new_rows = []
+    for r in to_copy:
+        # Re-index from the SOURCE file's column order into the
+        # DESTINATION file's - the two can differ (an older card predates
+        # minor_moves/shot_origin/mrange/die/route, see
+        # _clone_bench_recipes_in_file's own note), so a straight
+        # positional copy would silently shift fields on a schema
+        # mismatch. Read by source header name, write by destination
+        # header name; a field the destination has no column for is
+        # dropped (nowhere to put it), a field only the destination has
+        # is left blank.
+        by_name = {src_header[i]: (r[i] if i < len(r) else "")
+                  for i in range(len(src_header))}
+        nr = [by_name.get(col, "") for col in dst_header]
+        nr[dst_recipe_i] = dst_name
+        if _get(r, kind_i) == "RECIPE" and dst_bench is not None and dst_bench_i is not None:
+            nr[dst_bench_i] = dst_bench
+        new_rows.append(nr)
+
+    if not dst_rows:
+        dst_rows = [dst_header]
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    with open(dst_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(dst_rows + new_rows)
+    return None
+
+
+def copy_probe_card(src_dir: str, src_base: str, dst_dir: str, dst_base: str) -> "str | None":
+    """Copy a probe card's main CSV (pins + any Accretech RECIPE/STEP/SITE
+    rows baked into it) plus its Electroglas side files (.recipes.
+    electroglas.csv, .movelist.electroglas.csv), if present, under a new
+    base name/location. Returns an error string on failure, None on
+    success."""
+    import shutil
+    src_main = os.path.join(src_dir, f"{src_base}.csv")
+    if not os.path.isfile(src_main):
+        return f"{src_main} does not exist."
+    dst_main = os.path.join(dst_dir, f"{dst_base}.csv")
+    if os.path.exists(dst_main):
+        return f"{dst_main} already exists."
+    os.makedirs(dst_dir, exist_ok=True)
+    shutil.copy2(src_main, dst_main)
+    for suffix in (".recipes.electroglas.csv", ".movelist.electroglas.csv"):
+        src_side = os.path.join(src_dir, f"{src_base}{suffix}")
+        if os.path.isfile(src_side):
+            shutil.copy2(src_side, os.path.join(dst_dir, f"{dst_base}{suffix}"))
+    return None
+
+
+def copy_wafer_map(src_dir: str, src_name: str, dst_dir: str, dst_name: str) -> "str | None":
+    """Copy one Wafer Builder map (wafer_builder_maps/<name>.json) to a new
+    name and/or a different ATA folder's wafer_builder_maps/. Plain file
+    copy - a saved map is self-contained JSON, nothing to merge or
+    reconcile against the destination. Returns an error string on failure,
+    None on success."""
+    import shutil
+    src_path = os.path.join(src_dir, f"{src_name}.json")
+    if not os.path.isfile(src_path):
+        return f"{src_path} does not exist."
+    dst_path = os.path.join(dst_dir, f"{dst_name}.json")
+    if os.path.exists(dst_path):
+        return f"{dst_path} already exists."
+    os.makedirs(dst_dir, exist_ok=True)
+    shutil.copy2(src_path, dst_path)
+    return None
+
+
 class ProbeCardWiringFrame(ttk.LabelFrame):
 
     def __init__(self, parent, get_folder=None, log_fn=None, on_card_change=None,
