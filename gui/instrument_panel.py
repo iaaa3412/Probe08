@@ -2799,10 +2799,11 @@ class MainLayout(ttk.Frame):
         # Overlay… moved to Wafer Builder > Overlay (see _tab_pma_wafer /
         # _exec2_build_overlay_tab) - same process, embedded there instead
         # of a popup so the accretech map/offset controls live together.
-        # Both systems: the selection is the loaded recipe's touchdown list, so
-        # saving and reloading it belongs wherever dies are picked.
-        ttk.Button(map_bar, text="💾 Save Selected Map",
-                   command=self._exec2_save_selected_map).pack(side="left", padx=(6, 0))
+        # 💾 Save Selected Map removed (both systems) - it duplicated the
+        # Recipe tab's ⬅ Take from map selection (recipe_panel._sites_from_
+        # map), which does the exact same thing (save the picked dies as
+        # the loaded recipe's touchdown list) from the other tab; that one
+        # now also does the Electroglas shot-collapsing this one used to.
         self._exec2_select_all_btn = ttk.Button(
             map_bar, text="☑ Select All", command=self._exec2_toggle_select_all)
         self._exec2_select_all_btn.pack(side="left", padx=(6, 0))
@@ -4041,58 +4042,6 @@ class MainLayout(ttk.Frame):
         except Exception:
             return ""
 
-    def _exec2_save_selected_map(self):
-        """Save the picked dies as the loaded recipe's touchdown list.
-
-        The selection is a property of the recipe, not of the ATA folder: one
-        folder holds many recipes and they probe different dies. This and the
-        Recipe tab's "Take from map selection" are the same operation from two
-        places - whichever the operator reaches for, the list ends up in the
-        same place and the other view shows it.
-
-        There used to be a folder-level ata_wafer_map_selected.csv fallback
-        for when no recipe was loaded, but nothing on this tab ever read it
-        back (_exec2_load_selected_map is a recipe-only no-op with none
-        loaded - see its own docstring) - it was pure write-only dead weight
-        from before recipes had their own touchdown lists. Removed; pick a
-        recipe first instead. NanoZ's own Save/Load Selected Map is a
-        separate feature with a file of the same name and is unaffected.
-        """
-        from tkinter import messagebox
-        picks = self._exec2_wafer_map.get_picked()
-        if not picks:
-            messagebox.showinfo("No Dies Selected",
-                                "Click dies on the map to select them first.")
-            return
-
-        recipe = self._exec2_loaded_recipe_name()
-        set_sites = getattr(self.recipe_panel, "set_sites", None)
-        if recipe and set_sites:
-            sites = []
-            for rc in self._exec2_picks_as_touchdowns(picks):
-                sites.append({
-                    "die_id": (self._exec2_overlay_die_ids.get(rc)
-                               or self._exec2_wafer_map.die_ids.get(rc, "")),
-                    "row": rc[0], "col": rc[1]})
-            if set_sites(recipe, sites):
-                named = sum(1 for s in sites if s["die_id"])
-                self._exec2_log(
-                    f"[RUN] Saved {len(sites)} selected die(s) as the touchdown "
-                    f"list of recipe '{recipe}' ({named} with a die ID) — "
-                    "saved to the probe card, and shown on the Recipe tab.")
-                return
-            messagebox.showerror(
-                "Save Failed", f"Could not attach the selection to recipe "
-                f"'{recipe}'. See the log for details.")
-            self._exec2_log(f"[RUN] Could not attach the selection to recipe "
-                            f"'{recipe}'.")
-            return
-
-        messagebox.showerror(
-            "No Recipe Loaded",
-            "Pick a recipe from the Recipe dropdown first - the selection "
-            "saves as that recipe's own touchdown list.")
-
     def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
         # Only ever a recipe's own touchdown list - the standalone
         # "Load Selected Map" button is gone (picking a recipe from the
@@ -4111,7 +4060,7 @@ class MainLayout(ttk.Frame):
             if not quiet_if_missing:
                 self._exec2_log(
                     f"[RUN] Recipe '{recipe}' has no touchdown list yet — click "
-                    "dies on the map, then 💾 Save Selected Map.")
+                    "dies on the map, then Recipe tab's ⬅ Take from map selection.")
             return []
         resolved = self._exec2_resolve_site_cells(sites)
         picks = list(resolved)
@@ -4155,9 +4104,9 @@ class MainLayout(ttk.Frame):
 
     def _exec2_start_run(self):
         """The real, full-story entry point: the recipe's own saved
-        touchdown list (Recipe tab's Touchdowns table - the same list ▶
-        Save Selected Map/Take from map selection/Take die IDs build),
-        Minor Moves if the recipe has it on, all of it - unlike Full Die/
+        touchdown list (Recipe tab's Touchdowns table - the same list
+        Take from map selection/Take die IDs/Pull shots build), Minor
+        Moves if the recipe has it on, all of it - unlike Full Die/
         Test Selected, which are deliberately the plain single-die case
         only. No saved touchdowns and Minor Moves off falls back to the
         same native whole-wafer G/J walk Full Die does; no saved
@@ -4378,8 +4327,8 @@ class MainLayout(ttk.Frame):
         Builder map's saved JSON immediately, the moment it's confirmed (or
         cleared) - NOT deferred until some later save.
 
-        Confirming Overlay is its own action; the Run tab's own 💾 Save
-        Selected Map button (_exec2_save_selected_map) saves the loaded
+        Confirming Overlay is its own action; the Recipe tab's own ⬅ Take
+        from map selection (recipe_panel._sites_from_map) saves the loaded
         RECIPE's touchdown list, not the map file, and pressing it is not
         guaranteed to happen right after Overlay at all. Without this, the
         alignment only ever lived in the self._exec2_overlay_* instance
@@ -4502,9 +4451,9 @@ class MainLayout(ttk.Frame):
     def _exec2_draw_overlay(self, matched: list):
         self._exec2_clear_overlay()
         # Labels only for cells with a real ID - every cell in `matched`
-        # still gets SELECTED below regardless, since Save Selected Map
-        # acts on the selection, not on which squares happened to get a
-        # label. See _exec2_overlay_all_accretech.
+        # still gets SELECTED below regardless, since Take from map
+        # selection acts on the selection, not on which squares happened
+        # to get a label. See _exec2_overlay_all_accretech.
         self._exec2_overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"])
                                        for d in matched if d["die_ids"]}
         self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
@@ -5941,8 +5890,8 @@ class MainLayout(ttk.Frame):
     def _exec2_move_selected_button(self):
         """➡ Move to Selected is a self-contained arm/target toggle, NOT a
         reader of the normal pick system (_exec2_wafer_map.get_picked(),
-        which Test Selected/Save Selected Map/Overlay all share and which
-        this must never disturb):
+        which Test Selected/Take from map selection/Overlay all share and
+        which this must never disturb):
 
           IDLE ("➡ Move to Selected") --click--> ARMED, no target
               ("✕ Cancel Move") --click a die--> ARMED, one target,

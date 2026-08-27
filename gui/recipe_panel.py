@@ -1334,6 +1334,14 @@ class RecipePanel(ttk.Frame):
                 "Click dies there (or use the Run tab's selection tools), then "
                 "come back and press this again.")
             return
+        # On Electroglas a square is a die and a shot owns several of them -
+        # the chuck lands once per shot, so four picked dies of one shot
+        # must collapse to ONE touchdown, not four. Accretech: a no-op
+        # (a square already is a touchdown there) - see
+        # instrument_panel._exec2_picks_as_touchdowns's own docstring.
+        collapse = getattr(ui, "_exec2_picks_as_touchdowns", None)
+        if collapse:
+            picks = collapse(picks)
         overlay = getattr(ui, "_exec2_overlay_die_ids", None) or {}
         sites = []
         for rc in picks:
@@ -1343,9 +1351,10 @@ class RecipePanel(ttk.Frame):
         self._sites[:] = sites
         self._store_form()
         self._refresh_sites()
-        # Save immediately, the same as the Run tab's 💾 Save Selected Map -
-        # the two are one operation reached from two places, so they must not
-        # differ in whether the result survives a restart.
+        # Save immediately, not deferred until some later 💾 Save - this is
+        # the only place a map selection becomes a touchdown list now (the
+        # Run tab's own Save Selected Map was removed as a duplicate of
+        # this button), so it must not silently be lost on a restart.
         card = self._get_active_card()
         saved = bool(card) and bool(self._save_recipes(card, self._recipes))
         self.controller.log(
