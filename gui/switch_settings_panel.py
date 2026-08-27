@@ -81,6 +81,14 @@ class SwitchSettingsPanel(ttk.Frame):
         self._role_row_var.set(self._row_letters()[0] if self._roles else "")
         self._status_var.set("")
 
+    def refresh_active_bench(self):
+        """Called by AtomicaDashboard after the TOOLBAR's bench picker
+        switches - this panel's own bench picker stays wherever the
+        operator left it (it edits whichever bench it's set to, independent
+        of the live one), but the '(currently active)' note has to track
+        reality."""
+        self._refresh_bench_choices()
+
     def _row_letters(self) -> list:
         return sorted(self._roles.keys())
 

@@ -993,10 +993,14 @@ class AtomicaDashboard(tk.Tk):
 
     def cmd_set_accretech_bench(self, name: str):
         """Switch the Accretech bench and reconnect against it - same shape
-        as cmd_set_eg_profile, simpler since a recipe/probe card is not
-        tied to a bench the way an Electroglas recipe is (probe cards are
-        their own CSVs regardless of which SMU model is connected), so
-        there is no Recipe/Run tab state to refresh here."""
+        as cmd_set_eg_profile. Probe cards themselves are shared (one
+        probe_cards\\ folder, not per-bench), but individual RECIPEs on a
+        card CAN be bench-tagged (see RecipePanel._visible_recipe_names -
+        lampaccr_probe08new and friends exist precisely because probe08's
+        recipes aren't automatically valid on probe08new's single-channel
+        2400/no-wave-gen wiring), so the Recipe tab's picker and the Run
+        tab's separately-cached steps both need telling, same as
+        Electroglas already does here."""
         try:
             changed = accretech_profiles.set_active(name)
         except Exception as e:
@@ -1017,6 +1021,55 @@ class AtomicaDashboard(tk.Tk):
         # Switch Routing view has to follow the newly active bench's own
         # row wiring, not whatever it last drew for the previous one.
         self.refresh_probe_routing_panels()
+        # Any panel with its own "which bench is active" label/highlight -
+        # Setup tab and Switch Settings both let you EDIT a bench other than
+        # the live one, so their pickers stay put, but the "(currently
+        # active)" annotation next to whichever entry matches the toolbar
+        # has to track it.
+        acc_ui = self._by_system["accretech"]["ui"]
+        for attr in ("setup_panel", "switch_settings"):
+            panel = getattr(acc_ui, attr, None)
+            refresh = getattr(panel, "refresh_active_bench", None)
+            if refresh:
+                try:
+                    refresh()
+                except Exception as e:
+                    self.log(f"[SYSTEM] {attr} active-bench refresh failed: {e}")
+        # The Recipe tab only offers recipes tagged for the active bench (or
+        # untagged). See cmd_set_eg_profile's identical block.
+        panel = getattr(acc_ui, "recipe_panel", None)
+        refresh = getattr(panel, "refresh_bench_instruments", None)
+        if refresh:
+            try:
+                refresh()
+            except Exception as e:
+                self.log(f"[SYSTEM] Recipe tab instrument refresh failed: {e}")
+        # refresh_bench_instruments() above only updates the Recipe TAB's
+        # own display. The Run tab keeps its own separate cached copy
+        # (_exec2_steps/_exec2_recipe_var, loaded once when a recipe was
+        # picked from ITS OWN dropdown) that nothing was telling to
+        # reload - so switching probe08 -> probe08new left the Run tab
+        # still armed with probe08's recipe/steps, runnable against the
+        # wrong bench, even though the Recipe tab itself had already
+        # moved on.
+        active_recipe = ""
+        try:
+            active_recipe = panel.get_active_recipe() if panel else ""
+        except Exception:
+            pass
+        if hasattr(acc_ui, "_exec2_recipe_var"):
+            try:
+                if active_recipe:
+                    acc_ui._exec2_load_recipe_by_name(active_recipe)
+                else:
+                    acc_ui._exec2_recipe_var.set("")
+                    acc_ui._exec2_steps = []
+                    if hasattr(acc_ui, "_exec2_steps_tree"):
+                        acc_ui._exec2_steps_tree.delete(*acc_ui._exec2_steps_tree.get_children())
+                    if hasattr(acc_ui, "_exec2_steps_var"):
+                        acc_ui._exec2_steps_var.set(f"No recipe for bench '{name}' yet")
+            except Exception as e:
+                self.log(f"[SYSTEM] Run tab recipe refresh failed: {e}")
         # During startup the scheduled sweep has not run yet and will pick this
         # bench up, so connecting here as well would just sweep the bus twice.
         if self._startup_done:

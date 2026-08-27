@@ -82,6 +82,14 @@ class AccretechSetupPanel(ttk.Frame):
         self._update_active_label()
         self._refresh_table()
 
+    def refresh_active_bench(self):
+        """Called by AtomicaDashboard after the TOOLBAR's bench picker
+        switches - this panel's own picker stays wherever the operator left
+        it (it can edit a bench other than the live one, see the module
+        docstring), but the '(currently active)' annotation has to track
+        whichever bench is now actually connected."""
+        self._update_active_label()
+
     def _add_prober(self):
         source = self._bench_var.get()
         if not source:
