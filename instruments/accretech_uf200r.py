@@ -218,9 +218,17 @@ class AccretechUF200R(GPIBInstrument):
         self._wait_for_stb(target_stb=85)
         self.z_is_up = None
 
-    def unload_wafer(self):
+    # A real cassette unload/load can take anywhere from ~30s to ~3 minutes
+    # (mechanical handling, alignment) - well past self.inst.timeout (30s,
+    # see __init__), which is what _wait_for_stb_any falls back to when no
+    # timeout_s is given. Both cassette operations default to a generous
+    # ceiling here so a slow-but-normal unload/load doesn't get mistaken
+    # for a hang.
+    _CASSETTE_TIMEOUT_S = 240
+
+    def unload_wafer(self, timeout_s: float = _CASSETTE_TIMEOUT_S):
         self.write("U")
-        stb = self._wait_for_stb_any({71})
+        stb = self._wait_for_stb_any({71}, timeout_s)
         self.z_is_up = None
         return stb
 
@@ -238,7 +246,7 @@ class AccretechUF200R(GPIBInstrument):
         except TimeoutError:
             return None
 
-    def cassette_unload_and_load_next(self, timeout_s=None):
+    def cassette_unload_and_load_next(self, timeout_s: float = _CASSETTE_TIMEOUT_S):
         # "U" (see unload_wafer above) only unloads - per the UF GPIB
         # Commands manual (4.28 U), it ends in STB=71 and then the prober
         # "waits for the next wafer loading". It never auto-advances the

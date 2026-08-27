@@ -27,6 +27,7 @@ class CassettePanel(ttk.Frame):
         self._wafers: list[str] = []  # [wafer_id, ...] in slot order; lot_id is shared
         self._slot_idx = 0
         self._armed = False
+        self._paused_for_yield = False
         # "full" or "test" - which run mode to repeat on every later slot,
         # set from the first wafer's actual run (see _on_wafer_finished).
         # Defaults to "full" so arming before that first run has even
@@ -58,10 +59,10 @@ class CassettePanel(ttk.Frame):
         # U was found to error out often when used as part of cassette
         # advance (see cassette_unload_and_load_next's own comment) - "L"
         # is what automation uses now. This button is for a deliberate,
-        # standalone unload only (e.g. pulling a bad wafer), not a
-        # replacement for L - it warns every time and never auto-advances
-        # the slot list, so a reset is required before resuming automation.
-        ttk.Button(bar, text="⏏ Unload Wafer",
+        # standalone unload (e.g. pulling a bad wafer) - if automation is
+        # armed/paused it now disarms it too (see _manual_unload), matching
+        # its name: this ends the lot, it isn't a substitute for L.
+        ttk.Button(bar, text="⏏ Unload/Abort Lot",
                   command=self._manual_unload).pack(side="left", padx=4)
         ttk.Button(bar, text="📥 Load Next Wafer",
                   command=self._manual_load_next).pack(side="left", padx=4)
@@ -71,6 +72,9 @@ class CassettePanel(ttk.Frame):
         self._yield_var = tk.StringVar(value="95")
         ttk.Entry(bar, textvariable=self._yield_var, width=5).pack(side="left", padx=(2, 0))
         ttk.Label(bar, text="% to auto-continue, else pause").pack(side="left", padx=(2, 0))
+        self._continue_btn = ttk.Button(bar, text="▶ Continue", state="disabled",
+                                        command=self._continue_after_pause)
+        self._continue_btn.pack(side="left", padx=(8, 0))
 
         self._state_var = tk.StringVar(value="IDLE")
         self._state_lbl = ttk.Label(bar, textvariable=self._state_var,
@@ -115,6 +119,13 @@ class CassettePanel(ttk.Frame):
         self._auto_export_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(ef, text="Auto-export after each wafer",
                        variable=self._auto_export_var).pack(side="left", padx=(0, 16))
+        # In addition to the Format export below (last-run-only, see
+        # MainLayout.get_last_run_results) - "Save to CSV" writes the plain
+        # self-contained results CSV (cmd_save_csv) the Results tab's own
+        # button already writes, same file every manual export uses.
+        self._auto_export_csv_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ef, text="Also save plain CSV",
+                       variable=self._auto_export_csv_var).pack(side="left", padx=(0, 16))
 
         ttk.Label(ef, text="Export Directory:").pack(side="left")
         ttk.Entry(ef, textvariable=self.ui.export_path_var, width=32).pack(
@@ -285,19 +296,21 @@ class CassettePanel(ttk.Frame):
     def _manual_unload(self):
         drv = self._drv()
         if not drv:
-            self._log("[CASSETTE] Unload Wafer: prober not connected.")
+            self._log("[CASSETTE] Unload/Abort Lot: prober not connected.")
             return
+        armed_note = ("\n\nAutomation is currently armed/paused - this will "
+                      "ABORT it (same as ⏹ Stop Automation) before unloading, "
+                      "so the two never disagree about whether the lot is "
+                      "still running." if (self._armed or self._paused_for_yield) else "")
         if not messagebox.askyesno(
-            "Unload Wafer",
-            "This unloads the wafer on the chuck ONLY - it does not load "
-            "the next one, and it does NOT advance cassette automation's "
-            "slot tracking.\n\n"
-            "If automation is armed/paused, you must press "
-            "🔄 Reset to Slot #1 (or otherwise re-sync the slot list "
-            "yourself) before resuming it, or it will get out of sync "
-            "with what's physically in the cassette.\n\n"
+            "Unload/Abort Lot",
+            "This unloads the wafer on the chuck and ends the current lot - "
+            "it does not load the next one." + armed_note + "\n\n"
             "Continue?"):
             return
+        if self._armed or self._paused_for_yield:
+            self._disarm("Lot aborted (Unload/Abort Lot pressed).")
+            self._set_state("ABORTED", "#dc2626")
         def _run():
             self._log("[CASSETTE] >> U  (Unload only)")
             stb = drv.unload_wafer()
@@ -328,7 +341,11 @@ class CassettePanel(ttk.Frame):
             return
         def _run():
             self._log("[CASSETTE] >> L  (Unload / Load Next Wafer)")
-            stb = drv.cassette_unload_and_load_next(timeout_s=120)
+            # A real unload/load-next can take up to ~3 minutes - see
+            # AccretechUF200R._CASSETTE_TIMEOUT_S, whose default this
+            # relies on (240s, well past that) rather than a shorter
+            # value that could mistake a slow-but-normal cycle for a hang.
+            stb = drv.cassette_unload_and_load_next()
             if stb == 70:
                 self._log("[CASSETTE] << STB=70  (next wafer loaded, start die positioned, chuck DOWN)")
             else:
@@ -360,6 +377,7 @@ class CassettePanel(ttk.Frame):
             return
 
         self._armed = True
+        self._set_paused_for_yield(False)
         self.ui._exec2_on_run_finished = self._on_wafer_finished
         self._set_locked(True)
         self._set_state("ARMED — waiting for the current/next run to finish", "#2563eb")
@@ -368,8 +386,42 @@ class CassettePanel(ttk.Frame):
             self._slot_idx + 1, self._lot_id(),
             "Cassette started, go to run tab, start a run")
 
+    def _set_paused_for_yield(self, paused: bool):
+        self._paused_for_yield = paused
+        self._continue_btn.config(state="normal" if paused else "disabled")
+
+    def _continue_after_pause(self):
+        """▶ Continue, next to the yield threshold - resumes past the wafer
+        that just paused automation (already tested and exported, so this
+        advances to the NEXT slot exactly like a passing wafer would have,
+        rather than re-running the one that triggered the pause)."""
+        if not self._paused_for_yield or self._armed:
+            return
+        self._set_paused_for_yield(False)
+        lot_id = self._lot_id()
+        self._slot_idx += 1
+        if self._slot_idx >= len(self._wafers):
+            self._log_event(self._slot_idx, lot_id,
+                            "All slots in the list are complete — cassette automation finished.")
+            self._set_state("CASSETTE COMPLETE", "#16a34a")
+            self._redraw_slots()
+            return
+        self._armed = True
+        self.ui._exec2_on_run_finished = self._on_wafer_finished
+        self._set_locked(True)
+        self._set_state("SWAPPING CASSETTE", "#f97316")
+        self._redraw_slots()
+        self._log_event(self._slot_idx + 1, lot_id,
+                        "Continuing past the low-yield wafer.")
+        threading.Thread(target=self._advance_thread, daemon=True).start()
+
     def _disarm(self, reason: str = ""):
         self._armed = False
+        # Default to "not resumable" - Stop/aborted-run/no-next-wafer all
+        # route through here too, and only a real yield pause should leave
+        # ▶ Continue enabled. _on_wafer_finished's yield branch re-enables
+        # it right after calling this, for that one case.
+        self._set_paused_for_yield(False)
         if getattr(self.ui, "_exec2_on_run_finished", None) is self._on_wafer_finished:
             self.ui._exec2_on_run_finished = None
         self._set_locked(False)
@@ -413,7 +465,9 @@ class CassettePanel(ttk.Frame):
                             f"Yield {pct:.1f}% is below the {threshold:g}% threshold — "
                             f"PAUSING cassette automation (wafer left loaded).")
             self._disarm()
-            self._set_state(f"PAUSED — yield {pct:.1f}% < {threshold:g}%", "#f97316")
+            self._set_paused_for_yield(True)
+            self._set_state(f"PAUSED — yield {pct:.1f}% < {threshold:g}% — "
+                            "▶ Continue to proceed anyway", "#f97316")
             return
 
         self._slot_idx += 1
@@ -435,6 +489,11 @@ class CassettePanel(ttk.Frame):
             self.controller.cmd_export_sql()
         except Exception as e:
             self._log_event(self._slot_idx + 1, lot_id, f"Auto-export error: {e}")
+        if self._auto_export_csv_var.get():
+            try:
+                self.controller.cmd_save_csv()
+            except Exception as e:
+                self._log_event(self._slot_idx + 1, lot_id, f"Auto CSV export error: {e}")
 
     def _advance_thread(self):
         drv = self._drv()
@@ -446,7 +505,9 @@ class CassettePanel(ttk.Frame):
                 next_ready = True
             else:
                 self._log("[CASSETTE] >> L  (Unload / Load Next Wafer)")
-                next_ready = drv.cassette_unload_and_load_next(timeout_s=180) == 70
+                # Same generous ceiling as the manual button - see
+                # AccretechUF200R._CASSETTE_TIMEOUT_S (240s).
+                next_ready = drv.cassette_unload_and_load_next() == 70
         except Exception as e:
             self._log(f"[CASSETTE] Unload/load-next error: {e}")
             next_ready = False
