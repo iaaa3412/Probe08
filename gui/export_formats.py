@@ -10,7 +10,7 @@ ATA_EXPORT_FORMATS_FILENAME = "ata_export_formats.json"
 
 SQL_SOURCE_FIELDS = {
     "die_id":      "Device-ID string (e.g. 94-60/94-50/94-61/94-51) — from the "
-                   "wafer map's own ID column, or the Overlay dialog; blank if neither",
+                   "wafer map's own ID column, or Wafer Builder > Overlay; blank if neither",
     "switch":      "The recipe step's switch channel, blank for steps that set none",
     "set_voltage": "Commanded/set bias voltage",
     "voltage":     "Actual measured voltage (SMU readback, falls back to set_voltage)",

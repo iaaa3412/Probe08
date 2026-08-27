@@ -1261,11 +1261,11 @@ class RecipeGenPanel(ttk.Frame):
         self._draw_shotmap()
         self._redraw_diemap()
         # Restore (or, for a map/folder that never had one, correctly clear)
-        # the Run tab's Overlay alignment - see _state_to_dict. Only stores
+        # the Overlay alignment - see _state_to_dict. Only stores
         # the numbers here; the Accretech map for THIS folder may not be
         # loaded yet at this point in a folder switch, so the actual re-draw
         # is instrument_panel.load_ata_folder's job, after its own map load.
-        # Accretech-only: the Overlay dialog reconciles the Accretech
+        # Accretech-only: the Overlay sub-tab reconciles the Accretech
         # hardware-extracted map against this Wafer Builder map, but this
         # JSON is shared/cross-synced with Electroglas's own RecipeGenPanel
         # instance for the same ATA folder (see "CROSS-SYSTEM SYNC" below) -

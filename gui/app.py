@@ -1737,7 +1737,7 @@ class AtomicaDashboard(tk.Tk):
                 reason = "at least one current or resistance reading from a die touchdown"
             else:
                 reason = ("readings that carry a device-ID string — the wafer map "
-                         "needs an ID column, or set the IDs with Overlay…"
+                         "needs an ID column, or set the IDs with Wafer Builder > Overlay"
                          if fmt.get("requires_die_id", True) else "measurement results")
             self.ui.exec_panel.log(
                 f"[ERROR] No matching results yet from the last run for '{fmt['name']}' — "

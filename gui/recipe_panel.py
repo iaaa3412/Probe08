@@ -1136,7 +1136,7 @@ class RecipePanel(ttk.Frame):
             variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
         self._minor_moves_chk.pack(side="left", padx=(8, 8), pady=4)
 
-        # Accretech gets its origin from the Run tab's own Overlay dialog
+        # Accretech gets its origin from Wafer Builder's own Overlay sub-tab
         # (its confirmed row/col offset IS the translation between Wafer
         # Builder's logical die grid and real absolute die coordinates -
         # nothing to capture here). Electroglas has no Overlay yet, so it
@@ -1181,8 +1181,8 @@ class RecipePanel(ttk.Frame):
                     f"using Overlay alignment (row {ro:+d}, col {co:+d})")
             else:
                 self._shot_origin_status_var.set(
-                    "no confirmed Overlay alignment — press Overlay… on the "
-                    "Run tab first")
+                    "no confirmed Overlay alignment — go to Wafer Builder > "
+                    "Overlay first")
             return
         rec = self._recipes.get(self._current) or {}
         origin = rec.get("shot_origin")
@@ -1413,9 +1413,9 @@ class RecipePanel(ttk.Frame):
         if not getattr(ui, "_exec2_overlay_offset_confirmed", False):
             messagebox.showinfo(
                 "Touchdowns",
-                "No confirmed Overlay alignment - press Overlay… and 🖌 Overlay "
-                "on Map on the Run tab first, so a real (row, col) on the map "
-                "can be resolved into a shot.")
+                "No confirmed Overlay alignment - go to Wafer Builder > Overlay "
+                "and press 🖌 Overlay on Map first, so a real (row, col) on the "
+                "map can be resolved into a shot.")
             return
         from recipe_gen_panel import shot_die_rc as _shot_die_rc  # deferred: avoids
         # a module-load-time circular import (recipe_gen_panel -> wafer_map_view
