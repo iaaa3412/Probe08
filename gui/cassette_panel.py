@@ -505,17 +505,58 @@ class CassettePanel(ttk.Frame):
     def _show_lot_summary(self):
         """Popup shown once the whole lot is done (list exhausted, from
         either _on_wafer_finished or _continue_after_pause) - every
-        wafer's yield, plus where this lot's exports actually went."""
+        wafer's yield, where this lot's exports actually went, and a
+        one-press final unload - the LAST wafer stays loaded on the chuck
+        (automation only ever sends L when advancing to a NEXT wafer, and
+        there is none after the last slot), so without this the operator
+        has to go find ⏏ Unload/Abort Lot separately to clear the chuck."""
         if self._lot_summary:
             lines = [f"{s['wafer_id']}:  {s['pass_n']}/{s['tested']} pass "
                     f"({s['pct']:.1f}%)" for s in self._lot_summary]
         else:
             lines = ["(no wafers finished this lot)"]
-        messagebox.showinfo(
-            "Cassette Lot Complete",
-            f"Lot {self._lot_id()!r} — {len(self._lot_summary)} wafer(s):\n\n"
-            + "\n".join(lines)
-            + f"\n\nExported to: {self.ui.export_path_var.get()}")
+        body = (f"Lot {self._lot_id()!r} — {len(self._lot_summary)} wafer(s):\n\n"
+               + "\n".join(lines)
+               + f"\n\nExported to: {self.ui.export_path_var.get()}")
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Cassette Lot Complete")
+        dlg.transient(self.winfo_toplevel())
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=14)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=body, justify="left").pack(anchor="w")
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=status_var, foreground="#6b7280",
+                 font=("Segoe UI", 8)).pack(anchor="w", pady=(8, 0))
+
+        def _unload_last():
+            drv = self._drv()
+            if not drv:
+                status_var.set("Prober not connected.")
+                return
+            unload_btn.config(state="disabled")
+            status_var.set("Unloading…")
+
+            def _run():
+                self._log("[CASSETTE] >> U  (Unload last wafer)")
+                stb = drv.unload_wafer()
+                msg = (f"Unloaded (STB={stb})." if stb == 71
+                      else f"Unexpected STB={stb}.")
+                self._log(f"[CASSETTE] << STB={stb}")
+                self.after(0, lambda: status_var.set(msg))
+                self.after(0, lambda: unload_btn.config(state="normal"))
+            threading.Thread(target=_run, daemon=True).start()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(12, 0))
+        unload_btn = ttk.Button(btns, text="⏏ Unload Last Wafer", command=_unload_last)
+        unload_btn.pack(side="left")
+        ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
+
+        dlg.update_idletasks()
+        dlg.grab_set()
 
     def _export_current(self, lot_id: str, wafer_id: str):
         self.ui.lot_id.set(lot_id)
