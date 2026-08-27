@@ -57,8 +57,12 @@ STB_DESCRIPTIONS = {
 
 
 class AccretechUF200R(GPIBInstrument):
-    def __init__(self):
-        super().__init__('prober')
+    def __init__(self, config_key='prober'):
+        # Same reason Keithley2400 takes one: the default ('prober') keeps
+        # every existing caller unaffected - kept for consistency with the
+        # other Accretech drivers even though a bench only ever has one
+        # real prober in practice.
+        super().__init__(config_key)
         self.z_is_up = None
         if self.inst:
             self.inst.timeout = 30000

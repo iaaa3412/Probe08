@@ -73,7 +73,22 @@ DEFAULT_MODEL = {
 
 
 def model_choices_for(key: str) -> tuple:
-    return MODEL_CHOICES.get(key) or (GENERIC_MODEL,)
+    """Model choices for the Setup tab's dropdown. A core slot (key
+    already in MODEL_CHOICES) is unchanged - its own fixed short list.
+    A custom slot (Setup tab's "+ Add Instrument") gets GENERIC_MODEL
+    (no driver required - see GENERIC_MODEL's own comment) PLUS every
+    model already coded for some OTHER slot, so equipment this project
+    already has a working driver for (e.g. a spare 707B) can be added
+    without waiting on new driver code, alongside the option to add
+    something genuinely undefined."""
+    if key in MODEL_CHOICES:
+        return MODEL_CHOICES[key]
+    seen = [GENERIC_MODEL]
+    for models in MODEL_CHOICES.values():
+        for m in models:
+            if m not in seen:
+                seen.append(m)
+    return tuple(seen)
 
 
 def _slugify_key(display_name: str) -> str:

@@ -44,19 +44,32 @@ ACCRETECH_BENCHES = ("probe08",)
 # holds the same model NAMES as plain strings (no driver imports there,
 # same separation eg_profiles.py keeps from this file's _EG_DRIVERS).
 #
-# The 2400 entry passes config_key="smu" explicitly - Keithley2400 defaults
-# to 'smu_eg' (Electroglas's own slot) so a plain Keithley2400() here would
-# silently read/write THAT entry instead of Accretech's own "smu" one,
-# colliding with a real Electroglas 2400 on the same machine. See
-# instruments/keithley2400.py.
+# Every factory takes the SLOT KEY it's being built for and passes it on as
+# config_key - each driver defaults that to its own original hardcoded slot
+# (e.g. Keithley2636B() still means 'smu' with no argument), so nothing
+# existing changes, but a SECOND one of the same model added as a custom
+# Setup-tab instrument (Accretech's "+ Add Instrument", picking an already-
+# coded driver instead of the driverless Generic fallback) reads/writes ITS
+# OWN slot instead of colliding with the original's. See each driver's own
+# file for why (same reasoning Keithley2400 already needed for Electroglas).
 _ACCRETECH_MODELS = {
-    "prober":        {"AccretechUF200R": lambda: AccretechUF200R()},
-    "smu":           {"Keithley2636B": lambda: Keithley2636B(),
-                      "Keithley2400":  lambda: Keithley2400(config_key="smu")},
-    "dmm":           {"Keysight34461A": lambda: Keysight34461A()},
-    "switch_matrix": {"Keithley707B": lambda: Keithley707B()},
-    "wave_gen":      {"Keysight33512B": lambda: Keysight33512B()},
+    "prober":        {"AccretechUF200R": lambda key: AccretechUF200R(config_key=key)},
+    "smu":           {"Keithley2636B": lambda key: Keithley2636B(config_key=key),
+                      "Keithley2400":  lambda key: Keithley2400(config_key=key)},
+    "dmm":           {"Keysight34461A": lambda key: Keysight34461A(config_key=key)},
+    "switch_matrix": {"Keithley707B": lambda key: Keithley707B(config_key=key)},
+    "wave_gen":      {"Keysight33512B": lambda key: Keysight33512B(config_key=key)},
 }
+
+# Flat model-name -> factory, derived from the table above - lets a CUSTOM
+# slot (not one of the five core keys, so not itself a key in
+# _ACCRETECH_MODELS) still resolve to a real driver if its chosen model
+# matches one already coded for some OTHER slot (e.g. a second 707B added
+# as a spare switch matrix), instead of always falling back to the
+# driverless Generic wrapper. See init_hardware().
+_ALL_ACCRETECH_MODEL_FACTORIES = {}
+for _slot_models in _ACCRETECH_MODELS.values():
+    _ALL_ACCRETECH_MODEL_FACTORIES.update(_slot_models)
 # (display label, controller.drivers key) per slot - the drivers-dict key is
 # an app-internal name unrelated to instruments.yaml's own key naming
 # (switch_matrix has always been "switch" here, everywhere else in the GUI
@@ -854,7 +867,15 @@ class AtomicaDashboard(tk.Tk):
             entry = profile_instruments.get(key) or {}
             model = entry.get("model") or accretech_profiles.DEFAULT_MODEL.get(
                 key, accretech_profiles.GENERIC_MODEL)
-            slot_factory = _ACCRETECH_MODELS.get(key, {}).get(model)
+            # This slot's own registered model first (the normal case for
+            # one of the five core keys); otherwise fall back to ANY known
+            # model with that exact name, wherever it's normally used - a
+            # custom slot set to e.g. "Keithley707B" (Setup tab offers
+            # every already-coded model, not just Generic - see
+            # accretech_profiles.model_choices_for) resolves to the real
+            # driver this way, config_key-bound to ITS OWN slot.
+            slot_factory = (_ACCRETECH_MODELS.get(key, {}).get(model)
+                            or _ALL_ACCRETECH_MODEL_FACTORIES.get(model))
             if key in _ACCRETECH_SLOT_INFO:
                 display, drv_key = _ACCRETECH_SLOT_INFO[key]
             else:
@@ -863,14 +884,14 @@ class AtomicaDashboard(tk.Tk):
                 # slot's own key/name for both.
                 display, drv_key = entry.get("name") or key, key
             if slot_factory is None:
-                # No real driver class for this (slot, model) - either a
-                # custom slot (always GENERIC_MODEL) or a core slot set to
-                # an unknown model. Either way, still worth trying: a bare
+                # No real driver class for this (slot, model) at all - the
+                # driverless Generic model, or a core slot set to an
+                # unrecognized one. Either way, still worth trying: a bare
                 # GPIBInstrument opens the address and answers *IDN?/serial-
                 # poll (see _connect_instruments's driver.get_id() fallback)
                 # without anyone having written a real driver for it yet -
                 # see accretech_profiles.GENERIC_MODEL's own comment.
-                slot_factory = lambda key=key: GPIBInstrument(key)
+                slot_factory = GPIBInstrument
             # Never let one instrument's constructor take the whole connect
             # sweep down - see Keysight33512B/Keithley2636B/Keysight34461A's
             # own comments (VI_ERROR_NLISTENERS out of an unguarded reset()
@@ -880,7 +901,7 @@ class AtomicaDashboard(tk.Tk):
             # connect failure, instead of aborting every OTHER instrument
             # still left to try.
             try:
-                driver = slot_factory()
+                driver = slot_factory(key)
             except Exception as e:
                 self.log(f"[SYSTEM] {display}: could not construct driver — {e}")
                 continue

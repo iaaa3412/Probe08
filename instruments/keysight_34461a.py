@@ -4,8 +4,12 @@ import sys
 from instruments.gpib_base import GPIBInstrument
 
 class Keysight34461A(GPIBInstrument):
-    def __init__(self):
-        super().__init__('dmm')
+    def __init__(self, config_key='dmm'):
+        # Same reason Keithley2400 takes one: the default ('dmm') keeps
+        # every existing caller unaffected, but a SECOND 34461A added as a
+        # custom Setup-tab instrument needs to read/write ITS OWN slot,
+        # not collide with the real DMM's.
+        super().__init__(config_key)
         self._averages = 1
         # Same fix as Keysight33512B/Keithley2636B/Keithley2400 - opening
         # the VISA session doesn't mean the instrument is actually powered

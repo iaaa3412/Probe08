@@ -4,8 +4,12 @@ import sys
 from instruments.gpib_base import GPIBInstrument
 
 class Keithley2636B(GPIBInstrument):
-    def __init__(self):
-        super().__init__('smu')
+    def __init__(self, config_key='smu'):
+        # Same reason Keithley2400 takes one: the default ('smu') keeps
+        # every existing caller unaffected, but a SECOND 2636B added as a
+        # custom Setup-tab instrument needs to read/write ITS OWN slot,
+        # not collide with the real SMU's.
+        super().__init__(config_key)
         # Same fix as Keysight33512B/Keithley2400 - opening the VISA session
         # doesn't mean the instrument is actually powered on, so an
         # unguarded reset() here could crash straight out of the

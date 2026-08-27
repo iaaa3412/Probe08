@@ -4,8 +4,12 @@ import sys
 from instruments.gpib_base import GPIBInstrument
 
 class Keysight33512B(GPIBInstrument):
-    def __init__(self):
-        super().__init__('wave_gen')
+    def __init__(self, config_key='wave_gen'):
+        # Same reason Keithley2400 takes one: the default ('wave_gen')
+        # keeps every existing caller unaffected, but a SECOND 33512B
+        # added as a custom Setup-tab instrument needs to read/write ITS
+        # OWN slot, not collide with the real wave gen's.
+        super().__init__(config_key)
         # Opening the VISA session proves nothing about whether the wave gen
         # is actually powered on/connected - open_resource() hands back a
         # handle for any valid GPIB address whether or not anything answers
