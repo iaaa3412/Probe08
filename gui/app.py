@@ -101,6 +101,11 @@ ACCRETECH_INSTRUMENT_NAMES = [
 ]
 
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
+# Fallback only - used when the active bench's own profile can't be read
+# (see _accretech_required_drv_keys). Now that a bench can freely drop
+# smu/dmm/wave_gen or carry several of one kind (drivers/flexible-setup
+# work), the REAL required set is computed per bench from whichever slots
+# it actually has fitted right now, not this fixed five.
 # No "smu"/"power_supply" for the same reason - requiring them would hold the
 # Electroglas tab at PENDING forever.
 ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "dmm", "relay1", "relay2", "relay3")
@@ -1151,6 +1156,24 @@ class AtomicaDashboard(tk.Tk):
             except Exception as exc:
                 self.log(f"[SYSTEM] Switch Routing refresh failed: {exc}")
 
+    def _accretech_required_drv_keys(self, bench: str = None) -> tuple:
+        """What "READY" actually requires on THIS bench, right now - the
+        drv_key (see init_hardware's connections.append) for every slot
+        accretech_profiles.fitted_keys(bench) says this bench has fitted,
+        whether that's one of the historical five or a custom/duplicate
+        slot (a second DMM, no wave gen at all, etc - see the "drivers"
+        branch's flexible Setup tab). Falls back to the fixed
+        ACCRETECH_REQUIRED_DRIVERS only if the profile can't be read at
+        all, so a broken/missing profile file doesn't just report READY
+        with nothing actually required."""
+        try:
+            fitted = accretech_profiles.fitted_keys(bench)
+        except Exception:
+            return ACCRETECH_REQUIRED_DRIVERS
+        if not fitted:
+            return ACCRETECH_REQUIRED_DRIVERS
+        return tuple(_ACCRETECH_SLOT_INFO.get(k, (None, k))[1] for k in fitted)
+
     def check_system_ready(self):
         missing = []
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
@@ -1158,7 +1181,8 @@ class AtomicaDashboard(tk.Tk):
             missing.append("wafer map")
         if not getattr(self.ui, "_exec2_steps", None):
             missing.append("recipe")
-        required_instruments = (ACCRETECH_REQUIRED_DRIVERS if self.active_system == "accretech"
+        required_instruments = (self._accretech_required_drv_keys(accretech_profiles.active_name())
+                                if self.active_system == "accretech"
                                 else ELECTROGLAS_REQUIRED_DRIVERS)
         if not all(k in self.drivers for k in required_instruments):
             missing.append("instruments")

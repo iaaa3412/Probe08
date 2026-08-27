@@ -204,7 +204,7 @@ class AccretechSetupPanel(ttk.Frame):
 
     def _update_remove_state(self):
         key = self._selected_key()
-        removable = bool(key) and key not in accretech_profiles.ACCR_KEYS
+        removable = bool(key) and key not in accretech_profiles.MANDATORY_KEYS
         self._remove_btn.config(state="normal" if removable else "disabled")
 
     def _edit_selected(self):
@@ -262,7 +262,7 @@ class AccretechSetupPanel(ttk.Frame):
         key = self._selected_key()
         if not bench or not key:
             return
-        if key in accretech_profiles.ACCR_KEYS:
+        if key in accretech_profiles.MANDATORY_KEYS:
             return
         entry = accretech_profiles.instruments(bench).get(key, {})
         if not messagebox.askyesno(
@@ -295,13 +295,15 @@ class AccretechSetupPanel(ttk.Frame):
 
 class _InstrumentDialog(tk.Toplevel):
     """Edit form for one instrument slot - model, name, GPIB address,
-    timeout, fitted. `key` fixes which slot this is (a core ACCR_KEYS slot
-    is always present on every bench and can only be marked unfitted, not
-    removed; a custom slot from + Add Instrument can be both), so only the
-    model dropdown's own choices vary by key - a key with no real driver
-    (custom, or a core slot set to GENERIC_MODEL) only ever offers
-    GENERIC_MODEL, same as a single-choice core slot (DMM/prober/switch
-    matrix) already renders as a disabled combobox."""
+    timeout, fitted. `key` fixes which slot this is (a MANDATORY_KEYS slot
+    - prober, switch_matrix - is always present on every bench and can
+    only be marked unfitted, not removed; every other slot, including the
+    historical smu/dmm/wave_gen ones, can be both edited and removed same
+    as a slot from + Add Instrument), so only the model dropdown's own
+    choices vary by key - a key with no real driver (custom, or a slot set
+    to GENERIC_MODEL) only ever offers GENERIC_MODEL, same as a single-
+    choice slot (DMM/prober/switch matrix) already renders as a disabled
+    combobox."""
 
     def __init__(self, parent, title: str, key: str, initial: tuple):
         super().__init__(parent)

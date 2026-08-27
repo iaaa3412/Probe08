@@ -25,14 +25,22 @@ from instruments.gpib_base import get_machine_config_path
 
 _PROFILES_FILE = "accretech_probers.yaml"
 
-# The five slots every Accretech bench has ALWAYS had - fixed, unlike
-# EG_KEYS's per-bench fitted/unfitted set. These can never be removed
-# (see remove_instrument), only marked fitted=False (e.g. a disconnected
-# wave gen a bench genuinely doesn't have wired), and Setup's own table
-# always shows all five whether fitted or not. A bench can ALSO carry
-# extra, custom-keyed slots beyond these five - see add_instrument/
-# all_keys - for equipment this project has no driver class for yet.
+# The five slots a FRESH Accretech bench is scaffolded with (see
+# ensure_default_file/add_profile) - historical defaults, not a fixed
+# set any more. Only MANDATORY_KEYS below can never be removed; smu/dmm/
+# wave_gen are ordinary slots like any custom one added via
+# add_instrument - a bench can drop wave_gen entirely, carry three DMMs,
+# have no SMU at all, etc. ACCR_KEYS just controls the DEFAULT starting
+# point and display ordering (see all_keys) so an existing single-of-
+# each-kind bench still looks and behaves exactly as before.
 ACCR_KEYS = ("prober", "smu", "dmm", "switch_matrix", "wave_gen")
+
+# The only two slots that can never be removed, just marked fitted=False
+# - every recipe/run/routing code path assumes a prober and a switch
+# matrix exist on every bench. Everything else (SMU, DMM, wave gen, and
+# any custom-added instrument) is freely addable/removable, including
+# adding more than one of a kind (e.g. three DMMs) - see remove_instrument.
+MANDATORY_KEYS = ("prober", "switch_matrix")
 
 _KEY_LABELS = {
     "prober": "Prober", "smu": "SMU", "dmm": "DMM",
@@ -199,32 +207,37 @@ def is_fitted(key: str, name: str = None) -> bool:
 
 
 def all_keys(name: str = None) -> list:
-    """Every slot this bench actually has - the five ACCR_KEYS (always,
-    fitted or not) plus whatever custom slots were added (see
-    add_instrument), custom ones sorted after the fixed five. This is
-    what the Setup tab's table and init_hardware()/apply_to_instruments_
-    yaml/summary all iterate, instead of the fixed ACCR_KEYS alone."""
+    """Every slot this bench ACTUALLY HAS, in a stable display order -
+    whichever of the historical ACCR_KEYS are still present on this bench
+    (in their usual order), then every other slot (custom-added, or a
+    second/third instance of a kind, e.g. "dmm_2") sorted after. Unlike
+    before, a former core slot (smu/dmm/wave_gen) that was removed via
+    remove_instrument simply isn't in `inst` any more and drops out of
+    this list like any other removed slot - only MANDATORY_KEYS are
+    guaranteed present. This is what the Setup tab's table and
+    init_hardware()/apply_to_instruments_yaml/summary all iterate."""
     inst = instruments(name)
-    custom = sorted(k for k in inst if k not in ACCR_KEYS)
-    return list(ACCR_KEYS) + custom
+    ordered = [k for k in ACCR_KEYS if k in inst]
+    custom = sorted(k for k in inst if k not in ordered)
+    return ordered + custom
 
 
 def fitted_keys(name: str = None) -> list:
     """Keys actually connected on this bench, in all_keys() order - what
     init_hardware() should build a driver/attempt a ping for. Mirrors
-    eg_profiles.fitted_keys(); unlike EG, a CORE key is never actually
-    ABSENT here (all five always exist in the profile - see ACCR_KEYS's
-    own comment) so for those this is purely the fitted=True subset, not
-    a presence check too - a custom key, by contrast, IS presence-checked
-    (it either exists on this bench or it doesn't)."""
+    eg_profiles.fitted_keys(). Every key here is presence-checked (it
+    either exists on this bench or it doesn't) since only MANDATORY_KEYS
+    are guaranteed to exist any more - the fitted=True filter on top of
+    that is for a slot that exists but is deliberately not pinged."""
     inst = instruments(name)
     return [k for k in all_keys(name) if k in inst and inst[k].get("fitted", True)]
 
 
 def apply_to_instruments_yaml(name: str = None) -> list:
     """Point instruments.yaml's flat Accretech keys at this bench's
-    addresses. Returns the keys that changed. Only ACCR_KEYS are touched,
-    so the Electroglas half of the file (including smu_eg - Accretech's own
+    addresses. Returns the keys that changed. Only this bench's own
+    all_keys() are touched, so the Electroglas half of the file (including
+    smu_eg - Accretech's own
     2400 model uses a Keithley2400 pointed at THIS profile's own "smu" key
     instead, see gui/app.py, precisely so the two never collide here).
 
@@ -343,13 +356,15 @@ def add_instrument(bench: str, display_name: str, *, address: str = "",
 
 
 def remove_instrument(bench: str, key: str) -> None:
-    """Drop a CUSTOM instrument slot from `bench` entirely - not
-    available for the five core ACCR_KEYS, which always exist (mark them
-    fitted=False via set_instrument instead - see ACCR_KEYS's own
-    comment)."""
-    if key in ACCR_KEYS:
-        raise ValueError(f"{key!r} is a core Accretech slot and can't be "
-                         "removed - mark it not fitted instead.")
+    """Drop an instrument slot from `bench` entirely - any slot except
+    MANDATORY_KEYS (prober, switch_matrix), which always exist on every
+    bench (mark them fitted=False via set_instrument instead). This
+    includes the historical smu/dmm/wave_gen keys - a bench can drop its
+    wave gen entirely, run with no SMU, etc. See MANDATORY_KEYS's own
+    comment."""
+    if key in MANDATORY_KEYS:
+        raise ValueError(f"{key!r} is a mandatory Accretech slot and can't "
+                         "be removed - mark it not fitted instead.")
     data = load()
     probers = data.get("probers") or {}
     if bench not in probers:
