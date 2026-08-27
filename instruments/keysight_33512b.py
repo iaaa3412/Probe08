@@ -6,7 +6,21 @@ from instruments.gpib_base import GPIBInstrument
 class Keysight33512B(GPIBInstrument):
     def __init__(self):
         super().__init__('wave_gen')
-        self.reset()
+        # Opening the VISA session proves nothing about whether the wave gen
+        # is actually powered on/connected - open_resource() hands back a
+        # handle for any valid GPIB address whether or not anything answers
+        # it, and the write below only fails once it actually hits the bus
+        # (VI_ERROR_NLISTENERS). Unguarded, that exception came straight out
+        # of the constructor - gui/app.py's init_hardware() builds every
+        # driver before it starts handling connect errors, so this crashed
+        # the whole Accretech connect sweep (and hung the GUI) whenever the
+        # wave gen was off, not just left this one instrument red. Same fix
+        # already applied to Keithley2400 - see that file's own comment.
+        if self.is_present():
+            try:
+                self.reset()
+            except Exception as e:
+                print(f"[WAVE_GEN] *RST failed: {e}")
 
     def reset(self):
         self.write("*RST")

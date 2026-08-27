@@ -138,16 +138,16 @@ class AccretechSetupPanel(ttk.Frame):
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
-        cols = ("key", "model", "name", "address", "timeout")
+        cols = ("key", "model", "name", "address", "timeout", "fitted")
         self._tree = ttk.Treeview(frame, columns=cols, show="headings",
                                   selectmode="browse")
-        heads = [("key", "Slot", 100), ("model", "Model", 150),
-                 ("name", "Instrument", 180), ("address", "GPIB Address", 200),
-                 ("timeout", "Timeout (ms)", 90)]
+        heads = [("key", "Slot", 100), ("model", "Model", 190),
+                 ("name", "Instrument", 170), ("address", "GPIB Address", 190),
+                 ("timeout", "Timeout (ms)", 90), ("fitted", "Fitted", 55)]
         for cid, text, width in heads:
             self._tree.heading(cid, text=text)
             self._tree.column(cid, width=width,
-                              anchor="center" if cid == "timeout" else "w")
+                              anchor="center" if cid in ("timeout", "fitted") else "w")
         self._tree.grid(row=0, column=0, sticky="nsew")
         sb = ttk.Scrollbar(frame, orient="vertical", command=self._tree.yview)
         sb.grid(row=0, column=1, sticky="ns")
@@ -158,10 +158,22 @@ class AccretechSetupPanel(ttk.Frame):
         btns.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Button(btns, text="✎ Edit Selected…", command=self._edit_selected).pack(
             side="left")
-        ttk.Label(btns, text="Restart the app (or Refresh Connections) for an "
-                             "address/model change to take effect on an open session.",
-                 foreground="#6b7280", font=("Segoe UI", 8)).pack(
-                 side="left", padx=(10, 0))
+        ttk.Button(btns, text="＋ Add Instrument…", command=self._add_instrument).pack(
+            side="left", padx=(6, 0))
+        self._remove_btn = ttk.Button(btns, text="🗑 Remove", command=self._remove_instrument)
+        self._remove_btn.pack(side="left", padx=(6, 0))
+        self._tree.bind("<<TreeviewSelect>>", lambda _e: self._update_remove_state())
+
+        note = ttk.Frame(frame)
+        note.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Label(note, text="Restart the app (or Refresh Connections) for a change to "
+                             "take effect on an open session. Uncheck Fitted for "
+                             "equipment that isn't physically connected on this bench - "
+                             "it won't be pinged or shown as failed. + Add Instrument "
+                             "works even with no driver written yet (Generic model) - "
+                             "it will still open the address and answer *IDN?.",
+                 foreground="#6b7280", font=("Segoe UI", 8), wraplength=680,
+                 justify="left").pack(anchor="w")
 
     def _refresh_table(self):
         self._tree.delete(*self._tree.get_children())
@@ -170,21 +182,30 @@ class AccretechSetupPanel(ttk.Frame):
             return
         try:
             inst = accretech_profiles.instruments(bench)
+            keys = accretech_profiles.all_keys(bench)
         except KeyError:
             return
-        for key in accretech_profiles.ACCR_KEYS:
+        for key in keys:
             entry = inst.get(key)
             if not entry:
                 continue
             self._tree.insert("", "end", iid=key, values=(
                 _KEY_LABELS.get(key, key),
-                entry.get("model", accretech_profiles.DEFAULT_MODEL.get(key, "")),
+                entry.get("model", accretech_profiles.DEFAULT_MODEL.get(
+                    key, accretech_profiles.GENERIC_MODEL)),
                 entry.get("name", key), entry.get("address", ""),
-                entry.get("timeout_ms", 3000)))
+                entry.get("timeout_ms", 3000),
+                "yes" if entry.get("fitted", True) else "no"))
+        self._update_remove_state()
 
     def _selected_key(self):
         sel = self._tree.selection()
         return sel[0] if sel else None
+
+    def _update_remove_state(self):
+        key = self._selected_key()
+        removable = bool(key) and key not in accretech_profiles.ACCR_KEYS
+        self._remove_btn.config(state="normal" if removable else "disabled")
 
     def _edit_selected(self):
         bench = self._bench_var.get()
@@ -194,22 +215,69 @@ class AccretechSetupPanel(ttk.Frame):
         entry = accretech_profiles.instruments(bench).get(key, {})
         dlg = _InstrumentDialog(
             self, title=f"Edit {_KEY_LABELS.get(key, key)} on {bench!r}", key=key,
-            initial=(entry.get("model", accretech_profiles.DEFAULT_MODEL.get(key, "")),
+            initial=(entry.get("model", accretech_profiles.DEFAULT_MODEL.get(
+                        key, accretech_profiles.GENERIC_MODEL)),
                     entry.get("name", key), entry.get("address", ""),
-                    entry.get("timeout_ms", 3000)))
+                    entry.get("timeout_ms", 3000), entry.get("fitted", True)))
         self.wait_window(dlg)
         if dlg.result is None:
             return
-        model, name, address, timeout_ms = dlg.result
+        model, name, address, timeout_ms, fitted = dlg.result
         try:
             accretech_profiles.set_instrument(
                 bench, key, name=name, address=address,
-                timeout_ms=timeout_ms, model=model)
+                timeout_ms=timeout_ms, model=model, fitted=fitted)
         except (ValueError, KeyError) as exc:
             messagebox.showerror("Edit Failed", str(exc))
             return
         self._log(f"[SETUP] {bench}: updated {_KEY_LABELS.get(key, key)} "
-                  f"({model}, {name!r} @ {address})")
+                  f"({model}, {name!r} @ {address}, fitted={fitted})")
+        self._after_edit(bench)
+
+    def _add_instrument(self):
+        bench = self._bench_var.get()
+        if not bench:
+            messagebox.showerror("No Bench", "Pick a prober bench first.")
+            return
+        name = simpledialog.askstring(
+            "Add Instrument",
+            "Instrument name (e.g. 'Spare DMM') - no driver required yet, this "
+            "will still open its GPIB address and answer *IDN?:",
+            parent=self)
+        if not name:
+            return
+        try:
+            key = accretech_profiles.add_instrument(bench, name.strip())
+        except ValueError as exc:
+            messagebox.showerror("Add Failed", str(exc))
+            return
+        self._log(f"[SETUP] {bench}: added instrument {name!r} (slot {key!r}, "
+                  f"{accretech_profiles.GENERIC_MODEL})")
+        self._after_edit(bench)
+        self._tree.selection_set(key)
+        self._edit_selected()
+
+    def _remove_instrument(self):
+        bench = self._bench_var.get()
+        key = self._selected_key()
+        if not bench or not key:
+            return
+        if key in accretech_profiles.ACCR_KEYS:
+            return
+        entry = accretech_profiles.instruments(bench).get(key, {})
+        if not messagebox.askyesno(
+                "Remove Instrument",
+                f"Remove {entry.get('name', key)!r} from {bench!r}? "
+                "This deletes the slot entirely (not just marking it "
+                "unfitted) - use Edit Selected's Fitted checkbox instead if "
+                "you might reconnect it later."):
+            return
+        try:
+            accretech_profiles.remove_instrument(bench, key)
+        except (ValueError, KeyError) as exc:
+            messagebox.showerror("Remove Failed", str(exc))
+            return
+        self._log(f"[SETUP] {bench}: removed instrument {key!r}")
         self._after_edit(bench)
 
     def _after_edit(self, bench: str):
@@ -227,9 +295,13 @@ class AccretechSetupPanel(ttk.Frame):
 
 class _InstrumentDialog(tk.Toplevel):
     """Edit form for one instrument slot - model, name, GPIB address,
-    timeout. `key` fixes which slot this is (Accretech's five are always
-    present on every bench, unlike Electroglas's add/remove-a-slot model),
-    so only the model dropdown's own choices vary by key."""
+    timeout, fitted. `key` fixes which slot this is (a core ACCR_KEYS slot
+    is always present on every bench and can only be marked unfitted, not
+    removed; a custom slot from + Add Instrument can be both), so only the
+    model dropdown's own choices vary by key - a key with no real driver
+    (custom, or a core slot set to GENERIC_MODEL) only ever offers
+    GENERIC_MODEL, same as a single-choice core slot (DMM/prober/switch
+    matrix) already renders as a disabled combobox."""
 
     def __init__(self, parent, title: str, key: str, initial: tuple):
         super().__init__(parent)
@@ -240,12 +312,12 @@ class _InstrumentDialog(tk.Toplevel):
 
         body = ttk.Frame(self, padding=10)
         body.pack(fill="both", expand=True)
-        model0, name0, addr0, timeout0 = initial
+        model0, name0, addr0, timeout0, fitted0 = initial
 
         row = 0
         ttk.Label(body, text="Model:").grid(row=row, column=0, sticky="e", pady=3)
         self._model_var = tk.StringVar(value=model0)
-        choices = accretech_profiles.MODEL_CHOICES.get(key, (model0,))
+        choices = accretech_profiles.model_choices_for(key)
         model_cb = ttk.Combobox(body, textvariable=self._model_var,
                                 state="readonly" if len(choices) > 1 else "disabled",
                                 values=choices, width=29)
@@ -270,6 +342,13 @@ class _InstrumentDialog(tk.Toplevel):
             row=row, column=1, sticky="w", padx=6, pady=3)
 
         row += 1
+        self._fitted_var = tk.BooleanVar(value=bool(fitted0))
+        ttk.Checkbutton(body, text="Fitted (physically connected on this bench - "
+                                   "uncheck to skip pinging it)",
+                       variable=self._fitted_var).grid(
+                       row=row, column=0, columnspan=2, sticky="w", pady=3)
+
+        row += 1
         btns = ttk.Frame(body)
         btns.grid(row=row, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="left", padx=4)
@@ -291,5 +370,6 @@ class _InstrumentDialog(tk.Toplevel):
             messagebox.showerror("Invalid Timeout", "Timeout (ms) must be a whole number.",
                                  parent=self)
             return
-        self.result = (self._model_var.get(), name, address, timeout_ms)
+        self.result = (self._model_var.get(), name, address, timeout_ms,
+                       self._fitted_var.get())
         self.destroy()

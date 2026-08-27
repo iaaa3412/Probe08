@@ -25,10 +25,13 @@ from instruments.gpib_base import get_machine_config_path
 
 _PROFILES_FILE = "accretech_probers.yaml"
 
-# Every Accretech instrument slot - fixed, unlike EG_KEYS's per-bench
-# fitted/unfitted set, since every bench built so far has had exactly these
-# five. A key absent from a profile still means "not fitted" like EG, this
-# just hasn't come up yet.
+# The five slots every Accretech bench has ALWAYS had - fixed, unlike
+# EG_KEYS's per-bench fitted/unfitted set. These can never be removed
+# (see remove_instrument), only marked fitted=False (e.g. a disconnected
+# wave gen a bench genuinely doesn't have wired), and Setup's own table
+# always shows all five whether fitted or not. A bench can ALSO carry
+# extra, custom-keyed slots beyond these five - see add_instrument/
+# all_keys - for equipment this project has no driver class for yet.
 ACCR_KEYS = ("prober", "smu", "dmm", "switch_matrix", "wave_gen")
 
 _KEY_LABELS = {
@@ -36,10 +39,22 @@ _KEY_LABELS = {
     "switch_matrix": "Switch Matrix", "wave_gen": "Wave Gen",
 }
 
+# Stands in for a real driver class on a custom-added slot (see
+# add_instrument) - gui/app.py's _ACCRETECH_MODELS/init_hardware() build a
+# bare GPIBInstrument for this instead of a real subclass, which still
+# opens the address and answers a plain *IDN?/serial-poll presence check
+# (see _connect_instruments's driver.query("*IDN?") fallback) - enough to
+# name it and see it go green/red in the sidebar without writing a driver.
+# Someone can write a real one later and switch this slot's model to it
+# the same way an SMU gets swapped between 2636B/2400.
+GENERIC_MODEL = "Generic (no driver yet)"
+
 # Model names valid per slot, for the Setup tab's dropdown - just strings
 # here, no driver imports (gui/app.py's _ACCRETECH_MODELS resolves a name to
-# an actual class). Every non-SMU slot lists its one real driver so the
-# dropdown is consistent everywhere without inventing fake alternatives.
+# an actual class). Every non-SMU CORE slot lists its one real driver so the
+# dropdown is consistent everywhere without inventing fake alternatives. A
+# custom slot (key not listed here at all) always gets just (GENERIC_MODEL,)
+# - see model_choices_for().
 MODEL_CHOICES = {
     "prober": ("AccretechUF200R",),
     "smu": ("Keithley2636B", "Keithley2400"),
@@ -55,6 +70,16 @@ DEFAULT_MODEL = {
     "switch_matrix": "Keithley707B",
     "wave_gen": "Keysight33512B",
 }
+
+
+def model_choices_for(key: str) -> tuple:
+    return MODEL_CHOICES.get(key) or (GENERIC_MODEL,)
+
+
+def _slugify_key(display_name: str) -> str:
+    slug = "".join(c.lower() if c.isalnum() else "_" for c in display_name.strip())
+    slug = "_".join(p for p in slug.split("_") if p)
+    return slug or "instrument"
 
 
 def _path() -> str:
@@ -150,7 +175,35 @@ def instruments(name: str = None) -> dict:
 
 def model_of(key: str, name: str = None) -> str:
     entry = instruments(name).get(key) or {}
-    return entry.get("model") or DEFAULT_MODEL.get(key, "")
+    return entry.get("model") or DEFAULT_MODEL.get(key, GENERIC_MODEL)
+
+
+def is_fitted(key: str, name: str = None) -> bool:
+    entry = instruments(name).get(key)
+    return bool(entry and entry.get("fitted", True))
+
+
+def all_keys(name: str = None) -> list:
+    """Every slot this bench actually has - the five ACCR_KEYS (always,
+    fitted or not) plus whatever custom slots were added (see
+    add_instrument), custom ones sorted after the fixed five. This is
+    what the Setup tab's table and init_hardware()/apply_to_instruments_
+    yaml/summary all iterate, instead of the fixed ACCR_KEYS alone."""
+    inst = instruments(name)
+    custom = sorted(k for k in inst if k not in ACCR_KEYS)
+    return list(ACCR_KEYS) + custom
+
+
+def fitted_keys(name: str = None) -> list:
+    """Keys actually connected on this bench, in all_keys() order - what
+    init_hardware() should build a driver/attempt a ping for. Mirrors
+    eg_profiles.fitted_keys(); unlike EG, a CORE key is never actually
+    ABSENT here (all five always exist in the profile - see ACCR_KEYS's
+    own comment) so for those this is purely the fitted=True subset, not
+    a presence check too - a custom key, by contrast, IS presence-checked
+    (it either exists on this bench or it doesn't)."""
+    inst = instruments(name)
+    return [k for k in all_keys(name) if k in inst and inst[k].get("fitted", True)]
 
 
 def apply_to_instruments_yaml(name: str = None) -> list:
@@ -158,7 +211,13 @@ def apply_to_instruments_yaml(name: str = None) -> list:
     addresses. Returns the keys that changed. Only ACCR_KEYS are touched,
     so the Electroglas half of the file (including smu_eg - Accretech's own
     2400 model uses a Keithley2400 pointed at THIS profile's own "smu" key
-    instead, see gui/app.py, precisely so the two never collide here)."""
+    instead, see gui/app.py, precisely so the two never collide here).
+
+    Pushes the address for an unfitted key too (same as eg_profiles) - it
+    just never gets used, since init_hardware() skips building a driver
+    for anything fitted_keys() leaves out. Keeping the address in
+    instruments.yaml means re-fitting it later doesn't need the address
+    retyped."""
     name = name or active_name()
     inst = instruments(name)
     yaml_path = get_machine_config_path("instruments.yaml")
@@ -167,7 +226,7 @@ def apply_to_instruments_yaml(name: str = None) -> list:
     live.setdefault("instruments", {})
 
     changed = []
-    for key in ACCR_KEYS:
+    for key in all_keys(name):
         entry = inst.get(key)
         if not entry:
             continue
@@ -206,21 +265,24 @@ def add_profile(new_name: str, based_on: str = None) -> None:
 
 def set_instrument(bench: str, key: str, *, name: str = None,
                    address: str = None, timeout_ms: int = None,
-                   model: str = None) -> None:
-    """Add or update one instrument entry on `bench` - the Setup tab's
-    per-instrument editor. Only the given (non-None) fields change."""
-    if key not in ACCR_KEYS:
-        raise ValueError(f"{key!r} is not a known instrument key "
-                         f"(expected one of {ACCR_KEYS})")
-    if model is not None and model not in MODEL_CHOICES.get(key, ()):
-        raise ValueError(f"{model!r} is not a valid model for {key!r} "
-                         f"(expected one of {MODEL_CHOICES.get(key, ())})")
+                   model: str = None, fitted: bool = None) -> None:
+    """Update one EXISTING instrument entry on `bench` (core or custom) -
+    the Setup tab's per-instrument editor. Only the given (non-None)
+    fields change. Does not create a new slot - see add_instrument for
+    that; this raises if `key` isn't already on this bench, same as
+    eg_profiles.set_instrument only ever updating a present entry."""
     data = load()
     probers = data.get("probers") or {}
     if bench not in probers:
         raise KeyError(f"no Accretech profile named {bench!r}")
     inst = probers[bench].setdefault("instruments", {})
-    entry = inst.setdefault(key, {"model": DEFAULT_MODEL.get(key, "")})
+    if key not in inst:
+        raise KeyError(f"{key!r} is not a slot on Accretech bench {bench!r} - "
+                       "use add_instrument for a new one")
+    if model is not None and model not in model_choices_for(key):
+        raise ValueError(f"{model!r} is not a valid model for {key!r} "
+                         f"(expected one of {model_choices_for(key)})")
+    entry = inst[key]
     if name is not None:
         entry["name"] = name
     if address is not None:
@@ -229,6 +291,55 @@ def set_instrument(bench: str, key: str, *, name: str = None,
         entry["timeout_ms"] = int(timeout_ms)
     if model is not None:
         entry["model"] = model
+    if fitted is not None:
+        entry["fitted"] = bool(fitted)
+    _save(data)
+
+
+def add_instrument(bench: str, display_name: str, *, address: str = "",
+                   timeout_ms: int = 3000, fitted: bool = True) -> str:
+    """Add a brand new, custom-keyed instrument slot to `bench` - the
+    Setup tab's "+ Add Instrument". No driver class is required: it gets
+    GENERIC_MODEL, which gui/app.py's init_hardware() turns into a bare
+    GPIBInstrument(key) - enough to name it, address it, and see it
+    answer a plain *IDN?/serial-poll presence check without anyone having
+    written a real driver for it yet (see GENERIC_MODEL's own comment).
+    Returns the new slot's key (a slug derived from display_name, de-duped
+    with a numeric suffix if it collides with an existing one)."""
+    display_name = (display_name or "").strip()
+    if not display_name:
+        raise ValueError("instrument name cannot be blank")
+    data = load()
+    probers = data.get("probers") or {}
+    if bench not in probers:
+        raise KeyError(f"no Accretech profile named {bench!r}")
+    inst = probers[bench].setdefault("instruments", {})
+    base_key = _slugify_key(display_name)
+    key = base_key
+    n = 2
+    while key in inst:
+        key = f"{base_key}_{n}"
+        n += 1
+    inst[key] = {"name": display_name, "address": address,
+                "timeout_ms": int(timeout_ms), "model": GENERIC_MODEL,
+                "fitted": bool(fitted)}
+    _save(data)
+    return key
+
+
+def remove_instrument(bench: str, key: str) -> None:
+    """Drop a CUSTOM instrument slot from `bench` entirely - not
+    available for the five core ACCR_KEYS, which always exist (mark them
+    fitted=False via set_instrument instead - see ACCR_KEYS's own
+    comment)."""
+    if key in ACCR_KEYS:
+        raise ValueError(f"{key!r} is a core Accretech slot and can't be "
+                         "removed - mark it not fitted instead.")
+    data = load()
+    probers = data.get("probers") or {}
+    if bench not in probers:
+        raise KeyError(f"no Accretech profile named {bench!r}")
+    (probers[bench].get("instruments") or {}).pop(key, None)
     _save(data)
 
 
@@ -247,10 +358,12 @@ def summary(name: str = None) -> str:
     name = name or active_name()
     lines = [f"{name}: {label(name)}"]
     inst = instruments(name)
-    for key in ACCR_KEYS:
+    for key in all_keys(name):
         entry = inst.get(key)
         if not entry:
             continue
-        lines.append(f"   {_KEY_LABELS.get(key, key):<14} "
-                     f"{entry.get('model', ''):<16} {entry.get('address', '')}")
+        fitted_note = "" if entry.get("fitted", True) else "  (not fitted)"
+        role = _KEY_LABELS.get(key) or entry.get("name") or key
+        lines.append(f"   {role:<14} "
+                     f"{entry.get('model', ''):<16} {entry.get('address', '')}{fitted_note}")
     return "\n".join(lines)

@@ -7,7 +7,16 @@ class Keysight34461A(GPIBInstrument):
     def __init__(self):
         super().__init__('dmm')
         self._averages = 1
-        self.reset()
+        # Same fix as Keysight33512B/Keithley2636B/Keithley2400 - opening
+        # the VISA session doesn't mean the instrument is actually powered
+        # on, so an unguarded reset() here could crash straight out of the
+        # constructor (VI_ERROR_NLISTENERS on the write) and take the whole
+        # Accretech connect sweep down with it, not just this one driver.
+        if self.is_present():
+            try:
+                self.reset()
+            except Exception as e:
+                print(f"[DMM] reset failed: {e}")
 
     def reset(self):
         self.write("*RST")

@@ -22,6 +22,7 @@ from instruments.hp_switchbox import HPSwitchbox
 from instruments.hp_e1326b import HPE1326B
 from instruments import eg_profiles
 from instruments import accretech_profiles
+from instruments.gpib_base import GPIBInstrument
 import export_formats as xfmt
 import app_settings
 
@@ -841,18 +842,49 @@ class AtomicaDashboard(tk.Tk):
         connections = []
         try:
             profile_instruments = accretech_profiles.instruments(bench)
+            fitted = accretech_profiles.fitted_keys(bench)
         except Exception as e:
             self.log(f"[SYSTEM] Could not read Accretech profile {bench!r}: {e}")
-            profile_instruments = {}
-        for key in accretech_profiles.ACCR_KEYS:
+            profile_instruments, fitted = {}, []
+        # fitted_keys() already excludes anything marked not-fitted (Setup
+        # tab's own Fitted checkbox - e.g. a disconnected wave gen on a
+        # bench that genuinely doesn't have one) - those are skipped
+        # entirely here, not pinged and not shown red in the sidebar.
+        for key in fitted:
             entry = profile_instruments.get(key) or {}
-            model = entry.get("model") or accretech_profiles.DEFAULT_MODEL.get(key)
-            factory = _ACCRETECH_MODELS.get(key, {}).get(model)
-            if factory is None:
-                self.log(f"[SYSTEM] {key}: unknown/unsupported model {model!r} — skipped")
+            model = entry.get("model") or accretech_profiles.DEFAULT_MODEL.get(
+                key, accretech_profiles.GENERIC_MODEL)
+            slot_factory = _ACCRETECH_MODELS.get(key, {}).get(model)
+            if key in _ACCRETECH_SLOT_INFO:
+                display, drv_key = _ACCRETECH_SLOT_INFO[key]
+            else:
+                # A custom slot (Setup tab's "+ Add Instrument") - no fixed
+                # display/drivers-dict entry exists for it, so use the
+                # slot's own key/name for both.
+                display, drv_key = entry.get("name") or key, key
+            if slot_factory is None:
+                # No real driver class for this (slot, model) - either a
+                # custom slot (always GENERIC_MODEL) or a core slot set to
+                # an unknown model. Either way, still worth trying: a bare
+                # GPIBInstrument opens the address and answers *IDN?/serial-
+                # poll (see _connect_instruments's driver.get_id() fallback)
+                # without anyone having written a real driver for it yet -
+                # see accretech_profiles.GENERIC_MODEL's own comment.
+                slot_factory = lambda key=key: GPIBInstrument(key)
+            # Never let one instrument's constructor take the whole connect
+            # sweep down - see Keysight33512B/Keithley2636B/Keysight34461A's
+            # own comments (VI_ERROR_NLISTENERS out of an unguarded reset()
+            # used to do exactly this, hanging the GUI, whenever that
+            # instrument was simply powered off). A driver that raises here
+            # shows up as failed-to-connect below, same as any other
+            # connect failure, instead of aborting every OTHER instrument
+            # still left to try.
+            try:
+                driver = slot_factory()
+            except Exception as e:
+                self.log(f"[SYSTEM] {display}: could not construct driver — {e}")
                 continue
-            display, drv_key = _ACCRETECH_SLOT_INFO[key]
-            connections.append((f"{display} ({model})", drv_key, factory()))
+            connections.append((f"{display} ({model})", drv_key, driver))
 
         acc_ui = self._by_system["accretech"]["ui"]
         try:

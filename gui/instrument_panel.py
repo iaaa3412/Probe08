@@ -345,14 +345,22 @@ class MainLayout(ttk.Frame):
         profile decides which those are, and it changes when the prober
         selector changes - hence re-applied on every connect sweep rather
         than fixed at build time.
+
+        A name never seen before gets a row created here, on the spot -
+        the fixed roster (ACCRETECH_INSTRUMENT_NAMES/ELECTROGLAS_
+        INSTRUMENT_NAMES) only ever covers instruments this project has a
+        real driver class for; a custom instrument added on the Setup tab
+        (Accretech "+ Add Instrument", no driver required - see
+        accretech_profiles.GENERIC_MODEL) has no such fixed entry to match,
+        so without this it would connect fine but never appear here at all.
         """
-        missing = [n for n in (names or []) if n not in self.status_labels]
-        if missing:
-            # Not fatal, but the caller asked to show something with no row, so
-            # it will silently never appear. Surfacing it beats hunting for a
-            # bench instrument that is connected yet invisible.
-            print(f"[MainLayout] no status row for: {', '.join(missing)}")
-        wanted = set(names or [])
+        names = list(names or [])
+        for name in names:
+            if name not in self.status_labels:
+                lbl = ttk.Label(self._inst_frame, text=f"⏳ {name}", foreground="orange")
+                self.status_labels[name] = lbl
+                self._instrument_names.append(name)
+        wanted = set(names)
         for inst in self._instrument_names:
             lbl = self.status_labels.get(inst)
             if lbl is None:
