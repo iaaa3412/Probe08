@@ -1156,16 +1156,21 @@ class AtomicaDashboard(tk.Tk):
             except Exception as exc:
                 self.log(f"[SYSTEM] Switch Routing refresh failed: {exc}")
 
-    def _accretech_required_drv_keys(self, bench: str = None) -> tuple:
-        """What "READY" actually requires on THIS bench, right now - the
-        drv_key (see init_hardware's connections.append) for every slot
-        accretech_profiles.fitted_keys(bench) says this bench has fitted,
-        whether that's one of the historical five or a custom/duplicate
-        slot (a second DMM, no wave gen at all, etc - see the "drivers"
-        branch's flexible Setup tab). Falls back to the fixed
-        ACCRETECH_REQUIRED_DRIVERS only if the profile can't be read at
-        all, so a broken/missing profile file doesn't just report READY
-        with nothing actually required."""
+    def accretech_required_drivers(self, bench: str = None) -> tuple:
+        """Which controller.drivers keys a RUN on `bench` (default: the
+        active one) actually needs right now - the drv_key
+        (_ACCRETECH_SLOT_INFO, see init_hardware's connections.append)
+        for every slot accretech_profiles.fitted_keys(bench) says this
+        bench has fitted, not the fixed ACCRETECH_REQUIRED_DRIVERS five
+        unconditionally. A bench with wave_gen marked not-fitted (Setup
+        tab's Fitted checkbox - e.g. probe08new, which has no wave gen
+        wired at all) or with it removed entirely (this "drivers" branch's
+        flexible Setup tab - a bench can drop a slot, or carry more than
+        one of a kind, e.g. a second DMM) must not need it connected to be
+        READY or to start a run - see check_system_ready and
+        instrument_panel._exec2_can_start, which both call this instead
+        of hardcoding the five. Falls back to the fixed list if the
+        profile can't be read at all."""
         try:
             fitted = accretech_profiles.fitted_keys(bench)
         except Exception:
@@ -1181,7 +1186,7 @@ class AtomicaDashboard(tk.Tk):
             missing.append("wafer map")
         if not getattr(self.ui, "_exec2_steps", None):
             missing.append("recipe")
-        required_instruments = (self._accretech_required_drv_keys(accretech_profiles.active_name())
+        required_instruments = (self.accretech_required_drivers(accretech_profiles.active_name())
                                 if self.active_system == "accretech"
                                 else ELECTROGLAS_REQUIRED_DRIVERS)
         if not all(k in self.drivers for k in required_instruments):

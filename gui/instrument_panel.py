@@ -3621,9 +3621,18 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[RUN] Cannot start — no wafer map loaded "
                             "(load an ATA folder with source set to 'Electroglas').")
             ok = False
-        required_instruments = (("prober", "smu", "dmm", "switch", "wave_gen")
-                                if self._system == "accretech"
-                                else ("prober", "smu", "relay1"))
+        if self._system == "accretech":
+            # Only what THIS bench actually has fitted - a bench with no
+            # wave gen wired (Setup tab's Fitted checkbox, e.g.
+            # probe08new) must not block every run over an instrument it
+            # was never supposed to need. See
+            # AtomicaDashboard.accretech_required_drivers.
+            try:
+                required_instruments = self.controller.accretech_required_drivers()
+            except Exception:
+                required_instruments = ("prober", "smu", "dmm", "switch", "wave_gen")
+        else:
+            required_instruments = ("prober", "smu", "relay1")
         missing_instruments = [k for k in required_instruments if k not in self.controller.drivers]
         if missing_instruments:
             self._exec2_log("[RUN] Cannot start — instrument(s) not connected: "
