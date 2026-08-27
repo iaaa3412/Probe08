@@ -1,16 +1,16 @@
 import tkinter as tk
 from tkinter import ttk
 
-_ROW_MAP = [
-    ("A", "SMU A HI",  "#60a5fa"),
-    ("B", "SMU A LO",  "#93c5fd"),
-    ("C", "SMU B HI",  "#fb923c"),
-    ("D", "SMU B LO",  "#fdba74"),
-    ("E", "DMM LO",    "#86efac"),
-    ("F", "DMM HI",    "#22c55e"),
-    ("G", "Wave CH1",  "#e879f9"),
-    ("H", "Wave CH2",  "#f0abfc"),
-]
+import switch_topology as topo
+
+# Fallback colors for a row when there are more rows than this palette -
+# cycles rather than erroring, since switch_topology allows up to 26 rows
+# (ROW_LETTERS_POOL). Chosen to keep the same instrument-family grouping the
+# old hardcoded _ROW_MAP had (blue=SMU A, orange=SMU B, green=DMM,
+# magenta=WGEN) for the common 8-row layout, without hardcoding row COUNT.
+_PALETTE = ["#60a5fa", "#93c5fd", "#fb923c", "#fdba74",
+           "#86efac", "#22c55e", "#e879f9", "#f0abfc"]
+_UNUSED_COLOR = "#9ca3af"
 
 _N_PROBES = 24
 
@@ -21,14 +21,13 @@ def _probe_slot_col(probe: int):
     return ("4", probe - 12)
 
 
-_LBL_W    = 88
+_LBL_W    = 108
 _DOT_R    = 8
 _DOT_STEP = 22
 _GAP      = 14
 _HDR_H    = 38
 
 _CANVAS_W = _LBL_W + _N_PROBES * _DOT_STEP + _GAP + _DOT_R * 2 + 8
-_CANVAS_H = _HDR_H + len(_ROW_MAP) * _DOT_STEP + 8
 
 _C_OPEN      = "#6b7566"
 _C_CLOSED    = "#22c55e"
@@ -50,7 +49,7 @@ def scrollable_routing(parent, controller):
     holder.rowconfigure(0, weight=1)
     holder.columnconfigure(0, weight=1)
 
-    canvas = tk.Canvas(holder, highlightthickness=0, height=_CANVAS_H + 70)
+    canvas = tk.Canvas(holder, highlightthickness=0)
     hsb = ttk.Scrollbar(holder, orient="horizontal", command=canvas.xview)
     vsb = ttk.Scrollbar(holder, orient="vertical",   command=canvas.yview)
     canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb.set)
@@ -77,6 +76,14 @@ class ProbeRoutingPanel(ttk.Frame):
 
         self._state: dict = {}
         self._dot_ids: dict = {}
+        # (row_letter, label, color) for the bench currently being shown -
+        # rebuilt from switch_topology on every refresh_topology() call
+        # instead of a fixed module constant, since probe08 and probe08new
+        # are wired with a different number of live rows (probe08new's 2400
+        # has no row C/D, and no wave gen fitted, so both are marked
+        # "(unused)" there - see instruments/accretech_profiles.py).
+        self._row_map: list = []
+        self._canvas_h = _HDR_H + 8
 
         self._scpi_history: list = []
         self._scpi_hist_idx: int = -1
@@ -87,6 +94,7 @@ class ProbeRoutingPanel(ttk.Frame):
 
         self._build_topbar()
         self._build_matrix()
+        self.refresh_topology()
 
 
     def _drv(self):
@@ -96,6 +104,30 @@ class ProbeRoutingPanel(ttk.Frame):
     def _log(self, msg: str):
         self.controller.log(msg)
 
+    def _active_bench(self) -> str:
+        try:
+            from instruments import accretech_profiles
+            return accretech_profiles.active_name() or "probe08"
+        except Exception:
+            return "probe08"
+
+    def refresh_topology(self):
+        """Re-read the active bench's row wiring and redraw the matrix -
+        called on build, whenever Switch Settings saves/resets, and
+        whenever the active Accretech bench changes (see
+        AtomicaDashboard.refresh_probe_routing_panels), so this view never
+        shows another bench's (or a stale) row layout."""
+        bench = self._active_bench()
+        roles = topo.row_roles(bench)
+        letters = sorted(roles.keys())
+        self._row_map = [
+            (letter, topo.role_label(roles.get(letter)),
+             _PALETTE[i % len(_PALETTE)] if (roles.get(letter) or {}).get("instrument")
+             else _UNUSED_COLOR)
+            for i, letter in enumerate(letters)
+        ]
+        self._canvas_h = _HDR_H + max(1, len(self._row_map)) * _DOT_STEP + 8
+        self._redraw_matrix(bench)
 
     def _build_topbar(self):
         bar = tk.Frame(self, bg="#c8c8c8", relief="flat")
@@ -146,28 +178,47 @@ class ProbeRoutingPanel(ttk.Frame):
     def _build_matrix(self):
         outer = tk.Frame(self, bg="#b8b8b8", relief="groove", bd=2)
         outer.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
+        self._matrix_outer = outer
 
-        c = tk.Canvas(outer, width=_CANVAS_W, height=_CANVAS_H,
+        c = tk.Canvas(outer, width=_CANVAS_W, height=self._canvas_h,
                       bg="#8c9688", highlightthickness=0, cursor="hand2")
         c.pack(padx=8, pady=8)
         self._canvas = c
+        c.bind("<Button-1>", self._on_click)
+
+    def _redraw_matrix(self, bench_label: str = ""):
+        c = self._canvas
+        c.delete("all")
+        self._dot_ids = {}
+        c.config(height=self._canvas_h)
 
         cx_s2_mid = (_cx(1) + _cx(12)) // 2
         cx_s4_mid = (_cx(13) + _cx(24)) // 2
-        c.create_text(cx_s2_mid, 6, text="Slot 2  (Probes 1–12)",
+        title = f"Slot 2  (Probes 1–12)"
+        title2 = f"Slot 4  (Probes 13–24)"
+        c.create_text(cx_s2_mid, 6, text=title,
                       fill="#1f2937", font=("Segoe UI", 7, "bold"), anchor="n")
-        c.create_text(cx_s4_mid, 6, text="Slot 4  (Probes 13–24)",
+        c.create_text(cx_s4_mid, 6, text=title2,
                       fill="#1f2937", font=("Segoe UI", 7, "bold"), anchor="n")
+        if bench_label:
+            c.create_text(4, 6, text=bench_label, fill="#1f2937",
+                          font=("Segoe UI", 7, "bold"), anchor="nw")
 
         for p in range(1, _N_PROBES + 1):
             c.create_text(_cx(p), 22, text=str(p),
                           fill="#374151", font=("Courier", 7), anchor="n")
 
         sep_x = (_cx(12) + _cx(13)) // 2
-        c.create_line(sep_x, 0, sep_x, _CANVAS_H,
+        c.create_line(sep_x, 0, sep_x, self._canvas_h,
                       fill="#6b7280", width=1, dash=(4, 3))
 
-        for ri, (row_letter, label, color) in enumerate(_ROW_MAP):
+        if not self._row_map:
+            c.create_text(_LBL_W, _HDR_H + 12, text="No rows configured for this "
+                          "bench - see Switch Settings.", fill="#374151",
+                          font=("Segoe UI", 8, "italic"), anchor="w")
+            return
+
+        for ri, (row_letter, label, color) in enumerate(self._row_map):
             cy = _cy(ri)
             c.create_text(_LBL_W - 4, cy,
                           text=f"{label}  ({row_letter})",
@@ -175,9 +226,8 @@ class ProbeRoutingPanel(ttk.Frame):
                           anchor="e")
             for probe in range(1, _N_PROBES + 1):
                 slot, card_col = _probe_slot_col(probe)
-                self._draw_dot(c, slot, row_letter, card_col, _cx(probe), cy, closed=False)
-
-        c.bind("<Button-1>", self._on_click)
+                closed = self._state.get((slot, row_letter, card_col), False)
+                self._draw_dot(c, slot, row_letter, card_col, _cx(probe), cy, closed=closed)
 
     def _draw_dot(self, canvas, slot, row, col, cx, cy, closed: bool):
         key = (slot, row, col)
@@ -215,7 +265,7 @@ class ProbeRoutingPanel(ttk.Frame):
             return
 
         ri = (y - _HDR_H) // _DOT_STEP
-        if not (0 <= ri < len(_ROW_MAP)):
+        if not (0 <= ri < len(self._row_map)):
             return
 
         probe = None
@@ -226,7 +276,7 @@ class ProbeRoutingPanel(ttk.Frame):
         if probe is None:
             return
 
-        row_letter   = _ROW_MAP[ri][0]
+        row_letter   = self._row_map[ri][0]
         slot, card_col = _probe_slot_col(probe)
         ch = f"{slot}{row_letter}{card_col:02d}"
         key = (slot, row_letter, card_col)
@@ -277,7 +327,7 @@ class ProbeRoutingPanel(ttk.Frame):
     def mark_all_open(self):
         for key in list(self._state):
             self._state[key] = False
-        for row_letter, _label, _color in _ROW_MAP:
+        for row_letter, _label, _color in self._row_map:
             for probe in range(1, _N_PROBES + 1):
                 slot, card_col = _probe_slot_col(probe)
                 self._refresh_dot(slot, row_letter, card_col)
@@ -290,7 +340,7 @@ class ProbeRoutingPanel(ttk.Frame):
         if not drv:
             self._log("[SW] Read State: switch not connected")
             return
-        rows_in_card = [r[0] for r in _ROW_MAP]
+        rows_in_card = [r[0] for r in self._row_map]
         n_col = 12
         for slot_str in ("2", "4"):
             try:

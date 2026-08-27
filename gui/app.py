@@ -1012,6 +1012,11 @@ class AtomicaDashboard(tk.Tk):
         self.log(f"[SYSTEM] Accretech bench -> {accretech_profiles.label(name)}"
                  + (f" ({len(changed)} address(es) updated)" if changed else ""))
         self.log(accretech_profiles.summary(name))
+        # switch_topology is bench-scoped too (probe08new's single-channel
+        # 2400 is wired nothing like probe08's dual-channel 2636B) - the
+        # Switch Routing view has to follow the newly active bench's own
+        # row wiring, not whatever it last drew for the previous one.
+        self.refresh_probe_routing_panels()
         # During startup the scheduled sweep has not run yet and will pick this
         # bench up, so connecting here as well would just sweep the bus twice.
         if self._startup_done:
@@ -1020,6 +1025,25 @@ class AtomicaDashboard(tk.Tk):
                 self.init_hardware()
             finally:
                 self._dismiss_switch_splash()
+
+    def refresh_probe_routing_panels(self):
+        """Redraw every live Switch Routing view from the active bench's
+        current switch_topology - called after a Switch Settings save/reset
+        and after switching Accretech bench (see cmd_set_accretech_bench).
+        There are two instances alive at once: the bottom collapsible panel
+        (system-agnostic, built once in _build_bottom_routing) and the
+        Accretech tab's own Debug > Switch Routing (only ever built for the
+        Accretech MainLayout - Electroglas has no switch matrix)."""
+        panels = [getattr(self, "bottom_routing", None)]
+        acc_ui = self._by_system.get("accretech", {}).get("ui")
+        panels.append(getattr(acc_ui, "probe_routing", None))
+        for panel in panels:
+            if panel is None:
+                continue
+            try:
+                panel.refresh_topology()
+            except Exception as exc:
+                self.log(f"[SYSTEM] Switch Routing refresh failed: {exc}")
 
     def check_system_ready(self):
         missing = []

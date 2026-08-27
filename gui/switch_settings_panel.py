@@ -2,32 +2,91 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import switch_topology as topo
+from instruments import accretech_profiles
 
 
 class SwitchSettingsPanel(ttk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self._slots: list = [dict(s) for s in topo.slots()]
-        self._roles: dict = {k: dict(v) for k, v in topo.row_roles().items()}
+        # Which bench this panel is EDITING - independent of whichever bench
+        # the toolbar currently has live, same relationship
+        # AccretechSetupPanel already has to the active bench (see its own
+        # module docstring). probe08 and probe08new are wired completely
+        # differently now (probe08new's single-channel 2400 has no row C/D,
+        # and no wave gen at all - see instruments/accretech_profiles.py),
+        # so editing one must never silently apply to the other - that
+        # silent cross-application through one shared global file/cache is
+        # exactly what made "save settings" feel broken when switching
+        # between the two probers before switch_topology.py became
+        # bench-scoped.
+        self._bench_var = tk.StringVar(value=self._active_bench())
+        self._slots: list = []
+        self._roles: dict = {}
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
 
+        self._build_bench_bar()
         self._build_header()
         self._build_slots_section()
         self._build_roles_section()
         self._build_footer()
+        self._load_bench(self._bench_var.get())
+
+    def _active_bench(self) -> str:
+        try:
+            return accretech_profiles.active_name() or "probe08"
+        except Exception:
+            return "probe08"
 
     def _log(self, msg: str):
         self.controller.log(msg)
+
+    def _build_bench_bar(self):
+        bar = ttk.Frame(self, padding=(10, 8, 10, 0))
+        bar.grid(row=0, column=0, sticky="ew")
+        ttk.Label(bar, text="Editing bench:").pack(side="left")
+        self._bench_cb = ttk.Combobox(bar, textvariable=self._bench_var,
+                                      state="readonly", width=16)
+        self._bench_cb.pack(side="left", padx=(4, 8))
+        self._bench_cb.bind("<<ComboboxSelected>>",
+                            lambda _e: self._load_bench(self._bench_var.get()))
+        self._bench_note_var = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self._bench_note_var, foreground="#6b7280",
+                 font=("Segoe UI", 8, "italic")).pack(side="left")
+        self._refresh_bench_choices()
+
+    def _refresh_bench_choices(self):
+        try:
+            names = accretech_profiles.profile_names()
+        except Exception:
+            names = []
+        names = names or [self._bench_var.get()]
+        self._bench_cb.config(values=names)
+        active = self._active_bench()
+        self._bench_note_var.set(
+            "(currently active)" if self._bench_var.get() == active
+            else f"active bench is {active!r}")
+
+    def _load_bench(self, bench: str):
+        self._slots = [dict(s) for s in topo.slots(bench)]
+        self._roles = {k: dict(v) for k, v in topo.row_roles(bench).items()}
+        self._refresh_bench_choices()
+        self._row_count_var.set(str(len(self._roles)))
+        self._rebuild_slot_row_checkboxes()
+        self._refresh_slots_tree()
+        self._refresh_roles_tree()
+        self._role_row_cb.config(values=self._row_letters())
+        self._role_row_var.set(self._row_letters()[0] if self._roles else "")
+        self._status_var.set("")
 
     def _row_letters(self) -> list:
         return sorted(self._roles.keys())
 
     def _build_header(self):
         hdr = ttk.Frame(self, padding=(10, 10, 10, 4))
-        hdr.grid(row=0, column=0, sticky="ew")
+        hdr.grid(row=1, column=0, sticky="ew")
         ttk.Label(hdr, text="Switch Matrix Settings",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
         ttk.Label(hdr, foreground="gray", font=("Segoe UI", 8), wraplength=780, justify="left",
@@ -41,7 +100,7 @@ class SwitchSettingsPanel(ttk.Frame):
 
     def _build_slots_section(self):
         lf = ttk.LabelFrame(self, text="Slots / Cards", padding=8)
-        lf.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 4))
+        lf.grid(row=2, column=0, sticky="ew", padx=10, pady=(4, 4))
         lf.columnconfigure(0, weight=1)
 
         self._slots_tree = ttk.Treeview(
@@ -157,7 +216,7 @@ class SwitchSettingsPanel(ttk.Frame):
     def _build_roles_section(self):
         lf = ttk.LabelFrame(self, text="Row Wiring (which instrument each row connects to)",
                             padding=8)
-        lf.grid(row=2, column=0, sticky="nsew", padx=10, pady=(4, 4))
+        lf.grid(row=3, column=0, sticky="nsew", padx=10, pady=(4, 4))
         lf.columnconfigure(0, weight=1)
         lf.rowconfigure(0, weight=1)
 
@@ -294,7 +353,7 @@ class SwitchSettingsPanel(ttk.Frame):
 
     def _build_footer(self):
         bar = ttk.Frame(self, padding=(10, 4, 10, 10))
-        bar.grid(row=3, column=0, sticky="ew")
+        bar.grid(row=4, column=0, sticky="ew")
         ttk.Button(bar, text="💾 Save Settings", command=self._save).pack(side="left")
         ttk.Button(bar, text="↺ Reset to Defaults", command=self._reset).pack(
             side="left", padx=(6, 0))
@@ -302,20 +361,30 @@ class SwitchSettingsPanel(ttk.Frame):
         ttk.Label(bar, textvariable=self._status_var, foreground="#6b7280",
                  font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
 
+    def _notify_routing(self):
+        try:
+            self.controller.refresh_probe_routing_panels()
+        except Exception as exc:
+            self._log(f"[SETTINGS] Could not refresh Switch Routing view: {exc}")
+
     def _save(self):
+        bench = self._bench_var.get()
         data = {"slots": [dict(s) for s in self._slots],
                "row_roles": {k: dict(v) for k, v in self._roles.items()}}
-        topo.save_topology(data)
-        self._status_var.set(f"Saved to {topo.TOPOLOGY_PATH}")
-        self._log("[SETTINGS] Switch topology saved — recipe channel resolution "
-                  "updates immediately.")
+        topo.save_topology(data, bench)
+        self._status_var.set(f"Saved {bench!r} to {topo.TOPOLOGY_PATH}")
+        self._log(f"[SETTINGS] Switch topology saved for {bench!r} — recipe "
+                  "channel resolution updates immediately.")
+        self._notify_routing()
 
     def _reset(self):
+        bench = self._bench_var.get()
         if not messagebox.askyesno(
                 "Reset to Defaults",
-                "Discard all changes and restore the default 2-slot Keithley 707B layout?"):
+                f"Discard {bench!r}'s changes and restore the default 2-slot "
+                "Keithley 707B layout?"):
             return
-        data = topo.reset_topology()
+        data = topo.reset_topology(bench)
         self._slots = [dict(s) for s in data["slots"]]
         self._roles = {k: dict(v) for k, v in data["row_roles"].items()}
         self._row_count_var.set(str(len(self._roles)))
@@ -324,5 +393,6 @@ class SwitchSettingsPanel(ttk.Frame):
         self._rebuild_slot_row_checkboxes()
         self._refresh_slots_tree()
         self._refresh_roles_tree()
-        self._status_var.set("Reset to defaults and saved.")
-        self._log("[SETTINGS] Switch topology reset to defaults.")
+        self._status_var.set(f"{bench!r} reset to defaults and saved.")
+        self._log(f"[SETTINGS] Switch topology for {bench!r} reset to defaults.")
+        self._notify_routing()
