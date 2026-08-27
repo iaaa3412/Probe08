@@ -356,6 +356,22 @@ class _InstrumentDialog(tk.Toplevel):
         ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="left", padx=4)
         ttk.Button(btns, text="OK", command=self._on_ok).pack(side="left")
 
+        # transient(parent) alone doesn't guarantee this lands ON TOP of
+        # (or even near) the main window - with no explicit geometry a
+        # fresh Toplevel can be placed off to a corner by the window
+        # manager, especially right after the "+ Add Instrument" name
+        # prompt (a separate Toplevel) just closed. Center over parent and
+        # force focus so a freshly-added instrument's model dropdown is
+        # never mistaken for "nothing happened".
+        self.update_idletasks()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = max(0, px + (pw - w) // 2)
+        y = max(0, py + (ph - h) // 2)
+        self.geometry(f"+{x}+{y}")
+        self.lift()
+        self.focus_force()
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
