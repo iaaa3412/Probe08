@@ -10,8 +10,8 @@ class CassettePanel(ttk.Frame):
     """Drives a real cassette load end-to-end: one physical wafer per
     cassette slot, each tagged with its own Lot ID/Wafer ID. The operator
     loads the cassette, presses NEW CST on the prober, loads/starts the
-    FIRST wafer normally (ATA folder + ▶ Full Die, or ▶ Test Selected),
-    then presses ▶ Arm here - from then on this panel watches for that run
+    FIRST wafer normally (ATA folder + ▶ Full Die, ▶ Test Selected, or
+    ▶ Run), then presses ▶ Arm here - from then on this panel watches for that run
     to finish, auto-exports it (reusing the ATA Folder tab's own Export
     Directory/Format), checks yield against the threshold (pausing if
     it's too low instead of silently continuing to burn wafers on a bad
@@ -28,10 +28,13 @@ class CassettePanel(ttk.Frame):
         self._slot_idx = 0
         self._armed = False
         self._paused_for_yield = False
-        # "full" or "test" - which run mode to repeat on every later slot,
-        # set from the first wafer's actual run (see _on_wafer_finished).
-        # Defaults to "full" so arming before that first run has even
-        # finished once still falls back to the old Full Die behavior.
+        # "full" (▶ Full Die), "test" (▶ Test Selected), or "run" (▶ Run -
+        # the recipe's own saved touchdown list, Minor Moves included) -
+        # which one to repeat on every later slot, set from the first
+        # wafer's actual run (see _on_wafer_finished/_exec2_start_site_list's
+        # own run_mode strings). Defaults to "full" so arming before that
+        # first run has even finished once still falls back to the old
+        # Full Die behavior.
         self._run_mode = "full"
 
         self.rowconfigure(3, weight=1)
@@ -539,14 +542,33 @@ class CassettePanel(ttk.Frame):
     def _start_next_run(self):
         if not self._armed:
             return
-        # Repeat whatever mode the first wafer was actually started in -
-        # Test Selected reuses the wafer map's current picks (untouched
-        # across slots, since the same ATA folder/recipe stays loaded for
-        # the whole cassette), so each wafer gets the same subset of dies.
-        starter = (self.ui._exec2_start_test_die if self._run_mode == "test"
-                  else self.ui._exec2_start_full_die)
+        # Repeat whatever mode the first wafer was actually started in - the
+        # three _exec2_start_site_list callers report themselves as "full"
+        # (▶ Full Die), "test" (▶ Test Selected), or "run" (▶ Run - the
+        # recipe's own saved touchdown list, Minor Moves included). Falling
+        # into Full Die for an unrecognized mode used to be the ONLY
+        # fallback, which is exactly what silently ran Full Die instead of
+        # ▶ Run for every wafer after the first.
         try:
-            starter()
+            if self._run_mode == "test":
+                # get_picked() is already empty by the time a run finishes
+                # (see _exec2_start_site_list's own comment) - replay the
+                # exact sites the first wafer's Test Selected actually used,
+                # not whatever happens to be picked on the map right now
+                # (nothing), which used to fall back to 5 random sites.
+                sites = list(getattr(self.ui, "_exec2_last_test_sites", None) or [])
+                if not sites:
+                    self._log_event(self._slot_idx + 1, "",
+                                    "Could not auto-start the next run: no remembered "
+                                    "Test Selected sites from the first wafer.")
+                    self._disarm()
+                    self._set_state("STOPPED (auto-start failed)", "#dc2626")
+                    return
+                self.ui._exec2_start_site_list(sites, "Test Die", "test")
+            elif self._run_mode == "run":
+                self.ui._exec2_start_run()
+            else:
+                self.ui._exec2_start_full_die()
         except Exception as e:
             self._log_event(self._slot_idx + 1, "", f"Could not auto-start the next run: {e}")
             self._disarm()

@@ -2723,6 +2723,10 @@ class MainLayout(ttk.Frame):
         self._exec2_last_run_start_idx = 0
         self._exec2_steps    = []
         self._exec2_current_rc = None
+        # See _exec2_start_site_list's own comment - the last real (row,
+        # col) list a "test" mode run actually used, since get_picked() is
+        # already empty again by the time that run finishes.
+        self._exec2_last_test_sites: list = []
         self._exec2_overlay_row_offset = 0
         self._exec2_overlay_col_offset = 0
         self._exec2_overlay_offset_confirmed = False
@@ -4907,6 +4911,17 @@ class MainLayout(ttk.Frame):
     def _exec2_start_site_list(self, sites: list, mode_label: str, run_mode: str):
         """Shared starter for a fixed list of (row, col) touchdowns - Test
         Die/Test Selected's picks, or ▶ Run's saved touchdown list."""
+        # enable_picking(0) just below clears the map's picks (so nothing
+        # new can be clicked mid-run) - which for Test Selected specifically
+        # means get_picked() comes back EMPTY the instant this run starts,
+        # not just after it finishes. Cassette automation repeating "test"
+        # mode for a later wafer used to read get_picked() at that point and
+        # find nothing, silently falling back to 5 random sites instead of
+        # the operator's real selection - remembered here, before it's
+        # wiped, so cassette_panel._start_next_run can replay the exact same
+        # sites instead of relying on live map state that no longer exists.
+        if run_mode == "test":
+            self._exec2_last_test_sites = list(sites)
         self._exec2_reset_counts(total_dies=len(sites))
         self._exec2_running  = True
         self._exec2_set_running_buttons(True)
@@ -5036,13 +5051,22 @@ class MainLayout(ttk.Frame):
         This is what makes the touchdown list the recipe's property rather
         than the ATA folder's: loading a recipe re-picks its own dies, so
         switching recipes can no longer inherit the previous one's selection.
-        A recipe with no list leaves the map alone - the run then walks
-        everything, which is the old behaviour.
+        A recipe with no list clears the selection too (the run then walks
+        every die - see _exec2_start_run) - it used to leave the map alone
+        instead, which meant editing the Recipe tab's Touchdowns table down
+        to zero (Remove Selected/Clear All) and saving left the PREVIOUS
+        selection highlighted on screen, looking like the save had not
+        taken effect.
         """
         get_records = getattr(self.recipe_panel, "get_site_records", None)
         records = list(get_records()) if get_records else []
         sites = self._exec2_resolve_site_cells(records)
         if not sites:
+            self._exec2_wafer_map.set_picked([])
+            self._exec2_on_sites_changed([])
+            self._exec2_log(f"[RUN] Recipe '{name}' has no touchdown list — "
+                            "nothing selected on the map (the run will walk "
+                            "every die).")
             return
         known = self._exec2_wafer_map.dies
         on_map = [rc for rc in self._exec2_touchdown_cells(sites) if rc in known]
@@ -6811,9 +6835,35 @@ class MainLayout(ttk.Frame):
         # falls back to whatever export_path_var already held (the fixed
         # system-wide default, or wherever the operator last pointed it)
         # rather than clearing the field when a project has never set one.
+        #
+        # Only applied if it actually exists ON THIS MACHINE: the saved
+        # default is one plain string shared across every machine that
+        # opens this ATA folder (GUI System is a network share), but the
+        # Results tab's own export-directory quick-picker offers "Downloads"
+        # (self._downloads_dir = os.path.expanduser('~')/Downloads) as a
+        # choice, and THAT resolves to a different, per-user, per-machine
+        # path on every PC. Someone pressing ⭐ Set Default while "Downloads"
+        # was picked saved THEIR OWN machine's literal Downloads path (e.g.
+        # C:\Users\aahmed\Downloads) into the shared default - which then
+        # silently overwrote every OTHER machine's correctly-resolved
+        # export_path_var (e.g. atomica's own C:\Users\atomica\Downloads,
+        # or the fixed network default) the next time this folder loaded
+        # there, even though nothing on that machine ever pointed it there.
+        # A real folder path (the network default, or a real shared
+        # location) is unaffected - this only ever protects against a
+        # foreign machine's personal Downloads folder winning here.
         default_export_path = xfmt.get_default_export_path(self._ata_folder, system=self._system)
-        if default_export_path:
+        if default_export_path and os.path.isdir(default_export_path):
             self.export_path_var.set(default_export_path)
+        elif default_export_path:
+            self.controller.log(
+                f"[RESULTS] This project's saved export directory "
+                f"({default_export_path!r}) doesn't exist on this machine "
+                "- probably another machine's personal Downloads folder, "
+                "saved while it was picked from the quick-choice list. "
+                "Keeping the current export directory instead; pick a real "
+                "shared location and press ⭐ Set Default to fix it for "
+                "everyone.")
         if select_name in names:
             self.export_format_var.set(select_name)
         elif self.export_format_var.get() not in names:
@@ -6837,6 +6887,26 @@ class MainLayout(ttk.Frame):
             messagebox.showerror("No Format Selected",
                                  "Pick a format from the Export Format dropdown first.")
             return
+        # The saved default is one string shared across every machine that
+        # opens this ATA folder (GUI System is a network share) - a path
+        # under THIS machine's own home directory (e.g. picking "Downloads"
+        # from the quick-choice list) means something different on every
+        # other PC, so saving it here would silently break/overwrite their
+        # own export directory the next time they load this folder (see
+        # _refresh_export_formats's own note - this is the save-side half
+        # of that same bug).
+        current_path = self.export_path_var.get()
+        home = os.path.expanduser("~")
+        if current_path and os.path.normcase(current_path).startswith(os.path.normcase(home)):
+            if not messagebox.askyesno(
+                "Personal Folder as Shared Default",
+                f"{current_path!r} is inside THIS computer's own user "
+                "folder - saving it as this project's default export "
+                "directory will point every other computer that opens "
+                "this ATA folder at a path that doesn't exist for them "
+                "(their own account, not this one).\n\n"
+                "Set it as the default anyway?"):
+                return
         xfmt.set_default_format_name(self._ata_folder, fmt["name"], system=self._system)
         # Format and export directory are set as default together - the
         # two always travel together for a given project (a project's data
