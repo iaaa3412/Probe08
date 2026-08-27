@@ -294,12 +294,18 @@ class CassettePanel(ttk.Frame):
     # --------------------------------------------------------- manual unload
 
     def _manual_unload(self):
+        # "Abort" here means stopping cassette automation's own tracking
+        # (same as ⏹ Stop Automation: clear _armed, unhook _on_wafer_
+        # finished) - it is software bookkeeping only. No hardware
+        # emergency-stop (K) command is sent, same as ⏹ Stop Run on the
+        # Run tab (see _exec2_abort's own comment) - K stays reserved for
+        # Prober Debug's dedicated Emergency Stop button.
         drv = self._drv()
         if not drv:
             self._log("[CASSETTE] Unload/Abort Lot: prober not connected.")
             return
         armed_note = ("\n\nAutomation is currently armed/paused - this will "
-                      "ABORT it (same as ⏹ Stop Automation) before unloading, "
+                      "stop it (same as ⏹ Stop Automation) before unloading, "
                       "so the two never disagree about whether the lot is "
                       "still running." if (self._armed or self._paused_for_yield) else "")
         if not messagebox.askyesno(
@@ -309,8 +315,8 @@ class CassettePanel(ttk.Frame):
             "Continue?"):
             return
         if self._armed or self._paused_for_yield:
-            self._disarm("Lot aborted (Unload/Abort Lot pressed).")
-            self._set_state("ABORTED", "#dc2626")
+            self._disarm("Lot stopped (Unload/Abort Lot pressed).")
+            self._set_state("STOPPED (unloaded)", "#dc2626")
         def _run():
             self._log("[CASSETTE] >> U  (Unload only)")
             stb = drv.unload_wafer()
