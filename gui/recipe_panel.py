@@ -1436,8 +1436,22 @@ class RecipePanel(ttk.Frame):
             shot_row, shot_col = wb_row // shot_rows, wb_col // shot_cols
             slot_row = wb_row - shot_row * shot_rows
             slot_col = wb_col - shot_col * shot_cols
-            if (slot_row, slot_col) == (slot_r1, slot_c1):
-                picks.append((row, col))
+            if (slot_row, slot_col) != (slot_r1, slot_c1):
+                continue
+            # wm.dies is every square on the Accretech map, which is NOT the
+            # same grid as the Wafer Builder shot map it's being aligned
+            # against here - the two only line up inside the real wafer, so
+            # a square near the edge can satisfy the slot-position check
+            # above by pure modular arithmetic while corresponding to no
+            # real Wafer Builder shot at all. Its die ID is exactly what
+            # tells the two apart (a real shot always has one; a phantom
+            # edge square never does), so requiring one keeps this pull
+            # scoped to actual shots. Electroglas's map has no such
+            # mismatch (there is no separate Accretech-style grid), so this
+            # only ever filters anything out here.
+            if not (overlay.get((row, col)) or wm.die_ids.get((row, col), "")):
+                continue
+            picks.append((row, col))
         if not picks:
             messagebox.showinfo(
                 "Touchdowns",
