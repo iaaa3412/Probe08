@@ -2352,11 +2352,11 @@ class MainLayout(ttk.Frame):
         just from an older file.
 
         PmaWaferPanel is still built - just not shown - and still assigned
-        to self.pma_wafer: the Overlay dialog (available on Accretech's Run
-        tab) reads self.pma_wafer.workbook_data/_pma_shot_data/etc
-        defensively via getattr for its PMA/xls/csv comparison sources, so
-        keeping the object alive avoids breaking that even though there is
-        no more UI here to feed it from.
+        to self.pma_wafer: the Overlay sub-tab (see _exec2_build_overlay_tab,
+        added below as this notebook's last sub-tab) reads self.pma_wafer.
+        workbook_data/_pma_shot_data/etc defensively via getattr for its
+        PMA/xls/csv comparison sources, so keeping the object alive avoids
+        breaking that even though there is no more UI here to feed it from.
         """
         tab = ttk.Frame(nb)
         nb.add(tab, text="Wafer Builder")
@@ -2374,6 +2374,20 @@ class MainLayout(ttk.Frame):
                                          get_folder=lambda: self._ata_folder)
         self.accr_wafer.grid(row=0, column=0, sticky="nsew")
         self.recipe_gen._sub_nb.insert(0, accr_tab, text="Accr Wafer")
+
+        # Overlay - reconciles this Die Map against the real Accretech
+        # extraction (Accr Wafer above). Appended last (after Shot/Shot
+        # Map/Die Map) since it needs the wafer already defined; unlike
+        # those three it lives on MainLayout, not RecipeGenPanel, because
+        # the process it replaced (the old "Overlay…" Run tab dialog) reads
+        # and writes MainLayout's own _exec2_* overlay state/Run+Results
+        # maps directly - see _exec2_build_overlay_tab's own comment.
+        overlay_tab = ttk.Frame(self.recipe_gen._sub_nb)
+        self._exec2_build_overlay_tab(overlay_tab)
+        self.recipe_gen._sub_nb.add(overlay_tab, text="Overlay")
+        self._exec2_overlay_tab_widget = overlay_tab
+        self.recipe_gen._sub_nb.bind(
+            "<<NotebookTabChanged>>", self._exec2_on_wafer_builder_subtab_changed, add="+")
 
         hidden = ttk.Frame(tab)
         self.pma_wafer = PmaWaferPanel(
@@ -2395,7 +2409,7 @@ class MainLayout(ttk.Frame):
         the old Build/Edit + read-only Wafer View split entirely.
 
         PmaWaferPanel is still built - just not shown - and still assigned
-        to self.pma_wafer: other code (the Overlay dialog,
+        to self.pma_wafer: other code (Accretech's Overlay sub-tab,
         _exec2_overlay_source_data, centroid matching against an Accretech
         map) reads self.pma_wafer.workbook_data/_pma_shot_data/etc
         defensively via getattr, so keeping the object alive avoids breaking
@@ -2782,9 +2796,9 @@ class MainLayout(ttk.Frame):
                   side="left", padx=8)
 
         ttk.Separator(map_bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        if self._system == "accretech":
-            ttk.Button(map_bar, text="Overlay…",
-                       command=self._exec2_open_overlay_dialog).pack(side="left")
+        # Overlay… moved to Wafer Builder > Overlay (see _tab_pma_wafer /
+        # _exec2_build_overlay_tab) - same process, embedded there instead
+        # of a popup so the accretech map/offset controls live together.
         # Both systems: the selection is the loaded recipe's touchdown list, so
         # saving and reloading it belongs wherever dies are picked.
         ttk.Button(map_bar, text="💾 Save Selected Map",
@@ -3499,8 +3513,8 @@ class MainLayout(ttk.Frame):
         that shot to land on."""
         if not self._exec2_overlay_offset_confirmed:
             self._exec2_log("[RUN] Minor Moves: no confirmed Overlay alignment — "
-                            "press Overlay… (next to the map path, above) and "
-                            "🖌 Overlay on Map first, then start again.")
+                            "go to Wafer Builder > Overlay and press 🖌 Overlay "
+                            "on Map first, then start again.")
             return
         overlay_offset = (self._exec2_overlay_row_offset, self._exec2_overlay_col_offset)
         gen = getattr(self, "recipe_gen", None)
@@ -3621,9 +3635,10 @@ class MainLayout(ttk.Frame):
             return None
         if not self._exec2_overlay_offset_confirmed:
             self._exec2_log("[RUN] This shot template has more than one die, but "
-                            "there is no confirmed Overlay alignment - press "
-                            "Overlay… and 🖌 Overlay on Map first, so each step's "
-                            "Die # can be filed against the real die it measured.")
+                            "there is no confirmed Overlay alignment - go to Wafer "
+                            "Builder > Overlay and press 🖌 Overlay on Map first, "
+                            "so each step's Die # can be filed against the real "
+                            "die it measured.")
             return None
         shot_cells = dict(gen._shot_cells)
         return (shot_rows, shot_cols, shot_cells,
@@ -3894,12 +3909,6 @@ class MainLayout(ttk.Frame):
             self._exec2_log(f"[RUN] Selected all {len(all_rc)} die(s) — "
                             "click any die to deselect it, or press again to deselect all.")
 
-    _SELECTED_MAP_FILENAME = "ata_wafer_map_selected.csv"
-
-    def _exec2_selected_map_path(self):
-        return (os.path.join(self._ata_folder, self._SELECTED_MAP_FILENAME)
-                if self._ata_folder else None)
-
     def _exec2_picks_as_touchdowns(self, picks) -> list:
         """Collapse picked map cells to one cell per PROBER TOUCHDOWN.
 
@@ -4041,12 +4050,15 @@ class MainLayout(ttk.Frame):
         places - whichever the operator reaches for, the list ends up in the
         same place and the other view shows it.
 
-        With no recipe loaded there is nothing to attach it to, so it still
-        falls back to the folder-level CSV rather than silently discarding the
-        selection.
+        There used to be a folder-level ata_wafer_map_selected.csv fallback
+        for when no recipe was loaded, but nothing on this tab ever read it
+        back (_exec2_load_selected_map is a recipe-only no-op with none
+        loaded - see its own docstring) - it was pure write-only dead weight
+        from before recipes had their own touchdown lists. Removed; pick a
+        recipe first instead. NanoZ's own Save/Load Selected Map is a
+        separate feature with a file of the same name and is unaffected.
         """
         from tkinter import messagebox
-        import csv
         picks = self._exec2_wafer_map.get_picked()
         if not picks:
             messagebox.showinfo("No Dies Selected",
@@ -4069,29 +4081,17 @@ class MainLayout(ttk.Frame):
                     f"list of recipe '{recipe}' ({named} with a die ID) — "
                     "saved to the probe card, and shown on the Recipe tab.")
                 return
-            self._exec2_log(f"[RUN] Could not attach the selection to recipe "
-                            f"'{recipe}' — falling back to the folder file.")
-
-        if not self._ata_folder:
             messagebox.showerror(
-                "Nowhere to save",
-                "No recipe is loaded and no ATA folder is open.\n\n"
-                "Pick a recipe from the Recipe dropdown to save the selection "
-                "as its touchdown list, or open an ATA folder to save a "
-                "folder-level selected map.")
+                "Save Failed", f"Could not attach the selection to recipe "
+                f"'{recipe}'. See the log for details.")
+            self._exec2_log(f"[RUN] Could not attach the selection to recipe "
+                            f"'{recipe}'.")
             return
-        self._exec2_log("[RUN] No recipe loaded — saving a folder-level selected "
-                        "map instead. Load a recipe first to attach the "
-                        "selection to it.")
-        path = self._exec2_selected_map_path()
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            wr = csv.writer(f)
-            wr.writerow(["row", "col", "label"])
-            for r, c in picks:
-                wr.writerow([r, c, self._exec2_overlay_die_ids.get((r, c), "")])
-        n_labeled = sum(1 for rc in picks if rc in self._exec2_overlay_die_ids)
-        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
-        self._exec2_log(f"[RUN] Saved {len(picks)} selected die(s){note} → {path}")
+
+        messagebox.showerror(
+            "No Recipe Loaded",
+            "Pick a recipe from the Recipe dropdown first - the selection "
+            "saves as that recipe's own touchdown list.")
 
     def _exec2_load_selected_map(self, quiet_if_missing: bool = False):
         # Only ever a recipe's own touchdown list - the standalone
@@ -4415,9 +4415,9 @@ class MainLayout(ttk.Frame):
         Accretech map turned out empty (e.g. Overlay was confirmed against a
         wafer map source that is no longer loaded).
 
-        Accretech-only: the Overlay dialog itself only exists on that tab
-        (see the "Overlay…" button, gated the same way), reconciling the
-        Accretech hardware-extracted map against the Wafer Builder grid.
+        Accretech-only: the Overlay sub-tab itself only exists there (see
+        _tab_pma_wafer/_exec2_build_overlay_tab), reconciling the Accretech
+        hardware-extracted map against the Wafer Builder grid.
         The confirmed flag/offsets live in the Wafer Builder map's own JSON
         though, which is shared and cross-synced between both systems (see
         recipe_gen_panel's "CROSS-SYSTEM SYNC") - so an Accretech-confirmed
@@ -4518,146 +4518,170 @@ class MainLayout(ttk.Frame):
         self._exec2_on_sites_changed(picks)
         self._exec2_update_overlay_visibility()
 
-    def _exec2_open_overlay_dialog(self):
+    # -- Overlay (moved from the Run tab's "Overlay…" popup onto its own
+    # Wafer Builder sub-tab, inserted by _tab_pma_wafer - same underlying
+    # process/state (_exec2_overlay_row_offset/_col_offset/_offset_
+    # confirmed, _exec2_overlay_die_ids, _exec2_draw_overlay, _exec2_
+    # persist_overlay_offset, _exec2_clear_overlay, centroid_offset), just
+    # embedded controls instead of a Toplevel, plus its own small preview
+    # map so the alignment is visible without needing the Run tab open at
+    # the same time (a modal dialog could float over it; a separate
+    # top-level tab can't). -----------------------------------------------
+
+    def _exec2_build_overlay_tab(self, parent):
+        parent.rowconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
+
+        self._exec2_overlay_preview_items: list = []
+        self._exec2_overlay_tab_matched: list = []
+
+        bar = ttk.Frame(parent, padding=8)
+        bar.grid(row=0, column=0, sticky="ew")
+
+        self._exec2_overlay_summary_var = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self._exec2_overlay_summary_var,
+                 font=("Consolas", 9), justify="left").grid(
+                 row=0, column=0, columnspan=6, sticky="w", pady=(0, 6))
+
+        ttk.Label(bar, text="Row offset:").grid(row=1, column=0, sticky="e")
+        self._exec2_overlay_row_var = tk.IntVar(value=0)
+        ttk.Spinbox(bar, from_=-9999, to=9999, width=6,
+                   textvariable=self._exec2_overlay_row_var).grid(
+                   row=1, column=1, sticky="w", padx=(4, 16))
+        ttk.Label(bar, text="Col offset:").grid(row=1, column=2, sticky="e")
+        self._exec2_overlay_col_var = tk.IntVar(value=0)
+        ttk.Spinbox(bar, from_=-9999, to=9999, width=6,
+                   textvariable=self._exec2_overlay_col_var).grid(
+                   row=1, column=3, sticky="w", padx=(4, 16))
+        self._exec2_overlay_row_var.trace_add("write", self._exec2_overlay_tab_recompute)
+        self._exec2_overlay_col_var.trace_add("write", self._exec2_overlay_tab_recompute)
+
+        self._exec2_overlay_status_var = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self._exec2_overlay_status_var,
+                 foreground="#6b7280", font=("Segoe UI", 8, "italic")).grid(
+                 row=1, column=4, sticky="w")
+
+        btns = ttk.Frame(parent, padding=(8, 0, 8, 8))
+        btns.grid(row=2, column=0, sticky="ew")
+        ttk.Button(btns, text="⤾ Auto-Center", command=self._exec2_overlay_tab_center).pack(
+            side="left")
+        ttk.Button(btns, text="🖌 Overlay on Map",
+                  command=self._exec2_overlay_tab_confirm).pack(side="left", padx=6)
+        ttk.Button(btns, text="✕ Clear Overlay",
+                  command=self._exec2_overlay_tab_clear).pack(side="left")
+
+        map_lf = ttk.LabelFrame(parent, text="Accretech map (live preview)", padding=6)
+        map_lf.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        map_lf.rowconfigure(0, weight=1)
+        map_lf.columnconfigure(0, weight=1)
+        self._exec2_overlay_map = WaferMapPanel(map_lf, show_title=False, show_axis_grid=True)
+        self._exec2_overlay_map.grid(row=0, column=0, sticky="nsew")
+
+    def _exec2_overlay_tab_recompute(self, *_a):
         accretech_rc = self._exec2_overlay_accretech_rc()
-        if not accretech_rc:
-            self._exec2_log("[RUN] Overlay: no wafer map loaded on this Run tab yet — "
+        grid = self._exec2_wafer_builder_grid()
+        footprint = self._exec2_wafer_builder_footprint()
+        try:
+            ro = self._exec2_overlay_row_var.get()
+            co = self._exec2_overlay_col_var.get()
+        except tk.TclError:
+            return
+        matched = self._exec2_overlay_all_accretech(grid, accretech_rc, ro, co, footprint)
+        self._exec2_overlay_tab_matched = matched
+        n_with_id = sum(1 for m in matched if m["die_ids"])
+        self._exec2_overlay_summary_var.set(
+            f"Accretech dies on map:   {len(accretech_rc)}\n"
+            f"Wafer Builder footprint: {len(footprint)}  (named: {len(grid)})\n"
+            f"Will select: {len(matched)}  ({n_with_id} labeled with a real ID)"
+            + ("" if footprint else
+               "\n\nNo Wafer Builder map loaded - selecting the Accretech "
+               "map's own squares with no ID labels."))
+        wm = self._exec2_overlay_map
+        ids = {(d["row"], d["col"]): "/".join(d["die_ids"]) for d in matched if d["die_ids"]}
+        self._exec2_clear_overlay_labels(wm, self._exec2_overlay_preview_items)
+        self._exec2_overlay_preview_items = self._exec2_draw_overlay_labels_on(wm, ids)
+        wm.set_picked([(d["row"], d["col"]) for d in matched])
+
+    def _exec2_overlay_tab_center(self):
+        grid = self._exec2_wafer_builder_grid()
+        accretech_rc = self._exec2_overlay_accretech_rc()
+        if not grid or not accretech_rc:
+            self._exec2_overlay_tab_recompute()
+            return
+        ro, co = centroid_offset(grid, accretech_rc)
+        self._exec2_overlay_row_var.set(ro)
+        self._exec2_overlay_col_var.set(co)
+
+    def _exec2_overlay_tab_confirm(self):
+        if not self._exec2_overlay_accretech_rc():
+            self._exec2_log("[RUN] Overlay: no wafer map loaded on the Run tab yet — "
                             "load an ATA folder first.")
             return
-        footprint = self._exec2_wafer_builder_footprint()
+        self._exec2_overlay_tab_recompute()
+        matched = self._exec2_overlay_tab_matched
+        self._exec2_overlay_row_offset = self._exec2_overlay_row_var.get()
+        self._exec2_overlay_col_offset = self._exec2_overlay_col_var.get()
+        self._exec2_overlay_offset_confirmed = True
+        self._exec2_draw_overlay(matched)
+        self._exec2_persist_overlay_offset()
+        self._exec2_overlay_tab_status_update()
+        self._exec2_log(f"[RUN] Overlaid {len(matched)} die(s) from the "
+                        "Wafer Builder map onto the wafer map.")
 
-        dlg = tk.Toplevel(self)
-        dlg.title("Overlay Wafer Map")
-        dlg.transient(self.winfo_toplevel())
-        dlg.resizable(False, False)
+    def _exec2_overlay_tab_clear(self):
+        self._exec2_clear_overlay()
+        self._exec2_wafer_map.clear_picks()
+        self._exec2_on_sites_changed([])
+        self._exec2_overlay_offset_confirmed = False
+        self._exec2_persist_overlay_offset()
+        wm = getattr(self, "_exec2_overlay_map", None)
+        if wm is not None:
+            self._exec2_clear_overlay_labels(wm, self._exec2_overlay_preview_items)
+            wm.clear_picks()
+        self._exec2_overlay_tab_status_update()
+        self._exec2_log("[RUN] Overlay cleared.")
 
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill="both", expand=True)
+    def _exec2_overlay_tab_status_update(self):
+        var = getattr(self, "_exec2_overlay_status_var", None)
+        if var is None:
+            return
+        if self._exec2_overlay_offset_confirmed:
+            var.set(f"✅ confirmed (row {self._exec2_overlay_row_offset:+d}, "
+                    f"col {self._exec2_overlay_col_offset:+d})")
+        else:
+            var.set("⚠ not yet confirmed")
 
-        summary_var = tk.StringVar()
-        ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
-                 justify="left").grid(row=1, column=0, columnspan=5, sticky="w",
-                                      pady=(0, 4))
-        # Wide enough for a real whole-wafer offset (Cenfire's is (-66,-83),
-        # a 14,600-die extraction) - +-50 was a leftover from early, much
-        # smaller test data and silently clamped any bigger wafer's real
-        # alignment. Scaled to the actual loaded map's own row/col span
-        # rather than a bigger fixed guess, so it's never too small again.
-        rows_span = [rc[0] for rc in accretech_rc]
-        cols_span = [rc[1] for rc in accretech_rc]
-        row_limit = max(50, max(rows_span) - min(rows_span)) if rows_span else 50
-        col_limit = max(50, max(cols_span) - min(cols_span)) if cols_span else 50
-        ttk.Label(frm, text="Row offset:").grid(row=3, column=0, sticky="e")
-        row_var = tk.IntVar(value=0)
-        ttk.Spinbox(frm, from_=-row_limit, to=row_limit, width=6,
-                   textvariable=row_var).grid(row=3, column=1, sticky="w", padx=(4, 16))
-        ttk.Label(frm, text="Col offset:").grid(row=3, column=2, sticky="e")
-        col_var = tk.IntVar(value=0)
-        ttk.Spinbox(frm, from_=-col_limit, to=col_limit, width=6,
-                   textvariable=col_var).grid(row=3, column=3, sticky="w", padx=(4, 0))
+    def _exec2_on_wafer_builder_subtab_changed(self, _event=None):
+        widget = getattr(self, "_exec2_overlay_tab_widget", None)
+        if widget is None:
+            return
+        try:
+            current = self.recipe_gen._sub_nb.select()
+        except tk.TclError:
+            return
+        if current == str(widget):
+            self._exec2_overlay_tab_shown()
 
-        state = {"grid": [], "matched": []}
-        # What was actually on the map before this dialog opened - restored
-        # if it's closed without pressing Overlay on Map or Clear Overlay,
-        # so just previewing offsets while looking for the right one does
-        # not leave an unconfirmed preview sitting on screen.
-        prior_die_ids = dict(self._exec2_overlay_die_ids)
-        prior_picks = list(self._exec2_wafer_map.get_picked())
-        confirmed_this_session = {"value": False}
-
-        # Debounced, not immediate: every spinbox keystroke/arrow-click
-        # would otherwise redraw picks/labels on its own - fine for a
-        # single click, but a held-down arrow or fast typing fires several
-        # a second. Same pattern _exec2_redraw_overlay_on_run_map's caller
-        # uses for zoom/pan bursts.
-        schedule_live_draw = self._exec2_debounced(
-            "_exec2_overlay_dialog_draw_pending",
-            lambda: self._exec2_draw_overlay(state["matched"]))
-
-        def recompute(*_a):
-            grid = self._exec2_wafer_builder_grid()
-            try:
-                ro, co = row_var.get(), col_var.get()
-            except tk.TclError:
-                return
-            state["grid"] = grid
-            # Selection is bounded to Wafer Builder's own footprint (every
-            # real shot it defines, named or not) once the offset is
-            # applied - a real ID just earns that square a text label on
-            # top. See _exec2_overlay_all_accretech's own docstring.
-            state["matched"] = self._exec2_overlay_all_accretech(
-                grid, accretech_rc, ro, co, footprint)
-            n_with_id = sum(1 for m in state["matched"] if m["die_ids"])
-            summary_var.set(
-                f"Accretech dies on map:   {len(accretech_rc)}\n"
-                f"Wafer Builder footprint: {len(footprint)}  "
-                f"(named: {len(grid)})\n"
-                f"Will select: {len(state['matched'])}"
-                f"  ({n_with_id} labeled with a real ID)"
-                + ("" if footprint else
-                   "\n\nNo Wafer Builder map loaded - selecting the Accretech "
-                   "map's own squares with no ID labels.")
-            )
-            schedule_live_draw()
-
-        row_var.trace_add("write", recompute)
-        col_var.trace_add("write", recompute)
-
-        def center_overlay():
-            grid = self._exec2_wafer_builder_grid()
-            if not grid:
-                recompute()
-                return
-            ro, co = centroid_offset(grid, accretech_rc)
-            row_var.set(ro)
-            col_var.set(co)
-
-        center_overlay()
-
-        def do_overlay():
-            confirmed_this_session["value"] = True
-            self._exec2_overlay_row_offset = row_var.get()
-            self._exec2_overlay_col_offset = col_var.get()
-            self._exec2_overlay_offset_confirmed = True
-            self._exec2_draw_overlay(state["matched"])
-            self._exec2_persist_overlay_offset()
-            self._exec2_log(f"[RUN] Overlaid {len(state['matched'])} die(s) from the "
-                            "Wafer Builder map onto the wafer map.")
-
-        def do_clear():
-            confirmed_this_session["value"] = True
-            self._exec2_clear_overlay()
-            self._exec2_wafer_map.clear_picks()
-            self._exec2_on_sites_changed([])
-            self._exec2_overlay_offset_confirmed = False
-            self._exec2_persist_overlay_offset()
-            self._exec2_log("[RUN] Overlay cleared.")
-
-        def close_dialog():
-            if not confirmed_this_session["value"]:
-                self._exec2_clear_overlay()
-                self._exec2_overlay_die_ids = prior_die_ids
-                self._exec2_overlay_items = self._exec2_draw_overlay_labels_on(
-                    self._exec2_wafer_map, prior_die_ids)
-                rwm = getattr(self, "_results_wafer_map", None)
-                if rwm is not None:
-                    self._exec2_overlay_result_items = self._exec2_draw_overlay_labels_on(
-                        rwm, prior_die_ids)
-                self._exec2_wafer_map.set_picked(prior_picks)
-                self._exec2_on_sites_changed(prior_picks)
-                self._exec2_update_overlay_visibility()
-            dlg.destroy()
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=4, column=0, columnspan=5, sticky="ew", pady=(12, 0))
-        ttk.Button(btns, text="🖌 Overlay on Map", command=do_overlay).pack(side="left")
-        ttk.Button(btns, text="✕ Clear Overlay", command=do_clear).pack(
-            side="left", padx=6)
-        ttk.Button(btns, text="Close", command=close_dialog).pack(side="right")
-        dlg.protocol("WM_DELETE_WINDOW", close_dialog)
-
-        dlg.update_idletasks()
-        dlg.grab_set()
+    def _exec2_overlay_tab_shown(self):
+        """Called whenever the Wafer Builder > Overlay sub-tab is selected -
+        same "always freshly recomputed on arrival" approach Die Map already
+        uses (see recipe_gen_panel._on_subtab_changed), so revisiting this
+        tab never shows a stale preview from before the ATA folder/Die Map
+        last changed."""
+        wm = getattr(self, "_exec2_overlay_map", None)
+        folder = getattr(self, "_exec2_map_folder", None) or getattr(self, "_ata_folder", None)
+        if wm is None or not folder:
+            return
+        gen = getattr(self, "recipe_gen", None)
+        pitch = gen._die_pitch() if gen is not None and hasattr(gen, "_die_pitch") else (1.0, 1.0)
+        wm.load_from_ata(folder, filename=WAFER_MAP_SOURCES["Accretech"], pitch=pitch)
+        if self._exec2_overlay_offset_confirmed:
+            self._exec2_overlay_row_var.set(self._exec2_overlay_row_offset)
+            self._exec2_overlay_col_var.set(self._exec2_overlay_col_offset)
+            self._exec2_overlay_tab_recompute()
+        else:
+            self._exec2_overlay_tab_center()
+        self._exec2_overlay_tab_status_update()
 
     def _exec2_start_test_die(self):
         if self._exec2_running:
@@ -5829,7 +5853,7 @@ class MainLayout(ttk.Frame):
             return None
         if not self._exec2_overlay_offset_confirmed:
             self._exec2_log(f"[EXEC2] {label}: no confirmed Overlay alignment — "
-                            "press Overlay… (above) and confirm it first.")
+                            "go to Wafer Builder > Overlay and confirm it first.")
             return None
         try:
             shot_rows, shot_cols = gen._shot_dims()
