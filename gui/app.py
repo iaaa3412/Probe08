@@ -332,6 +332,31 @@ class AtomicaDashboard(tk.Tk):
     def dies_failed(self, value):
         self._by_system[self.active_system]["failed"] = value
 
+    def set_run_lock(self, locked: bool):
+        """Locks/unlocks the chrome a run doesn't own directly but could
+        still pull hardware out from under it - the Accretech/Electroglas
+        toggle (switching system tears down and rebuilds self.ui mid-run),
+        the ATA folder picker, and the prober bench picker (both reconnect
+        instruments on selection). Called from
+        instrument_panel._exec2_set_running_buttons (Accretech/EG runs) and
+        cassette_panel's own lock (cassette automation) - one place so a
+        run started from either doesn't leave the other's entry points
+        live. Real per-run controls (Recipe tab, Run tab's own buttons)
+        lock themselves; this is only the app-level chrome those panels
+        can't reach."""
+        for btn in getattr(self, "_system_buttons", {}).values():
+            try:
+                btn.config(state="disabled" if locked else "normal")
+            except tk.TclError:
+                pass
+        for attr in ("_ata_picker", "_bench_picker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.config(state="disabled" if locked else "readonly")
+                except tk.TclError:
+                    pass
+
     def cmd_set_active_system(self, system):
         if system == self.active_system or system not in self._by_system:
             return

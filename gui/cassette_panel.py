@@ -180,6 +180,14 @@ class CassettePanel(ttk.Frame):
     def _set_locked(self, locked: bool):
         self._go_btn.config(state="disabled" if locked else "normal")
         self._stop_btn.config(state="normal" if locked else "disabled")
+        # Cassette automation is a "run" the same as a Recipe-tab-started
+        # one - switching system/bench or the ATA folder mid-lot would pull
+        # hardware out from under it just as badly. See
+        # AtomicaDashboard.set_run_lock.
+        try:
+            self.controller.set_run_lock(locked)
+        except Exception:
+            pass
 
     def _drv(self):
         drv = self.controller.drivers.get("prober")
