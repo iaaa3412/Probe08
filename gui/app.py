@@ -1151,6 +1151,26 @@ class AtomicaDashboard(tk.Tk):
             except Exception as exc:
                 self.log(f"[SYSTEM] Switch Routing refresh failed: {exc}")
 
+    def accretech_required_drivers(self, bench: str = None) -> tuple:
+        """Which controller.drivers keys a RUN on `bench` (default: the
+        active one) actually needs right now - every one of the five
+        ACCR_KEYS this bench has FITTED, mapped to its drv_key
+        (_ACCRETECH_SLOT_INFO), not the fixed ACCRETECH_REQUIRED_DRIVERS
+        five unconditionally. A bench with wave_gen marked not-fitted
+        (Setup tab's Fitted checkbox - e.g. probe08new, which has no wave
+        gen wired at all) must not need it connected to be READY or to
+        start a run - see check_system_ready and
+        instrument_panel._exec2_can_start, which both call this instead
+        of hardcoding the five. Falls back to the fixed list if the
+        profile can't be read at all."""
+        try:
+            fitted = accretech_profiles.fitted_keys(bench)
+        except Exception:
+            return ACCRETECH_REQUIRED_DRIVERS
+        if not fitted:
+            return ACCRETECH_REQUIRED_DRIVERS
+        return tuple(_ACCRETECH_SLOT_INFO.get(k, (None, k))[1] for k in fitted)
+
     def check_system_ready(self):
         missing = []
         exec2_wm = getattr(self.ui, "_exec2_wafer_map", None)
@@ -1158,7 +1178,8 @@ class AtomicaDashboard(tk.Tk):
             missing.append("wafer map")
         if not getattr(self.ui, "_exec2_steps", None):
             missing.append("recipe")
-        required_instruments = (ACCRETECH_REQUIRED_DRIVERS if self.active_system == "accretech"
+        required_instruments = (self.accretech_required_drivers(accretech_profiles.active_name())
+                                if self.active_system == "accretech"
                                 else ELECTROGLAS_REQUIRED_DRIVERS)
         if not all(k in self.drivers for k in required_instruments):
             missing.append("instruments")
