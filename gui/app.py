@@ -1496,13 +1496,13 @@ class AtomicaDashboard(tk.Tk):
         current_lot = self.ui.lot_id.get()
         if not os.path.exists(export_dir):
             self.ui.exec_panel.log("[ERROR] The selected export directory does not exist.")
-            return
+            return None
         if not current_lot:
             self.ui.exec_panel.log("[ERROR] Please enter a valid Lot ID.")
-            return
+            return None
         if not self.results_data:
             self.ui.exec_panel.log("[ERROR] No measurement results yet — nothing to save.")
-            return
+            return None
         wafer_id = self.ui.wafer_id_var.get().strip()
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + ["results"]
         filepath = os.path.join(export_dir, "_".join(name_parts) + ".csv")
@@ -1546,8 +1546,10 @@ class AtomicaDashboard(tk.Tk):
             self.ui.exec_panel.log(
                 f"[SYSTEM] Success! {len(self.results_data)} result(s), "
                 f"{len(self.die_status)} die verdict(s) saved to -> {filepath}")
+            return filepath
         except Exception as e:
             self.ui.exec_panel.log(f"[ERROR] Failed to save CSV file: {e}")
+            return None
 
     def cmd_import_results_csv(self):
         """The reverse of cmd_save_csv - reads one of its files and puts the
@@ -1717,20 +1719,25 @@ class AtomicaDashboard(tk.Tk):
         current_lot = self.ui.lot_id.get()
         if not os.path.exists(export_dir):
             self.ui.exec_panel.log("[ERROR] The selected export directory does not exist.")
-            return
+            return None
         if not current_lot:
             self.ui.exec_panel.log("[ERROR] Please enter a valid Lot ID.")
-            return
+            return None
         fmt = self.ui.get_selected_export_format()
         if not fmt:
             self.ui.exec_panel.log("[ERROR] No export format selected — pick one, or "
                                    "➕ New Format… to define one first.")
-            return
+            return None
         wafer_id = self.ui.wafer_id_var.get().strip()
         fmt_type = fmt.get("type", "sql")
         # Export formats (unlike "Save as CSV", which dumps the whole
         # session's history) only ever cover the most recently started run —
         # re-running shouldn't silently pile old runs' rows into a new export.
+        # A run that never actually started (e.g. the Full Die/Minor Moves
+        # refusal - see _exec2_start_full_die) leaves this at zero rows,
+        # which lands here and returns None with no file written - if a
+        # caller (cassette_panel) expected a run to have happened for this
+        # wafer and didn't get one, this is silently why nothing exported.
         last_run_results = self.ui.get_last_run_results()
         if not xfmt.has_data_for_format(fmt, last_run_results):
             if fmt_type == "csv":
@@ -1742,7 +1749,7 @@ class AtomicaDashboard(tk.Tk):
             self.ui.exec_panel.log(
                 f"[ERROR] No matching results yet from the last run for '{fmt['name']}' — "
                 f"this format needs {reason}.")
-            return
+            return None
         ext = "csv" if fmt_type == "csv" else "sql"
         name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + [
             fmt["table"] or "export"]
@@ -1764,6 +1771,7 @@ class AtomicaDashboard(tk.Tk):
                     writer.writerows(rows)
                 self.ui.exec_panel.log(
                     f"[SYSTEM] Success! {len(rows)} '{fmt['name']}' row(s) saved to -> {filepath}")
+                return filepath
             else:
                 statements = xfmt.build_insert_statements(
                     fmt, last_run_results, current_lot, wafer_id, ata_folder)
@@ -1774,8 +1782,10 @@ class AtomicaDashboard(tk.Tk):
                     f.write("\n".join(statements) + "\n")
                 self.ui.exec_panel.log(
                     f"[SYSTEM] Success! {len(statements)} '{fmt['name']}' row(s) saved to -> {filepath}")
+                return filepath
         except Exception as e:
             self.ui.exec_panel.log(f"[ERROR] Failed to save {ext.upper()} file: {e}")
+            return None
 
     def cmd_align(self):
         self.ui.align_panel.lock_alignment()

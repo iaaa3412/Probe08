@@ -559,17 +559,35 @@ class CassettePanel(ttk.Frame):
         dlg.grab_set()
 
     def _export_current(self, lot_id: str, wafer_id: str):
+        # cmd_export_sql/cmd_save_csv return the path written, or None on
+        # any failure (including "no results for the last run" - e.g. a
+        # run that never actually started, silently leaving nothing to
+        # export for this wafer). Logged here, tagged with the wafer, on
+        # the CASSETTE tab's own log - not just the general Run tab log -
+        # so "did wafer N actually export" is answerable by scrolling the
+        # Cassette Automation Log alone, without a silent miss on a later
+        # wafer being mistaken for "only the first wafer exported".
         self.ui.lot_id.set(lot_id)
         self.ui.wafer_id_var.set(wafer_id)
         try:
-            self.controller.cmd_export_sql()
+            path = self.controller.cmd_export_sql()
         except Exception as e:
+            path = None
             self._log_event(self._slot_idx + 1, lot_id, f"Auto-export error: {e}")
+        self._log_event(
+            self._slot_idx + 1, lot_id,
+            f"Format export -> {path}" if path else
+            "⚠ Format export produced no file - see the Run tab log for why.")
         if self._auto_export_csv_var.get():
             try:
-                self.controller.cmd_save_csv()
+                csv_path = self.controller.cmd_save_csv()
             except Exception as e:
+                csv_path = None
                 self._log_event(self._slot_idx + 1, lot_id, f"Auto CSV export error: {e}")
+            self._log_event(
+                self._slot_idx + 1, lot_id,
+                f"Plain CSV -> {csv_path}" if csv_path else
+                "⚠ Plain CSV export produced no file - see the Run tab log for why.")
 
     def _advance_thread(self):
         drv = self._drv()
