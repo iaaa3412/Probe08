@@ -2816,7 +2816,7 @@ class MainLayout(ttk.Frame):
         self._exec2_run_btn.pack(padx=2, pady=2)
 
         for label, cmd, attr in [
-            ("⏏  Unload (U)",  self._exec2_manual_unload, None),
+            ("⏏  Unload (U)",  self._exec2_manual_unload, "_exec2_unload_btn"),
             # Pause is what ⏹ Stop Run used to do: finish what is in
             # progress and hold, keeping the position so Run resumes. Stop
             # is now a real stop - see _exec2_abort.
@@ -2898,14 +2898,21 @@ class MainLayout(ttk.Frame):
         # 3x2 grid: Measure/First Die, Z Up/Z Down, Back/Next, then (Accretech
         # only) Move to Selected and ↻ Refresh XY. Reset Counts moved to the
         # Pass/Fail section, next to what it resets - not here anymore.
-        ttk.Button(pos_lf, text="Measure",
-                   command=self._exec2_touchdown_measure).grid(
+        self._exec2_measure_btn = ttk.Button(
+            pos_lf, text="Measure", command=self._exec2_touchdown_measure)
+        self._exec2_measure_btn.grid(
                    row=4, column=0, sticky="ew", padx=(0, 1), pady=1)
-        ttk.Button(pos_lf, text="⏮ First Die", command=self._exec2_manual_go_to_start).grid(
+        self._exec2_first_die_btn = ttk.Button(
+            pos_lf, text="⏮ First Die", command=self._exec2_manual_go_to_start)
+        self._exec2_first_die_btn.grid(
                    row=4, column=1, sticky="ew", padx=(1, 0), pady=1)
-        ttk.Button(pos_lf, text="⬆ Z Up", command=self._exec2_manual_z_up).grid(
+        self._exec2_zup_btn = ttk.Button(
+            pos_lf, text="⬆ Z Up", command=self._exec2_manual_z_up)
+        self._exec2_zup_btn.grid(
                    row=5, column=0, sticky="ew", padx=(0, 1), pady=1)
-        ttk.Button(pos_lf, text="⬇ Z Down", command=self._exec2_manual_z_down).grid(
+        self._exec2_zdown_btn = ttk.Button(
+            pos_lf, text="⬇ Z Down", command=self._exec2_manual_z_down)
+        self._exec2_zdown_btn.grid(
                    row=5, column=1, sticky="ew", padx=(1, 0), pady=1)
         if self._system == "electroglas":
             # ▶▶ Next Die (an Accretech-shaped "advance one die" action) is
@@ -2913,11 +2920,13 @@ class MainLayout(ttk.Frame):
             # that pane's former Run section, since single-die-step
             # advancing through the touchdown list IS what Back/Next mean
             # for a .PMA step-through.
-            ttk.Button(pos_lf, text="⏮ Back",
-                       command=lambda: self.eg_pma_run._step_back()).grid(
+            self._exec2_back_btn = ttk.Button(
+                pos_lf, text="⏮ Back", command=lambda: self.eg_pma_run._step_back())
+            self._exec2_back_btn.grid(
                        row=6, column=0, sticky="ew", padx=(0, 1), pady=1)
-            ttk.Button(pos_lf, text="⏭ Next",
-                       command=lambda: self.eg_pma_run._step_once()).grid(
+            self._exec2_next_btn = ttk.Button(
+                pos_lf, text="⏭ Next", command=lambda: self.eg_pma_run._step_once())
+            self._exec2_next_btn.grid(
                        row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
             # Same arm/target process as Accretech's own Move to Selected
             # (row 8 there) - see EgPmaRunPanel.toggle_move_armed. The
@@ -2944,17 +2953,21 @@ class MainLayout(ttk.Frame):
             # instead (S command), the closest "die mode" equivalent to
             # Next's bare J. Neither touches the picked-sites list or shots
             # - see _exec2_manual_prev_die/_exec2_manual_next_die.
-            ttk.Button(pos_lf, text="⏮ Back",
-                       command=self._exec2_manual_prev_die).grid(
+            self._exec2_back_btn = ttk.Button(
+                pos_lf, text="⏮ Back", command=self._exec2_manual_prev_die)
+            self._exec2_back_btn.grid(
                        row=6, column=0, sticky="ew", padx=(0, 1), pady=1)
-            ttk.Button(pos_lf, text="⏭ Next",
-                       command=self._exec2_manual_next_die).grid(
+            self._exec2_next_btn = ttk.Button(
+                pos_lf, text="⏭ Next", command=self._exec2_manual_next_die)
+            self._exec2_next_btn.grid(
                        row=6, column=1, sticky="ew", padx=(1, 0), pady=1)
-            ttk.Button(pos_lf, text="⏮⏮ Previous Shot",
-                       command=self._exec2_manual_prev_shot).grid(
+            self._exec2_prev_shot_btn = ttk.Button(
+                pos_lf, text="⏮⏮ Previous Shot", command=self._exec2_manual_prev_shot)
+            self._exec2_prev_shot_btn.grid(
                        row=7, column=0, sticky="ew", padx=(0, 1), pady=1)
-            ttk.Button(pos_lf, text="⏭⏭ Next Shot",
-                       command=self._exec2_manual_next_shot).grid(
+            self._exec2_next_shot_btn = ttk.Button(
+                pos_lf, text="⏭⏭ Next Shot", command=self._exec2_manual_next_shot)
+            self._exec2_next_shot_btn.grid(
                        row=7, column=1, sticky="ew", padx=(1, 0), pady=1)
             # Its own separate arm/target system - see
             # _exec2_move_selected_button's docstring - deliberately not
@@ -2968,7 +2981,9 @@ class MainLayout(ttk.Frame):
             # _exec2_refresh_xy_blocking runs automatically (and blocking)
             # right before Full Die/Test Die/Test Selected/Minor Moves'
             # first move - see that method.
-            ttk.Button(pos_lf, text="↻ Refresh XY", command=self._exec2_get_xy).grid(
+            self._exec2_refresh_xy_btn = ttk.Button(
+                pos_lf, text="↻ Refresh XY", command=self._exec2_get_xy)
+            self._exec2_refresh_xy_btn.grid(
                 row=9, column=0, columnspan=2, sticky="ew", pady=1)
 
         # Recipe Steps is the one that grows, so it takes the weighted row on
@@ -3280,11 +3295,16 @@ class MainLayout(ttk.Frame):
         now - called at every real start (both engines) and every real
         finish/abort, never from a mid-run status change.
 
-        running=True: Full Die/Test Die/Test Selected/Run are disabled (a
-        second run cannot be started on top of an active one - this was
-        already true logically via _exec2_running/eg_pma_run._running
-        guards, this just keeps the buttons themselves from inviting the
-        click). Stop Run/Pause become usable.
+        running=True: Full Die/Test Die/Test Selected/Run AND every manual
+        move/measure control (First Die, Z Up/Down, Back/Next, Prev/Next
+        Shot, Move to Selected, Refresh XY, Unload) are disabled - none of
+        them make sense (and several are actively dangerous) while a run
+        already owns the chuck. Stop Run/Pause become usable. Also locks
+        the Recipe tab (recipe_panel.set_locked - was called separately at
+        every start/finish site before this absorbed it) and the top-level
+        chrome that could otherwise switch hardware out from under an
+        active run (system toggle, bench picker, ATA picker - see
+        AtomicaDashboard.set_run_lock).
 
         running=False: the reverse - Stop Run/Pause disabled, since there
         is nothing to stop or pause; pressing Stop Run with no run active
@@ -3292,13 +3312,26 @@ class MainLayout(ttk.Frame):
         """
         state = "disabled" if running else "normal"
         for attr in ("_exec2_full_btn", "_exec2_test_btn",
-                    "_exec2_test_selected_btn", "_exec2_run_btn"):
+                    "_exec2_test_selected_btn", "_exec2_run_btn",
+                    "_exec2_measure_btn", "_exec2_first_die_btn",
+                    "_exec2_zup_btn", "_exec2_zdown_btn",
+                    "_exec2_back_btn", "_exec2_next_btn",
+                    "_exec2_prev_shot_btn", "_exec2_next_shot_btn",
+                    "_exec2_move_selected_btn", "_exec2_refresh_xy_btn",
+                    "_exec2_unload_btn"):
             btn = getattr(self, attr, None)
             if btn is not None:
                 try:
                     btn.config(state=state)
                 except tk.TclError:
                     pass
+        eg_run = getattr(self, "eg_pma_run", None)
+        goto_btn = getattr(eg_run, "_goto_btn", None) if eg_run is not None else None
+        if goto_btn is not None:
+            try:
+                goto_btn.config(state=state)
+            except tk.TclError:
+                pass
         stop_state = "normal" if running else "disabled"
         for attr in ("_exec2_stop_btn", "_exec2_pause_btn"):
             btn = getattr(self, attr, None)
@@ -3307,6 +3340,14 @@ class MainLayout(ttk.Frame):
                     btn.config(state=stop_state)
                 except tk.TclError:
                     pass
+        try:
+            self.recipe_panel.set_locked(running)
+        except Exception:
+            pass
+        try:
+            self.controller.set_run_lock(running)
+        except Exception:
+            pass
 
     def _exec2_pause(self):
         """Stop after the work in progress, keeping the position.
@@ -3386,9 +3427,6 @@ class MainLayout(ttk.Frame):
                     self._exec2_log(f"[RUN] ⚠ Could not separate the chuck: "
                                     f"{type(e).__name__}: {e}")
         self._exec2_run_token += 1
-        self.after(0, lambda: self._exec2_full_btn.config(state="normal"))
-        self.after(0, lambda: self._exec2_test_btn.config(state="normal"))
-        self.after(0, lambda: self.recipe_panel.set_locked(False))
         self.after(0, lambda: self._exec2_wafer_map.enable_picking(
             on_change=self._exec2_on_sites_changed))
         self.after(0, lambda: self._exec2_set_state(
@@ -3441,9 +3479,6 @@ class MainLayout(ttk.Frame):
         self._exec2_running  = False
         self._exec2_run_mode = None
         self._exec2_safe_after(lambda: self._exec2_set_running_buttons(False))
-        self._exec2_safe_after(lambda: self._exec2_full_btn.config(state="normal"))
-        self._exec2_safe_after(lambda: self._exec2_test_btn.config(state="normal"))
-        self._exec2_safe_after(lambda: self.recipe_panel.set_locked(False))
         self._exec2_safe_after(lambda: self._exec2_step_var.set("Step: —"))
         self._exec2_safe_after(lambda: self._exec2_wafer_map.enable_picking(
             on_change=self._exec2_on_sites_changed))
@@ -3669,9 +3704,6 @@ class MainLayout(ttk.Frame):
         self._exec2_run_mode = "full"
         self._exec2_run_token += 1
         my_token = self._exec2_run_token
-        self._exec2_full_btn.config(state="disabled")
-        self._exec2_test_btn.config(state="disabled")
-        self.recipe_panel.set_locked(True)
         self._exec2_wafer_map.enable_picking(0)
         self.after(0, lambda: self._exec2_set_state(f"RUNNING ({mode_label})", "#2563eb"))
         self._exec2_log(f"[RUN] ▶ {mode_label} — walking the entire wafer (G/J), "
@@ -3824,9 +3856,6 @@ class MainLayout(ttk.Frame):
         self._exec2_run_mode = "full" if mode_label == "Full Die" else "test"
         self._exec2_run_token += 1
         my_token = self._exec2_run_token
-        self._exec2_full_btn.config(state="disabled")
-        self._exec2_test_btn.config(state="disabled")
-        self.recipe_panel.set_locked(True)
         self._exec2_wafer_map.enable_picking(0)
         self.after(0, lambda: self._exec2_set_state(
             f"RUNNING (Minor Moves — {mode_label})", "#2563eb"))
@@ -4957,9 +4986,6 @@ class MainLayout(ttk.Frame):
         self._exec2_run_mode = run_mode
         self._exec2_run_token += 1
         my_token = self._exec2_run_token
-        self._exec2_full_btn.config(state="disabled")
-        self._exec2_test_btn.config(state="disabled")
-        self.recipe_panel.set_locked(True)
         self._exec2_wafer_map.enable_picking(0)
         self.after(0, lambda: self._exec2_set_state(f"RUNNING ({mode_label})", "#2563eb"))
         self._exec2_log(f"[RUN] ▶ {mode_label} — {len(sites)} site(s): "
