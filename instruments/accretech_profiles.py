@@ -278,6 +278,61 @@ def add_profile(new_name: str, based_on: str = None) -> None:
     _save(data)
 
 
+def rename_profile(old_name: str, new_name: str) -> None:
+    """Rename a bench in place - Setup tab's Rename, e.g. swapping which
+    physical bench "probe08"/"probe08new" refer to. Overwrites new_name if
+    it already exists rather than merging with it (same "last write wins"
+    rule set_instrument/add_instrument already carry elsewhere in this
+    file) - a genuine A<->B swap has to go old->temp->A style through two
+    calls anyway, since new_name can't equal an EXISTING other bench
+    that's meant to survive; the caller (accretech_setup_panel) is
+    responsible for ordering a swap correctly (rename the one being
+    vacated first).
+
+    Also moves the bench's switch topology (switch_topology.rename_bench)
+    and retags every recipe written for old_name so it doesn't silently
+    stop appearing (wafer_map_view.retag_bench_recipes) - both keyed
+    lookups elsewhere in the app assume the bench name IS the identity,
+    so a bare probers-dict rename alone would orphan both. instruments.yaml
+    is untouched here - it only ever reflects the ACTIVE bench's addresses
+    (apply_to_instruments_yaml), so the caller should re-apply after this
+    if old_name/new_name was active, same as any other bench edit."""
+    old_name = (old_name or "").strip()
+    new_name = (new_name or "").strip()
+    if not old_name or not new_name:
+        raise ValueError("prober name cannot be blank")
+    if old_name == new_name:
+        return
+    data = load()
+    probers = data.get("probers") or {}
+    if old_name not in probers:
+        raise KeyError(f"no Accretech profile named {old_name!r}")
+    entry = probers.pop(old_name)
+    entry["label"] = new_name
+    probers[new_name] = entry
+    if data.get("active") == old_name:
+        data["active"] = new_name
+    _save(data)
+
+    try:
+        # Bare import, not "from gui import switch_topology" - main.py puts
+        # BOTH the repo root and gui/ on sys.path, so those are two
+        # DIFFERENT cached module objects with independent _cache state;
+        # every other cross-import of this module in the codebase (recipe_
+        # panel.py, probe_routing_panel.py, wafer_map_view.py, ...) already
+        # uses the bare form - matching it is what makes this rename
+        # actually land in the same module instance everything else reads.
+        import switch_topology
+        switch_topology.rename_bench(old_name, new_name)
+    except Exception:
+        pass
+    try:
+        from wafer_map_view import retag_bench_recipes
+        retag_bench_recipes(old_name, new_name)
+    except Exception:
+        pass
+
+
 def set_instrument(bench: str, key: str, *, name: str = None,
                    address: str = None, timeout_ms: int = None,
                    model: str = None, fitted: bool = None) -> None:
