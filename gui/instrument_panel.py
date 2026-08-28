@@ -5617,9 +5617,28 @@ class MainLayout(ttk.Frame):
                         die_no = 1
                     move_fn = getattr(self, "_exec2_move_fn", None)
                     if move_fn is None:
+                        # NOT a "skip this one step and keep going" case -
+                        # every step after this one assumes the chuck is
+                        # now sitting on die {die_no}, which never
+                        # happened. Continuing used to run them anyway
+                        # against wherever the chuck ACTUALLY was (die 1's
+                        # spot) and record the result under die {die_no}
+                        # as if it had moved - a real touchdown, a real
+                        # reading, silently mislabeled as a different die
+                        # (confirmed: CENFIRE-INLINE's own die-2 steps,
+                        # run this way from the Measure button, which
+                        # never sets _exec2_move_fn the way a real Minor
+                        # Moves run does). Stopping here, same as the
+                        # off-wafer-die case just below, means Measure on
+                        # a Minor Moves recipe correctly tests only the
+                        # first die of the shot instead of quietly
+                        # fabricating data for the rest of it.
                         self._exec2_log(f"[MEASURE] {i}. {name}: move to die {die_no} "
-                                        "— no Minor Moves context active (skipped)")
-                        continue
+                                        "— no Minor Moves context active (Measure only "
+                                        "tests the first die of a shot; run the recipe "
+                                        "for real to walk the whole shot) — stopping here.")
+                        self._exec2_mark_all_open()
+                        return False
                     self._exec2_log(f"[MEASURE] {i}. {name}: moving to die {die_no}...")
                     try:
                         move_fn(die_no)
