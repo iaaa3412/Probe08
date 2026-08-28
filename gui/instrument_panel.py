@@ -5751,6 +5751,13 @@ class MainLayout(ttk.Frame):
                     actual_current = None
                     actual_voltage = None
                     if not sim and smu and smu.inst:
+                        # Force a known OFF state before reconfiguring -
+                        # part of the exact per-die command sequence
+                        # confirmed on the bench for this step (Maddy TL's
+                        # "Force Current"). Redundant on a die that already
+                        # ended with an "open" step, but not on the first
+                        # die of a run/reconnect, and cheap either way.
+                        smu.turn_output_off(smu_ch)
                         smu.set_current(smu_ch, float(lvl or 0))
                         if limit:
                             smu.set_voltage_limit(smu_ch, float(limit))
