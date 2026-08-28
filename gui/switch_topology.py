@@ -137,6 +137,23 @@ def bench_names() -> list:
     return sorted(_load_all().get("benches", {}).keys())
 
 
+def rename_bench(old_name: str, new_name: str):
+    """Move old_name's saved switch topology (if any) to new_name - called
+    from accretech_profiles.rename_profile so a renamed bench keeps its
+    switch wiring instead of silently falling back to DEFAULT_TOPOLOGY the
+    next time something asks for new_name (a bench with nothing saved yet
+    starts fresh - see load_topology's own docstring). A bench with no
+    saved topology (never opened Switch Settings) has nothing to move,
+    which is fine - new_name will get the same fresh default old_name
+    would have. Overwrites any topology new_name already had, same as
+    accretech_profiles.rename_profile's own collision rule."""
+    all_data = _load_all()
+    benches = all_data.setdefault("benches", {})
+    if old_name in benches:
+        benches[new_name] = benches.pop(old_name)
+        _write_all(all_data)
+
+
 def load_topology(bench: str = None, force: bool = False) -> dict:
     """This bench's {slots, row_roles} - the active bench if none is given.
     A bench with nothing saved yet (a brand-new prober added on the Setup

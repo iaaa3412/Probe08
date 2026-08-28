@@ -57,6 +57,8 @@ class AccretechSetupPanel(ttk.Frame):
         self._bench_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_bench_picked())
         ttk.Button(bar, text="＋ Add Prober…", command=self._add_prober).pack(
             side="left", padx=2)
+        ttk.Button(bar, text="✎ Rename…", command=self._rename_prober).pack(
+            side="left", padx=2)
         self._active_lbl = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self._active_lbl, foreground="#16a34a",
                  font=("Segoe UI", 8, "italic")).pack(side="left", padx=(10, 0))
@@ -129,6 +131,41 @@ class AccretechSetupPanel(ttk.Frame):
             self._log(f"[SETUP] Cloned {len(cloned)} recipe(s) from {source!r} to {name!r}.")
         self._bench_var.set(name)
         self._refresh_benches()
+
+    def _rename_prober(self):
+        old = self._bench_var.get()
+        if not old:
+            messagebox.showerror("No Bench", "No prober selected to rename.")
+            return
+        new = simpledialog.askstring(
+            "Rename Prober",
+            f"New name for {old!r} - its instruments, switch wiring, and any "
+            "recipes tagged for it all move to the new name (a straight "
+            "rename, not a copy):",
+            parent=self, initialvalue=old)
+        if not new:
+            return
+        new = new.strip()
+        if new == old:
+            return
+        try:
+            accretech_profiles.rename_profile(old, new)
+        except (ValueError, KeyError) as exc:
+            messagebox.showerror("Rename Failed", str(exc))
+            return
+        self._log(f"[SETUP] Renamed Accretech prober {old!r} -> {new!r}")
+        self._bench_var.set(new)
+        self._refresh_benches()
+        # Only matters if the bench just renamed was the one actually
+        # connected - the toolbar's own picker (var/label/values) would
+        # otherwise keep showing the old name until something else forced
+        # it to refresh. No reconnect needed: instruments.yaml is keyed by
+        # SLOT (prober/smu/...), not bench name, and addresses didn't
+        # change - see rename_profile's own docstring.
+        try:
+            self.controller._refresh_bench_picker()
+        except Exception:
+            pass
 
     # -- instrument table -----------------------------------------------------
 

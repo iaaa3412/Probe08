@@ -733,6 +733,73 @@ def clone_bench_recipes(old_bench: str, new_bench: str) -> list:
     return cloned
 
 
+def retag_bench_recipes(old_bench: str, new_bench: str) -> list:
+    """Walk every ATA project folder under the current working directory
+    and, in each probe card CSV, retag any RECIPE row's own bench column
+    from old_bench to new_bench IN PLACE (same name, same STEP/SITE rows -
+    unlike clone_bench_recipes, which makes a second, differently-named
+    copy for a NEW bench). Called from
+    accretech_profiles.rename_profile - a renamed bench's recipes would
+    otherwise still be tagged for a name that no longer exists and
+    silently stop showing up (see RecipePanel._visible_recipe_names).
+
+    Recipes with no bench tag already show on every bench and are left
+    alone. Returns [(csv_path, recipe_name), ...] for logging."""
+    import workdir
+    root = workdir.get_current_working_dir()
+    retagged = []
+    if not root or not os.path.isdir(root):
+        return retagged
+    for proj in sorted(os.listdir(root)):
+        cards_dir = os.path.join(root, proj, "probe_cards")
+        if not os.path.isdir(cards_dir):
+            continue
+        for fname in sorted(os.listdir(cards_dir)):
+            if not fname.lower().endswith(".csv"):
+                continue
+            if ".recipes." in fname.lower() or ".movelist." in fname.lower():
+                continue
+            path = os.path.join(cards_dir, fname)
+            if os.path.isfile(path):
+                retagged.extend(_retag_bench_recipes_in_file(path, old_bench, new_bench))
+    return retagged
+
+
+def _retag_bench_recipes_in_file(path: str, old_bench: str, new_bench: str) -> list:
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+    except OSError:
+        return []
+    if not rows:
+        return []
+    header = rows[0]
+    try:
+        kind_i = header.index("kind")
+        recipe_i = header.index("recipe")
+        bench_i = header.index("bench")
+    except ValueError:
+        return []
+
+    def _get(row, i):
+        return row[i] if i < len(row) else ""
+
+    retagged = []
+    changed = False
+    for r in rows[1:]:
+        if _get(r, kind_i) == "RECIPE" and _get(r, bench_i) == old_bench:
+            while len(r) <= bench_i:
+                r.append("")
+            r[bench_i] = new_bench
+            retagged.append((path, _get(r, recipe_i)))
+            changed = True
+
+    if changed:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerows(rows)
+    return retagged
+
+
 def _clone_bench_recipes_in_file(path: str, old_bench: str, new_bench: str) -> list:
     try:
         with open(path, newline="", encoding="utf-8-sig") as f:
