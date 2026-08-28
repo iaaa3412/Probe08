@@ -70,18 +70,30 @@ CSV_SOURCE_FIELDS = {
 SOURCE_FIELDS_BY_TYPE = {"sql": SQL_SOURCE_FIELDS, "csv": CSV_SOURCE_FIELDS}
 
 LAMP_FORMAT: Dict[str, Any] = {
-    "name": "LaMP Electrical (tblLampElectricalMeasurements)",
+    # Renamed from the older "LaMP Electrical (tblLampElectricalMeasurements)" -
+    # that one's fldDieID carried just the ONE die a given switch position
+    # measured (e.g. "92-64"), one row per die per switch. The real LaMP
+    # export (see references/FLUSH_LampElectrical_92986.SQL) instead
+    # repeats the WHOLE quad's die string (e.g. "A3-01/93-71/A3-02/93-72")
+    # across all 4 of that quad's rows - "quad_group_size" below is what
+    # produces that; see build_insert_statements. Hardcoded specifically
+    # for this format (not a generic engine feature) - LaMP's recipe
+    # structure is the one place this codebase measures 4 dies per
+    # touchdown in a fixed switch order, see the "lamp electrical gauge"/
+    # lampaccr recipes' own STEP rows (first/second/third/fourth, die 1-4).
+    "name": "LaMP Electrical Quad (tblLampElectricalMeasurements)",
     "table": "tblLampElectricalMeasurements",
     "type": "sql",
     "requires_die_id": True,
+    "quad_group_size": 4,
     "columns": [
-        {"field": "fldTestSerial", "source": "test_serial", "quote": False},
-        {"field": "fldDieID",      "source": "die_id",      "quote": True},
-        {"field": "fldSwitch",     "source": "switch",      "quote": False},
-        {"field": "fldIteration",  "source": "iteration",   "quote": False},
-        {"field": "fldSetVoltage", "source": "set_voltage", "quote": False},
-        {"field": "fldVoltage",    "source": "voltage",     "quote": False},
-        {"field": "fldCurrent",    "source": "value",       "quote": False},
+        {"field": "fldTestSerial", "source": "test_serial",  "quote": False},
+        {"field": "fldDieID",      "source": "quad_die_id",  "quote": True},
+        {"field": "fldSwitch",     "source": "switch",       "quote": False},
+        {"field": "fldIteration",  "source": "iteration",    "quote": False},
+        {"field": "fldSetVoltage", "source": "set_voltage",  "quote": False},
+        {"field": "fldVoltage",    "source": "voltage",      "quote": False},
+        {"field": "fldCurrent",    "source": "value",        "quote": False},
     ],
 }
 
@@ -471,9 +483,36 @@ def rows_for_format(fmt: Dict[str, Any],
     return list(results_data)
 
 
+def _with_quad_die_id(rows: List[Dict[str, Any]], group_size: int) -> List[Dict[str, Any]]:
+    """Every `group_size` CONSECUTIVE rows (in their original, already-
+    correct run order - not re-sorted or re-grouped by die identity) get a
+    new "quad_die_id" key: their own die_id values joined with "/", same
+    joined string stamped on all of them. This is what lets a column
+    source "quad_die_id" (see LAMP_FORMAT) show the whole quad's die
+    string on every one of that quad's switch readings, matching the real
+    LaMP export - see build_insert_statements/LAMP_FORMAT's own comments.
+
+    Shallow-copies each row rather than mutating results_data in place -
+    the caller's own data (what feeds the CSV export, the Results tab
+    table, everything else) must come out of this untouched, only this
+    function's OWN return value carries the extra column."""
+    out = []
+    for i in range(0, len(rows), group_size):
+        chunk = rows[i:i + group_size]
+        joined = "/".join(r.get("die_id") or "" for r in chunk)
+        for r in chunk:
+            r2 = dict(r)
+            r2["quad_die_id"] = joined
+            out.append(r2)
+    return out
+
+
 def build_insert_statements(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
                             lot_id: str, wafer_id: str, folder: str = "") -> List[str]:
     rows = rows_for_format(fmt, results_data)
+    group_size = fmt.get("quad_group_size")
+    if group_size:
+        rows = _with_quad_die_id(rows, group_size)
     context = {"test_serial": compute_test_serial(lot_id, wafer_id),
               "lot_id": lot_id, "wafer_id": wafer_id}
     cols = fmt["columns"]
