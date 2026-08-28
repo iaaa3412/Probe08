@@ -12,14 +12,40 @@ PRESETS = {
     "proberautomation": r"\\prober\M\ETL\proberautomation",
 }
 
+# Where the running app itself lives - the exe's OWN folder once this is
+# built to one, or this checkout's root (this file's grandparent - same
+# place main.py sits) during plain-python development. Defined here,
+# before _PREF_PATH, specifically so _PREF_PATH can be anchored to it -
+# see that constant's own comment for why this distinction matters.
+#
+# sys.frozen/sys.executable are what PyInstaller (and friends) set before
+# ever running the bundled entry point, so this is correct as a plain
+# constant computed once at import time - no call has to happen "too
+# early" relative to the bundle's own startup.
+def _exe_dir() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 # This file's own directory is fixed regardless of which working directory
 # is chosen - it lives next to the app itself, not inside "GUI System".
 # "GUI System" now lives INSIDE whichever working directory is picked (see
 # gui_system_dir() below), so "which working directory to default to on
 # this PC" can't be stored there without a chicken-and-egg problem on the
 # very first read on a fresh machine.
-_PREF_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "working_dir_pref.json"))
+#
+# Anchored to _exe_dir(), NOT a bare __file__-relative path - under
+# PyInstaller's --onefile mode, __file__ for a bundled module resolves
+# inside a fresh temp extraction directory (sys._MEIPASS) that gets wiped
+# when the process exits, so a bare __file__-relative path here would
+# silently lose every "Set Default" the moment the app closed and always
+# fall back to PRESETS["automationproject"] on the next launch. Anchoring
+# to the exe's own real, persistent folder (or the checkout root in dev
+# mode) is what makes "just the exe, self-creating this one file next to
+# itself on first Set Default" a valid deployment - no installer, no
+# per-user/per-machine OS config directory needed.
+_PREF_PATH = os.path.join(_exe_dir(), "working_dir_pref.json")
 
 # No forced override - proberautomation is confirmed ready, so
 # get_default_working_dir() just uses whatever was last saved via Set
@@ -64,16 +90,6 @@ def set_default_working_dir(path: str) -> None:
             json.dump(data, f, indent=2)
     except OSError:
         pass
-
-
-def _exe_dir() -> str:
-    """Where the running app itself lives - the exe's own folder once this
-    is built to one (see the module docstring in main.py's launch flow),
-    or this checkout's own root (main.py's directory, same base _PREF_PATH
-    uses) during plain-python development."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(_PREF_PATH)
 
 
 def _looks_like_project_root(path: str) -> bool:
