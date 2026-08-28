@@ -276,23 +276,35 @@ class AccretechSetupPanel(ttk.Frame):
         if not bench:
             messagebox.showerror("No Bench", "Pick a prober bench first.")
             return
-        name = simpledialog.askstring(
-            "Add Instrument",
-            "Instrument name (e.g. 'Spare DMM') - no driver required yet, this "
-            "will still open its GPIB address and answer *IDN?:",
-            parent=self)
-        if not name:
+        # ONE dialog (name, model, address, timeout, fitted) instead of the
+        # old name-prompt-then-separately-opened-Edit-dialog flow - that
+        # second dialog carried the model dropdown, and more than one
+        # report came back as "I don't see a dropdown" even after making
+        # it center/raise itself, which points at the two-step handoff
+        # itself (easy to not notice a second popup appeared at all) more
+        # than window placement. "__new__" is not a real slot key - it's
+        # just never in MODEL_CHOICES, which is what makes
+        # model_choices_for return the full Generic-plus-every-coded-model
+        # list a genuinely new custom slot should offer.
+        dlg = _InstrumentDialog(
+            self, title=f"Add Instrument to {bench!r}", key="__new__",
+            initial=(accretech_profiles.GENERIC_MODEL, "", "", 3000, True))
+        self.wait_window(dlg)
+        if dlg.result is None:
             return
+        model, name, address, timeout_ms, fitted = dlg.result
         try:
-            key = accretech_profiles.add_instrument(bench, name.strip())
-        except ValueError as exc:
+            key = accretech_profiles.add_instrument(
+                bench, name.strip(), address=address, timeout_ms=timeout_ms,
+                fitted=fitted)
+            if model != accretech_profiles.GENERIC_MODEL:
+                accretech_profiles.set_instrument(bench, key, model=model)
+        except (ValueError, KeyError) as exc:
             messagebox.showerror("Add Failed", str(exc))
             return
-        self._log(f"[SETUP] {bench}: added instrument {name!r} (slot {key!r}, "
-                  f"{accretech_profiles.GENERIC_MODEL})")
+        self._log(f"[SETUP] {bench}: added instrument {name!r} (slot {key!r}, {model})")
         self._after_edit(bench)
         self._tree.selection_set(key)
-        self._edit_selected()
 
     def _remove_instrument(self):
         bench = self._bench_var.get()
