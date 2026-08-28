@@ -1157,7 +1157,7 @@ class RecipePanel(ttk.Frame):
         self._minor_moves_chk.pack(side="left", padx=(8, 8), pady=4)
 
         self._shortcut_chk = ttk.Checkbutton(
-            bar, text="⚡ Shortcut (skip repeat config)",
+            bar, text="Don't resend configs (may not work if enabled)",
             variable=self._shortcut_var, command=self._on_shortcut_toggle)
         self._shortcut_chk.pack(side="left", padx=(0, 8), pady=4)
 
