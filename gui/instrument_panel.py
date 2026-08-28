@@ -5251,6 +5251,14 @@ class MainLayout(ttk.Frame):
             self._exec2_log("[MEASURE] No recipe loaded — pick one from the "
                             "Recipe dropdown first.")
             return
+        # _exec2_run_steps_once refuses to run at all while this is True
+        # (see its own abort check) - every REAL run resets it at start,
+        # but this manual one-shot path never went through a run starter,
+        # so it kept whatever ⏹ Stop Run last left behind. A single Stop
+        # Run press, at any point earlier in the session, permanently
+        # broke every later Measure click with "stopped before step 1"
+        # until the app was relaunched.
+        self._exec2_aborted = False
         # Resolved here, on the main thread, not inside the background
         # thread below - see _exec2_prepare_shot_geometry's own note.
         shot_geom = self._exec2_prepare_shot_geometry()
