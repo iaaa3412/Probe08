@@ -12,7 +12,7 @@ import electroglas_pma
 DIE_PIN_KIND = "DIEPIN"
 
 CARD_CSV_FIELDS = (["kind", "recipe", "pin", "pad", "net", "seq", "bench",
-                    "minor_moves", "shot_origin_x", "shot_origin_y"]
+                    "minor_moves", "shortcut", "shot_origin_x", "shot_origin_y"]
                    + list(STEP_FIELDS))
 
 
@@ -1730,6 +1730,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                        "sites": [dict(s) for s in rec.get("sites", [])],
                        "bench": rec.get("bench", ""),
                        "minor_moves": bool(rec.get("minor_moves")),
+                       "shortcut": bool(rec.get("shortcut")),
                        "shot_origin": rec.get("shot_origin")}
                 for name, rec in self._card_recipes.get(self._current, {}).items()}
 
@@ -1749,6 +1750,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                    "sites": [dict(s) for s in rec.get("sites", [])],
                    "bench": rec.get("bench", ""),
                    "minor_moves": bool(rec.get("minor_moves")),
+                   "shortcut": bool(rec.get("shortcut")),
                    "shot_origin": rec.get("shot_origin")}
             for name, rec in recipes.items()}
         path = self._card_src.get(card)

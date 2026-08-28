@@ -787,6 +787,12 @@ def recipes_to_rows(recipes: dict) -> list:
                      # recipe - re-captured live before each run, but saved
                      # here so a reload does not lose it.
                      "minor_moves": "1" if rec.get("minor_moves") else "",
+                     # Shortcut: see RecipePanel._on_shortcut_toggle /
+                     # instrument_panel._exec2_should_configure. Off by
+                     # default (a recipe saved before this existed comes
+                     # back with shortcut=False, same as a fresh one) -
+                     # opt IN per recipe, never assumed safe.
+                     "shortcut": "1" if rec.get("shortcut") else "",
                      "shot_origin_x": "" if origin is None else str(origin[0]),
                      "shot_origin_y": "" if origin is None else str(origin[1])})
         for i, step in enumerate(rec.get("steps", []), 1):
@@ -819,12 +825,14 @@ def rows_to_recipes(rows: list) -> dict:
         if not name:
             continue
         recipes.setdefault(name, {"steps": [], "sites": [], "bench": "",
-                                  "minor_moves": False, "shot_origin": None})
+                                  "minor_moves": False, "shortcut": False,
+                                  "shot_origin": None})
         if kind == "RECIPE":
             bench = (row.get("bench") or "").strip()
             if bench:
                 recipes[name]["bench"] = bench
             recipes[name]["minor_moves"] = (row.get("minor_moves") or "").strip() == "1"
+            recipes[name]["shortcut"] = (row.get("shortcut") or "").strip() == "1"
             ox = (row.get("shot_origin_x") or "").strip()
             oy = (row.get("shot_origin_y") or "").strip()
             if ox and oy:
@@ -914,6 +922,18 @@ class RecipePanel(ttk.Frame):
         # see the recipe's own "minor_moves"/"shot_origin" fields above.
         self._minor_moves_var = tk.BooleanVar(value=False)
         self._shot_origin_status_var = tk.StringVar(value="")
+
+        # Shortcut: skip resending a step's SMU/DMM configuration (level,
+        # limit, NPLC, range, source delay) on a touchdown where it would
+        # be identical to what was already sent - see
+        # instrument_panel._exec2_should_configure. Off by default and
+        # opt-in PER RECIPE, not global - a real-hardware test surfaced a
+        # case (Maddy TL, Keithley 2400) where skipping a resend left
+        # voltage compliance at the instrument's own default instead of
+        # the recipe's configured limit, so this is not assumed safe for
+        # every recipe/instrument combination without being verified on
+        # the bench first.
+        self._shortcut_var = tk.BooleanVar(value=False)
 
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -1136,6 +1156,11 @@ class RecipePanel(ttk.Frame):
             variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
         self._minor_moves_chk.pack(side="left", padx=(8, 8), pady=4)
 
+        self._shortcut_chk = ttk.Checkbutton(
+            bar, text="⚡ Shortcut (skip repeat config)",
+            variable=self._shortcut_var, command=self._on_shortcut_toggle)
+        self._shortcut_chk.pack(side="left", padx=(0, 8), pady=4)
+
         # Accretech gets its origin from Wafer Builder's own Overlay sub-tab
         # (its confirmed row/col offset IS the translation between Wafer
         # Builder's logical die grid and real absolute die coordinates -
@@ -1166,6 +1191,21 @@ class RecipePanel(ttk.Frame):
         self._shot_origin_btn.config(
             state="normal" if self._minor_moves_var.get() else "disabled")
         self._refresh_shot_origin_label()
+
+    def _on_shortcut_toggle(self):
+        rec = self._recipes.get(self._current)
+        if rec is not None:
+            rec["shortcut"] = self._shortcut_var.get()
+            card = self._get_active_card()
+            if card:
+                self._save_recipes(card, self._recipes)
+
+    def is_shortcut(self) -> bool:
+        """Whether the CURRENTLY LOADED recipe has Shortcut checked - read
+        by instrument_panel._exec2_should_configure's own caller to decide
+        whether a repeat-config send can be skipped at all. False (the
+        safe default) for any recipe that has never had this box checked."""
+        return self._shortcut_var.get()
 
     def _refresh_shot_origin_label(self):
         if not self._minor_moves_var.get():
@@ -2923,6 +2963,7 @@ class RecipePanel(ttk.Frame):
         self._refresh_sites()
         self._update_validity_label()
         self._minor_moves_var.set(bool(rec.get("minor_moves")))
+        self._shortcut_var.set(bool(rec.get("shortcut")))
         self._shot_origin_btn.config(
             state="normal" if self._minor_moves_var.get() else "disabled")
         self._refresh_shot_origin_label()
@@ -2957,6 +2998,7 @@ class RecipePanel(ttk.Frame):
             self._refresh_sites()
             self._update_validity_label()
             self._minor_moves_var.set(False)
+            self._shortcut_var.set(False)
             self._shot_origin_btn.config(state="disabled")
             self._shot_origin_status_var.set("")
         self._update_default_label()
