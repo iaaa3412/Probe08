@@ -1,8 +1,11 @@
 .venv/
 __pycache__/
 *.pyc
+dist/
+build/
 gui/dist/
 gui/build/
 *.spec
+!AtomicaATA.spec
 .idea/
 gui/app_settings.json
