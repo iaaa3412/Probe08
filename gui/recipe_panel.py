@@ -902,7 +902,7 @@ class RecipePanel(ttk.Frame):
             self._smu_channel_choices = ("A",)
             self._step_type_choices = tuple(t for t in _STEP_TYPES if t != "wave")
         else:
-            self._smu_channel_choices = _SMU_CHANNELS
+            self._smu_channel_choices = self._smu_channels_for_active_bench()
             self._step_type_choices = _STEP_TYPES
         self._instrument_choices = self._bench_instruments()
         self._conn_report = "— no steps —"
@@ -1003,6 +1003,35 @@ class RecipePanel(ttk.Frame):
         return [n for n, rec in self._recipes.items()
                if not rec.get("bench") or rec.get("bench") == tag]
 
+    def _smu_channels_for_active_bench(self) -> tuple:
+        """Which SMU channel letters ("A", "B") the ACTIVE Accretech bench's
+        switch topology actually has a relay row wired for - not a fixed
+        ("A", "B") regardless of hardware. A single-channel SMU (Keithley
+        2400) only ever has channel A's rows (HI/LO) assigned; picking "B"
+        in the editor used to be possible on every Accretech bench
+        regardless, and switch_topology.rows_for_fields() would silently
+        come back with NO rows for a channel nothing is wired to - no
+        error, just an empty/broken connection the moment "Recompute
+        Connections" ran (see CENFIRE-INLINE's real force1/force2 steps,
+        which used to route channel B through rows C/D - correct on
+        probe08old's 2636B, dead air on probe08's 2400).
+
+        Electroglas doesn't call this - see __init__, it stays hardcoded
+        to ("A",) same as always. Falls back to just ("A",) (the safe
+        minimum every bench needs for its own SMU to work at all) rather
+        than the full set on any lookup failure - offering an EXTRA
+        channel that might not exist is the actual failure mode this
+        exists to prevent; offering too few just limits the editor.
+        """
+        try:
+            roles = switch_topology.row_roles()
+            chans = sorted({role.get("channel") for role in roles.values()
+                           if role and role.get("instrument") == "SMU"
+                           and role.get("channel")})
+        except Exception:
+            chans = []
+        return tuple(chans) or ("A",)
+
     def _bench_instruments(self) -> tuple:
         """Instruments the ACTIVE prober actually has fitted.
 
@@ -1045,6 +1074,8 @@ class RecipePanel(ttk.Frame):
     def refresh_bench_instruments(self):
         """Re-read the active prober - call after switching benches."""
         self._instrument_choices = self._bench_instruments()
+        if self._system != "electroglas":
+            self._smu_channel_choices = self._smu_channels_for_active_bench()
         if hasattr(self, "_bench_note_lbl"):
             self._bench_note_lbl.config(text=self._bench_instrument_note())
         if hasattr(self, "_instr_cb"):
@@ -2271,14 +2302,29 @@ class RecipePanel(ttk.Frame):
                                                    step.get("instrument") or "")
         roles = switch_topology.row_roles()
         max_pin = switch_topology.total_pins()
+        instrument = step.get("instrument") or ""
+        chan = step.get("chan") or "A"
+        # "hi"/"lo" are whichever instrument the step actually names
+        # (SMU or DMM) - "his"/"los" are always the DMM's own 4-wire
+        # sense legs (rows_for_fields' own docstring). Used to say "DMM
+        # SHI/SLO" unconditionally, which was flat wrong for an SMU hi/lo
+        # field with no row wired for its channel (e.g. picking channel B
+        # on a bench whose SMU only has channel A wired) - named the
+        # actual instrument/channel instead so the message says what to
+        # go fix in Switch Settings.
+        field_labels = {
+            "hi": f"{instrument} {f'channel {chan} ' if instrument == 'SMU' else ''}HI",
+            "lo": f"{instrument} {f'channel {chan} ' if instrument == 'SMU' else ''}LO",
+            "his": "DMM SHI",
+            "los": "DMM SLO",
+        }
         channels, detail, unresolved = [], [], []
         for field in ("hi", "lo", "his", "los"):
             rows = by_field.get(field, ())
             if not rows and (step.get(field) or "").strip():
                 detail.append(
                     f"{field.upper()} pin(s) named but no switch row is assigned "
-                    f"DMM {'SHI' if field == 'his' else 'SLO'} — set one in "
-                    f"Switch Settings")
+                    f"{field_labels[field]} — set one in Switch Settings")
             for token in (p for p in step.get(field, "").split(",") if p.strip()):
                 pin = self._resolve_pin(token)
                 if pin is None or not (1 <= pin <= max_pin):
