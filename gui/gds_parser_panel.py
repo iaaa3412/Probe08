@@ -9,7 +9,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional, Sequence
 
-_GDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gds")
+# Same sys._MEIPASS-first, dev-checkout-fallback pattern gpib_base.
+# get_resource_path already uses for its own bundled resource lookup -
+# reused here rather than duplicated, so a PyInstaller build only needs
+# to bundle "gds" as a data dir (--add-data) for this import to keep
+# working, instead of also having to ship the folder loose next to the
+# exe (see workdir.py's own _exe_dir()/_PREF_PATH comments for the same
+# "smallest possible deployment" reasoning applied there).
+from instruments.gpib_base import get_resource_path
+
+_GDS_DIR = get_resource_path("gds")
 if _GDS_DIR not in sys.path:
     sys.path.insert(0, _GDS_DIR)
 
