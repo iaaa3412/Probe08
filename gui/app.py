@@ -1578,11 +1578,20 @@ class AtomicaDashboard(tk.Tk):
     # and kind=DIE share the rest of the header, each only filling in its
     # own columns - same multi-kind-rows-in-one-CSV shape recipe_panel's
     # RECIPE/STEP/SITE rows already use elsewhere in this codebase.
+    #
+    # die/type/value lead the header (the three columns someone skimming
+    # the file actually wants first) - everything else follows in its old
+    # order. Purely a WRITE-side change: cmd_import_results_csv (and
+    # anything else that reads this file) goes through csv.DictReader,
+    # keyed by column NAME, so column order here has zero effect on
+    # reading a file back - old exports with the old column order still
+    # import fine.
     _RESULTS_CSV_FIELDS = [
+        "die", "type", "value",
         "kind", "system", "ata_folder", "map_source", "probe_card", "recipe",
         "lot_id", "wafer_id", "total_dies", "dies_tested", "dies_passed",
         "dies_failed",
-        "timestamp", "die", "step", "type", "mode", "value", "unit",
+        "timestamp", "step", "mode", "unit",
         "die_id", "switch", "set_voltage", "voltage", "connection",
         "instrument", "row", "col", "status",
     ]
