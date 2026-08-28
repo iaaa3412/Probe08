@@ -118,7 +118,14 @@ class Keithley2400(GPIBInstrument):
 
     def set_current(self, channel, amps):
         self.write(":SOUR:FUNC CURR")
-        self.write(f":SOUR:CURR:LEV {amps}")
+        # FIXED, not the power-on default of AUTO/SWEep - without this the
+        # 2400 has been seen falling back into its own auto-ohms-style
+        # current selection instead of holding exactly the forced level a
+        # recipe asked for. Verified against the bench's own confirmed-
+        # working command sequence for a Kelvin resistance measurement -
+        # see measure_resistance's own comment.
+        self.write(":SOUR:CURR:MODE FIXED")
+        self.write(f":SOUR:CURR {amps}")
 
     def set_current_limit(self, channel, amps):
         self.write(f":SENS:CURR:PROT {amps}")
@@ -142,7 +149,18 @@ class Keithley2400(GPIBInstrument):
         return _read_element(self.query(":READ?"), 0)
 
     def measure_resistance(self, channel):
-        self.write(":SENS:FUNC 'RES'")
+        # MANUAL, not the 2400's own AUTO ohms - AUTO uses the instrument's
+        # OWN internal current source (auto-ranged) instead of whatever
+        # SOUR:CURR was just forced by set_current(), silently ignoring a
+        # recipe's actual current level for a Kelvin/4-wire measurement
+        # like Maddy TL's. Confirmed on the bench as part of the exact
+        # per-die command sequence that measures correctly - omitting this
+        # is the most likely reason a die driven this way read compliance-
+        # clamped garbage (V pinned near the instrument's own default
+        # ceiling, not the recipe's configured voltage limit) starting
+        # from whichever die this was never sent before.
+        self.write(":SENS:RES:MODE MANUAL")
+        self.write(":SENS:FUNC 'RESISTANCE'")
         self.write(":FORM:ELEM RES")
         return _read_element(self.query(":READ?"), 0)
 
