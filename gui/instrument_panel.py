@@ -2709,10 +2709,6 @@ class MainLayout(ttk.Frame):
         self._exec2_aborted  = False
         self._exec2_run_mode = None
         self._exec2_die_num  = 0
-        # Reset every run start (_exec2_reset_counts) - see
-        # _exec2_should_configure's own docstring.
-        self._exec2_step_config_cache = {}
-        self._exec2_avg_count_cache = {}
         # Set per touchdown by the Electroglas run so exports name the whole
         # shot; blank means fall back to the map/overlay per-cell die ID.
         self._exec2_die_id_override = ""
@@ -5340,43 +5336,6 @@ class MainLayout(ttk.Frame):
             return None
         return nplc if nplc != 1 else None
 
-    def _exec2_should_configure(self, step: dict, sig: tuple) -> bool:
-        """True if this step's SETUP calls (set_voltage/set_current_limit/
-        set_nplc/set_current_range/set_source_delay/... - whatever actually
-        configures the instrument, as opposed to triggering a reading)
-        should be sent right now; False if they were already sent, with
-        this EXACT signature, the last time this step ran, and can safely
-        be skipped.
-
-        Why: the recovered old LaMP exe's own SCPI trace configures the
-        SMU ONCE per wafer, not once per die - this recipe engine instead
-        resent the full setup (level, limit, NPLC, range, source delay) on
-        EVERY touchdown of EVERY die, which is most of the ~4x GPIB
-        traffic gap between this engine's runtime and the original exe's.
-        Turning the output on/off and the actual read still happen every
-        touchdown regardless (a relay closing onto a different die each
-        time is real, physical work, not configuration) - only the value-
-        setting calls are gated here.
-
-        Generic, not hardcoded to any one recipe/step: `step` is keyed by
-        Python object identity (id(step)) - the SAME step dict instance is
-        what runs on every touchdown of a wafer walk (see
-        _exec2_run_steps_once's `steps` argument), so this cache only ever
-        matches "the same step, run again" - never two different steps
-        that merely look similar. `sig` is whatever tuple of the step's
-        OWN resolved config values the caller cares about - if a step's
-        fields genuinely differ between touchdowns (nothing in this
-        codebase does that today, but nothing here assumes it can't), the
-        signature changes and this returns True again, same as a brand
-        new step would. Reset every run start - see _exec2_reset_counts.
-        """
-        key = id(step)
-        cache = self._exec2_step_config_cache
-        if cache.get(key) == sig:
-            return False
-        cache[key] = sig
-        return True
-
     def _exec2_measure_averaged(self, smu, smu_ch, read_one, avg_count: int,
                                 avg_delay_ms: float, unit: str) -> float:
         """Average a reading, on the instrument itself where it can do it.
@@ -5401,15 +5360,7 @@ class MainLayout(ttk.Frame):
                   and hasattr(smu, "set_averages") and trusted)
         if can_hw:
             try:
-                # Same "don't resend it if it's already set" principle as
-                # _exec2_should_configure, just keyed on (instrument,
-                # channel) instead of step identity - this helper has no
-                # step dict to key off of, and avg_count is the only thing
-                # it ever configures.
-                avg_key = (id(smu), smu_ch)
-                if self._exec2_avg_count_cache.get(avg_key) != avg_count:
-                    smu.set_averages(smu_ch, avg_count)
-                    self._exec2_avg_count_cache[avg_key] = avg_count
+                smu.set_averages(smu_ch, avg_count)
                 value = (smu.read_average() if hasattr(smu, "read_average")
                          else read_one())
                 self._exec2_log(f"[MEASURE]      {avg_count} readings averaged "
@@ -5712,12 +5663,10 @@ class MainLayout(ttk.Frame):
                 avg_txt = f"  [avg of {avg_count}, {avg_delay:.0f} ms apart]" if avg_count > 1 else ""
 
                 if t == "resistance":
-                    nplc = self._exec2_nplc_spec(s)
-                    do_cfg = self._exec2_should_configure(
-                        s, ("resistance", instrument, smu_ch, nplc))
                     if instrument == "SMU":
                         if not sim and smu and smu.inst:
-                            if do_cfg and nplc is not None:
+                            nplc = self._exec2_nplc_spec(s)
+                            if nplc is not None:
                                 smu.set_nplc(smu_ch, nplc)
                         read_one = ((lambda: abs(random.gauss(50, 15)))
                                    if sim or not (smu and smu.inst)
@@ -5753,12 +5702,10 @@ class MainLayout(ttk.Frame):
                     last_reading = (name, r, r_unit)
                     readings_by_name[name] = (r, r_unit)
                 elif t == "voltage" and mode == "measure":
-                    nplc = self._exec2_nplc_spec(s)
-                    do_cfg = self._exec2_should_configure(
-                        s, ("voltage_measure", instrument, smu_ch, nplc))
                     if instrument == "SMU":
                         if not sim and smu and smu.inst:
-                            if do_cfg and nplc is not None:
+                            nplc = self._exec2_nplc_spec(s)
+                            if nplc is not None:
                                 smu.set_nplc(smu_ch, nplc)
                         read_one = ((lambda: random.gauss(3.3, 0.1))
                                    if sim or not (smu and smu.inst)
@@ -5788,18 +5735,10 @@ class MainLayout(ttk.Frame):
                     last_reading = (name, v, v_unit)
                     readings_by_name[name] = (v, v_unit)
                 elif t == "voltage":
-                    do_cfg = self._exec2_should_configure(
-                        s, ("voltage_apply", smu_ch, lvl, limit))
                     if not sim and smu and smu.inst:
-                        if do_cfg:
-                            smu.set_voltage(smu_ch, float(lvl or 0))
-                            if limit:
-                                smu.set_current_limit(smu_ch, float(limit))
-                        # Not gated - this step's whole point is "output ON
-                        # until an open step", so it has to be reasserted
-                        # every time in case an earlier open step (or the
-                        # previous touchdown's own close-out) left it off.
-                        # Idempotent/cheap when it was already on.
+                        smu.set_voltage(smu_ch, float(lvl or 0))
+                        if limit:
+                            smu.set_current_limit(smu_ch, float(limit))
                         smu.turn_output_on(smu_ch)
                     last_set_voltage_by_ch[smu_ch] = float(lvl or 0)
                     lim_txt = f", current limit {limit} A" if limit else ""
@@ -5811,15 +5750,10 @@ class MainLayout(ttk.Frame):
                 elif t == "current" and mode == "apply":
                     actual_current = None
                     actual_voltage = None
-                    do_cfg = self._exec2_should_configure(
-                        s, ("current_apply", smu_ch, lvl, limit))
                     if not sim and smu and smu.inst:
-                        if do_cfg:
-                            smu.set_current(smu_ch, float(lvl or 0))
-                            if limit:
-                                smu.set_voltage_limit(smu_ch, float(limit))
-                        # Not gated - same "must stay/become ON regardless"
-                        # reasoning as the plain "voltage" apply step above.
+                        smu.set_current(smu_ch, float(lvl or 0))
+                        if limit:
+                            smu.set_voltage_limit(smu_ch, float(limit))
                         smu.turn_output_on(smu_ch)
                         try:
                             actual_current = smu.measure_current(smu_ch)
@@ -5867,73 +5801,56 @@ class MainLayout(ttk.Frame):
                     did_bias = False
                     if instrument == "SMU":
                         if not sim and smu and smu.inst:
-                            nplc = self._exec2_nplc_spec(s)
-                            mrange = (s.get("mrange") or "").strip()
-                            # See _exec2_should_configure's own docstring -
-                            # this is the "resend setup once per wafer, not
-                            # once per die" fix. lvl/limit/nplc/mrange/
-                            # avg_delay together are everything below
-                            # actually configures on the instrument; the
-                            # bias/output-on/read/off sequence itself still
-                            # runs every touchdown regardless.
-                            do_cfg = self._exec2_should_configure(
-                                s, ("current_measure", smu_ch, lvl, limit,
-                                   s.get("nplc"), mrange, avg_delay))
                             if lvl:
-                                if do_cfg:
-                                    smu.set_voltage(smu_ch, float(lvl))
-                                    if limit:
-                                        smu.set_current_limit(smu_ch, float(limit))
-                                        # NOT reading the limit back here anymore -
-                                        # see references/HANDOFF_lampaccr_
-                                        # compliance_investigation.md's "GPIB
-                                        # response-desync" finding. This readback
-                                        # query, immediately before the real
-                                        # measure.i() query for the same step, is
-                                        # exactly what a persistent one-query GPIB
-                                        # lag (confirmed real on this bench, does
-                                        # not self-correct) turns into silent data
-                                        # corruption: once desynced, every
-                                        # measure.i() call receives THIS query's
-                                        # answer instead of its own - which is
-                                        # always exactly limiti, explaining a real
-                                        # run's results freezing at a constant
-                                        # 1e-06 for every die for the rest of the
-                                        # run. get_current_limit() is still on the
-                                        # driver for manual/on-demand checks (the
-                                        # SCPI/TSP row on the Instruments tab), just
-                                        # not auto-called in this hot path anymore.
-                                # Not gated - every touchdown closes a
-                                # DIFFERENT relay path, so the output has to
-                                # actually be (re)asserted on it every time
-                                # even when the LEVEL it's set to hasn't
-                                # changed since the last touchdown.
+                                smu.set_voltage(smu_ch, float(lvl))
+                                if limit:
+                                    smu.set_current_limit(smu_ch, float(limit))
+                                    # NOT reading the limit back here anymore -
+                                    # see references/HANDOFF_lampaccr_
+                                    # compliance_investigation.md's "GPIB
+                                    # response-desync" finding. This readback
+                                    # query, immediately before the real
+                                    # measure.i() query for the same step, is
+                                    # exactly what a persistent one-query GPIB
+                                    # lag (confirmed real on this bench, does
+                                    # not self-correct) turns into silent data
+                                    # corruption: once desynced, every
+                                    # measure.i() call receives THIS query's
+                                    # answer instead of its own - which is
+                                    # always exactly limiti, explaining a real
+                                    # run's results freezing at a constant
+                                    # 1e-06 for every die for the rest of the
+                                    # run. get_current_limit() is still on the
+                                    # driver for manual/on-demand checks (the
+                                    # SCPI/TSP row on the Instruments tab), just
+                                    # not auto-called in this hot path anymore.
                                 smu.turn_output_on(smu_ch)
                                 last_set_voltage_by_ch[smu_ch] = float(lvl)
                                 did_bias = True
-                            if do_cfg:
-                                if nplc is not None:
-                                    smu.set_nplc(smu_ch, nplc)
-                                # LaMP's MeterRange, carried from the .PMA. Pinned
-                                # rather than autoranged, so a different PMA
-                                # reconfigures the meter on LOAD ALL instead of
-                                # inheriting whatever the last recipe left set.
-                                if mrange and hasattr(smu, "set_current_range"):
-                                    try:
-                                        smu.set_current_range(smu_ch, float(mrange))
-                                    except (TypeError, ValueError) as e:
-                                        self._exec2_log(f"[MEASURE]    ignoring bad "
-                                                        f"meter range {mrange!r}: {e}")
-                                # sour:clear:auto on drops the output after every
-                                # :READ?, so each of the averaged readings
-                                # re-applies the bias to a discharged path. With no
-                                # source delay the integration starts on the
-                                # charging transient - a good die read ~90 nA where
-                                # the original LaMP data shows sub-nanoamp. This is
-                                # LaMP's MeterDelay, carried on the step as
-                                # avg_delay (ms).
-                                if avg_delay and hasattr(smu, "set_source_delay"):
-                                    smu.set_source_delay(avg_delay / 1000.0)
+                            nplc = self._exec2_nplc_spec(s)
+                            if nplc is not None:
+                                smu.set_nplc(smu_ch, nplc)
+                            # LaMP's MeterRange, carried from the .PMA. Pinned
+                            # rather than autoranged, so a different PMA
+                            # reconfigures the meter on LOAD ALL instead of
+                            # inheriting whatever the last recipe left set.
+                            mrange = (s.get("mrange") or "").strip()
+                            if mrange and hasattr(smu, "set_current_range"):
+                                try:
+                                    smu.set_current_range(smu_ch, float(mrange))
+                                except (TypeError, ValueError) as e:
+                                    self._exec2_log(f"[MEASURE]    ignoring bad "
+                                                    f"meter range {mrange!r}: {e}")
+                            # sour:clear:auto on drops the output after every
+                            # :READ?, so each of the averaged readings
+                            # re-applies the bias to a discharged path. With no
+                            # source delay the integration starts on the
+                            # charging transient - a good die read ~90 nA where
+                            # the original LaMP data shows sub-nanoamp. This is
+                            # LaMP's MeterDelay, carried on the step as
+                            # avg_delay (ms).
+                            if avg_delay and hasattr(smu, "set_source_delay"):
+                                smu.set_source_delay(avg_delay / 1000.0)
                             read_one = lambda: smu.measure_current(smu_ch)
                         else:
                             read_one = lambda: abs(random.gauss(4e-7, 2e-7))
@@ -6590,8 +6507,6 @@ class MainLayout(ttk.Frame):
                 except Exception:
                     pass
         self._exec2_die_num = 0
-        self._exec2_step_config_cache = {}
-        self._exec2_avg_count_cache = {}
         if total_dies is not None:
             self._exec2_total_dies = total_dies
         self._exec2_pct_var.set("Yield:  —")
