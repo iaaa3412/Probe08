@@ -5369,7 +5369,19 @@ class MainLayout(ttk.Frame):
         codebase does that today, but nothing here assumes it can't), the
         signature changes and this returns True again, same as a brand
         new step would. Reset every run start - see _exec2_reset_counts.
+
+        Gated on the loaded recipe's own Shortcut checkbox (RecipePanel.
+        is_shortcut()) - OFF (always return True, i.e. always configure)
+        unless a recipe has explicitly opted in. Real-hardware testing
+        (Maddy TL, Keithley 2400) found a case where skipping a resend
+        left voltage compliance at the instrument's own default instead
+        of the recipe's configured limit - not something to assume safe
+        for every recipe/instrument combination without the operator
+        deliberately verifying it on the bench first.
         """
+        recipe_panel = getattr(self, "recipe_panel", None)
+        if recipe_panel is None or not recipe_panel.is_shortcut():
+            return True
         key = id(step)
         cache = self._exec2_step_config_cache
         if cache.get(key) == sig:
