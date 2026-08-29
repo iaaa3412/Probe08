@@ -3701,6 +3701,25 @@ class MainLayout(ttk.Frame):
     def _exec2_start_full_die_walk(self, mode_label: str):
         """The actual native G/J whole-wafer walk - shared by Full Die and
         ▶ Run's own "no saved touchdowns, do the whole wafer" fallback."""
+        if self._system == "electroglas":
+            # This walk is built entirely on the Accretech STB protocol - G
+            # (move_to_start_die, an admittedly SUSPECT/never-tested command
+            # on the Electroglas driver), STB=81/90 end-of-wafer codes, J
+            # (next_die) for stepping. None of that is how the Electroglas
+            # works: it has no onboard wafer map, no STB-based handshake,
+            # and its own datum moves every time the operator re-aligns -
+            # see electroglas_2001x.py's module docstring. Silently falling
+            # through to this path (e.g. via the ▶ Run "no saved
+            # touchdowns" fallback) would send that untested command for
+            # real. Use the PMA Run tab instead, which drives Electroglas
+            # with verified MD/MM relative steps and a software-anchored
+            # datum.
+            self._exec2_log(
+                f"[RUN] {mode_label}: the native whole-wafer walk (G/J) is "
+                "Accretech-only - it assumes a status-byte protocol and "
+                "onboard wafer map the Electroglas does not have. Use the "
+                "PMA Run tab for Electroglas recipes instead.")
+            return
         self._exec2_reset_counts(total_dies=len(self._exec2_wafer_map._last_dies or []))
         self._exec2_running  = True
         self._exec2_set_running_buttons(True)

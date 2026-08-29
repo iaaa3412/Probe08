@@ -2044,20 +2044,19 @@ class EgPmaRunPanel(ttk.Frame):
             self._ui(lambda: (self._mark_current(), self._refresh_position()))
             return True
 
-        if self._motion_var.get() == MOTION_UM:
-            return self._move_um(drv, cur, nxt, target, (nx, ny))
-
         # Verify the chuck is REALLY at (cx, cy) - what self._index assumes -
-        # BEFORE computing/sending anything from that assumption. MD is a
-        # RELATIVE move: if self._index is stale (chuck moved by hand, a
-        # previous anchor was off, accumulated drift...), the delta below is
-        # wrong from the start, yet the driver faithfully executes whatever
-        # relative delta was commanded - the AFTER-move ?P check further
-        # down only confirms the COMMANDED delta happened, never that it
-        # started from the right place, so a stale anchor "verified cleanly"
-        # while landing somewhere unintended (confirmed cause of a real
-        # out-of-bounds move on 21PCM). Checking here catches it before any
-        # motion is sent, not after.
+        # BEFORE computing/sending anything from that assumption, in EITHER
+        # motion mode. This is a check on the datum, not on the move that
+        # follows: if self._index is stale (chuck moved by hand, a previous
+        # anchor was off, accumulated drift...), the delta computed below is
+        # wrong from the start regardless of whether it is sent as MD or MM,
+        # and an AFTER-move check only confirms the COMMANDED delta happened,
+        # never that it started from the right place - a stale anchor
+        # "verified cleanly" while landing somewhere unintended (confirmed
+        # cause of a real out-of-bounds move on 21PCM, in MD mode - the same
+        # stale-datum failure is exactly as possible in MM mode, since both
+        # start from the same self._index). Checking here, before branching
+        # on motion mode, catches it before any motion is sent either way.
         real = self._read_position(drv)
         if real is None:
             self._ui(lambda: self._log(
@@ -2076,6 +2075,9 @@ class EgPmaRunPanel(ttk.Frame):
                 "(Set Initial) before continuing. No move was sent."))
             self._ui(self._fill_table)
             return False
+
+        if self._motion_var.get() == MOTION_UM:
+            return self._move_um(drv, cur, nxt, target, (nx, ny), before=real)
 
         before = real
         self._ui(lambda: self._status_var.set(
@@ -2117,7 +2119,7 @@ class EgPmaRunPanel(ttk.Frame):
             f"{nxt['device_id']}"))
         return True
 
-    def _move_um(self, drv, cur, nxt, target, grid_xy) -> bool:
+    def _move_um(self, drv, cur, nxt, target, grid_xy, before) -> bool:
         """Relative MICRON move (MM), the way the original LaMP exe worked.
 
         The recipe's own coordinates are microns, so the delta between two
@@ -2139,6 +2141,13 @@ class EgPmaRunPanel(ttk.Frame):
         mode exists to avoid. So a ?P mismatch is reported and not treated as
         divergence; the driver's own MC/MF acknowledgement check is what
         catches a refused move.
+
+        `before` is the real ?P reading _move_to_index already took and
+        verified against the expected pre-move position - passed in rather
+        than re-read here so that check (the one that catches a stale anchor
+        BEFORE sending anything, in either motion mode) is not silently
+        skipped just because this path used to take its own reading after
+        the fact, too late to abort on.
         """
         # Carry the sub-count remainder. A quad step is 7042 um and a count is
         # 2.5 um, so 2816.8 counts - and rounding the SAME way every step makes
@@ -2149,7 +2158,6 @@ class EgPmaRunPanel(ttk.Frame):
         want_y = (nxt["y"] - cur["y"]) + self._um_residual[1]
         dx_um = int(round(want_x))
         dy_um = int(round(want_y))
-        before = self._read_position(drv)
         self._ui(lambda: self._status_var.set(
             f"#{nxt['seq']}  MM {dx_um:+d},{dy_um:+d} um  {nxt['device_id']}"))
 

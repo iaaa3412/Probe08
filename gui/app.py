@@ -223,7 +223,9 @@ class AtomicaDashboard(tk.Tk):
         """First thing on startup: does this machine actually have a GUI
         System folder, and does it have all four setup files in it? A fresh
         machine (or one where GUI System was declined/deleted) has neither -
-        warn about it up front and offer to scaffold blank versions, rather
+        warn about it up front and offer to either browse to a working
+        directory that already has one (e.g. a network share or a cloned
+        ProberFolders-style checkout), or scaffold blank versions, rather
         than let the app silently run with nothing connected and no obvious
         reason why, or crash reaching for a config file that was never
         written."""
@@ -232,35 +234,98 @@ class AtomicaDashboard(tk.Tk):
                   if name != "folder" and not present]
         if not missing:
             return
-        if not status["folder"]:
-            prompt = (f"This machine has no GUI System folder at "
-                      f"{workdir.gui_system_dir()} - that's where the "
-                      "GUI keeps this machine's real setup (instrument "
-                      "addresses, Electroglas bench profiles, switch "
-                      "wiring, default ATA folder/prober). None of that "
-                      "exists yet.")
-        else:
-            prompt = ("This machine's GUI System folder is missing some "
-                      "setup files: " + ", ".join(missing) + ".")
-        create = messagebox.askyesno(
-            "GUI System Folder", prompt +
-            "\n\nCreate the missing file(s) now with a blank starter "
-            "setup? Nothing is guessed - every address/bench starts "
-            "empty and gets filled in on the Setup tab afterward.",
-            parent=self)
-        if not create:
-            messagebox.showwarning(
-                "No Machine Setup",
-                "Continuing without it - instrument connections and "
-                "per-bench profiles won't work until GUI System exists. "
-                "Nothing will crash, but nothing will connect either.",
-                parent=self)
-            return
-        created = app_settings.create_basic_machine_config()
-        self._pending_setup_log = (
-            f"[SYSTEM] GUI System folder: created {', '.join(created)} "
-            "with a blank starter setup - fill in real addresses/benches "
-            "on the Setup tab.") if created else None
+        while True:
+            if not status["folder"]:
+                prompt = (f"This machine has no GUI System folder at "
+                          f"{workdir.gui_system_dir()} - that's where the "
+                          "GUI keeps this machine's real setup (instrument "
+                          "addresses, Electroglas bench profiles, switch "
+                          "wiring, default ATA folder/prober). None of that "
+                          "exists yet.")
+            else:
+                prompt = ("This machine's GUI System folder is missing some "
+                          "setup files: " + ", ".join(missing) + ".")
+            choice = self._ask_missing_config_action(prompt)
+            if choice == "browse":
+                selected = filedialog.askdirectory(
+                    title="Select Working Directory (contains GUI System)",
+                    initialdir=workdir.get_current_working_dir(), parent=self)
+                if not selected:
+                    continue
+                workdir.set_current_working_dir(selected)
+                status = app_settings.machine_config_status()
+                missing = [name for name, present in status.items()
+                          if name != "folder" and not present]
+                if not missing:
+                    self._pending_setup_log = (
+                        f"[SYSTEM] Working directory set to '{selected}' - "
+                        "GUI System found, all setup files present.")
+                    return
+                # Still missing something at the newly-picked location -
+                # loop back and show the (now updated) prompt again rather
+                # than silently falling through to blank-scaffold it.
+                continue
+            elif choice == "create":
+                created = app_settings.create_basic_machine_config()
+                self._pending_setup_log = (
+                    f"[SYSTEM] GUI System folder: created {', '.join(created)} "
+                    "with a blank starter setup - fill in real "
+                    "addresses/benches on the Setup tab.") if created else None
+                return
+            else:
+                messagebox.showwarning(
+                    "No Machine Setup",
+                    "Continuing without it - instrument connections and "
+                    "per-bench profiles won't work until GUI System exists. "
+                    "Nothing will crash, but nothing will connect either.",
+                    parent=self)
+                return
+
+    def _ask_missing_config_action(self, prompt: str) -> str:
+        """Modal choice for _check_machine_config_folder: "browse" (point at
+        an existing working directory that already has a GUI System folder),
+        "create" (scaffold a blank one here), or "skip" (continue without).
+        A plain custom dialog rather than messagebox.askyesno since there
+        are three distinct outcomes, not two."""
+        dlg = tk.Toplevel(self)
+        dlg.title("GUI System Folder")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        result = {"choice": "skip"}
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=prompt, wraplength=420, justify="left").pack(
+            anchor="w", pady=(0, 12))
+        ttk.Label(
+            frm, wraplength=420, justify="left", foreground="#555555",
+            text=("Browse to a working directory that already has a GUI "
+                  "System folder (e.g. a shared network location or a "
+                  "cloned project folder), or create a blank starter setup "
+                  "here instead. Nothing is guessed either way.")
+        ).pack(anchor="w", pady=(0, 12))
+
+        def pick(choice):
+            result["choice"] = choice
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(4, 0))
+        ttk.Button(btns, text="Browse for Working Directory...",
+                  command=lambda: pick("browse")).pack(side="left")
+        ttk.Button(btns, text="Create Blank Setup Here",
+                  command=lambda: pick("create")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Continue Without",
+                  command=lambda: pick("skip")).pack(side="right")
+
+        dlg.protocol("WM_DELETE_WINDOW", lambda: pick("skip"))
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x,0)}+{max(y,0)}")
+        dlg.wait_window()
+        return result["choice"]
 
     def _autoload_default_ata_folders(self):
         """One default ATA folder for the whole project, set via the ⭐ Set
