@@ -33,6 +33,8 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from wafer_map_view import WaferMapPanel
+
 
 def _read_position(drv):
     """?P, surviving one link stall - same pattern as
@@ -228,8 +230,28 @@ class EgNanozRunPanel(ttk.Frame):
             side="left", padx=(10, 0))
 
     def _build_table(self):
-        lf = ttk.LabelFrame(self, text="Shots (Recipe tab) — top die of each 1x20 column", padding=4)
-        lf.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        # Horizontal split: a pickable wafer map (click a die to mark it as
+        # a touchdown's TOP die - see get_picked()/Recipe tab's "Take from
+        # map selection") alongside the Recipe tab's own computed shot
+        # list. This map is its OWN WaferMapPanel instance, populated by
+        # copying rows out of the wafer plan (load_die_list) - it never
+        # touches gui/recipe_gen_panel.py's live Wafer Builder object, so
+        # picking here cannot affect that map, the same guarantee the
+        # normal Electroglas Run/Recipe tabs already give (see
+        # eg_nanoz_recipe_panel.py's own module docstring).
+        split = ttk.PanedWindow(self, orient="horizontal")
+        split.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
+
+        map_lf = ttk.LabelFrame(split, text="Pick touchdowns — click the TOP die of each 1x20 you want", padding=4)
+        split.add(map_lf, weight=1)
+        map_lf.rowconfigure(0, weight=1)
+        map_lf.columnconfigure(0, weight=1)
+        self.wafer_map = WaferMapPanel(map_lf, show_title=False)
+        self.wafer_map.grid(row=0, column=0, sticky="nsew")
+        self.wafer_map.enable_picking()
+
+        lf = ttk.LabelFrame(split, text="Shots (Recipe tab) — top die of each 1x20 column", padding=4)
+        split.add(lf, weight=1)
         lf.rowconfigure(0, weight=1)
         lf.columnconfigure(0, weight=1)
         cols = ("idx", "label", "top_die", "row", "col", "status")
@@ -244,6 +266,18 @@ class EgNanozRunPanel(ttk.Frame):
         sb = ttk.Scrollbar(lf, orient="vertical", command=self._tree.yview)
         sb.grid(row=0, column=1, sticky="ns")
         self._tree.configure(yscrollcommand=sb.set)
+
+    def refresh_wafer_map(self):
+        """Repopulate the pick map from the Recipe tab's current wafer
+        plan - a plain copy (load_die_list), never a shared reference."""
+        plan = self._recipe.get_wafer_plan()
+        if plan is None:
+            self.wafer_map.load_die_list([], label="dies")
+            return
+        dies = [{"row": row, "col": col, "x_um": float(col), "y_um": -float(row),
+                "die_id": d["serial"]}
+               for (row, col), d in plan.dies.items()]
+        self.wafer_map.load_die_list(dies, label="dies")
 
     def refresh_table(self):
         self._tree.delete(*self._tree.get_children())

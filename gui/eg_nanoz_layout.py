@@ -130,6 +130,7 @@ class EgNanozMainLayout(ttk.Frame):
             run_tab, controller=self.controller,
             recipe_panel=self.recipe_panel, log_fn=self._log_both)
         self.run_panel.grid(row=0, column=0, sticky="nsew")
+        self.recipe_panel.set_run_panel(self.run_panel)
 
         charts_tab = ttk.Frame(nb)
         nb.add(charts_tab, text="Charts")
@@ -169,6 +170,7 @@ class EgNanozMainLayout(ttk.Frame):
             self._ata_lbl.config(text="No ATA folder", foreground="gray")
         self.setup_panel.on_ata_folder_loaded()
         self.recipe_panel.on_ata_folder_loaded()
+        self.run_panel.refresh_wafer_map()
         self.run_panel.refresh_anchor_choices()
         self.run_panel.refresh_table()
         self.ek_panel.refresh_boards()

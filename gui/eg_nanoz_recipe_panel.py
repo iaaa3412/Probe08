@@ -79,6 +79,9 @@ class EgNanozRecipePanel(ttk.Frame):
         self._wafer_plan: "nzb.WaferPlan | None" = None
         self._shots: list = []
         self._current_recipe_name: "str | None" = None
+        # Set by set_run_panel() once gui/eg_nanoz_layout.py has built both
+        # tabs - see that method's docstring.
+        self._run_panel = None
 
         self._pf_metric_var = tk.StringVar(value="Current")
         self._pf_limit_vars = {
@@ -135,6 +138,8 @@ class EgNanozRecipePanel(ttk.Frame):
                  f"(probe height {plan.probe_height})", foreground="black")
         self._log(f"[NANOZ] Wafer data refreshed from Wafer Builder: "
                   f"{len(plan.dies)} die(s), {len(plan.touchdowns)} touchdown(s).")
+        if self._run_panel is not None:
+            self._run_panel.refresh_wafer_map()
 
     def on_ata_folder_loaded(self):
         self._refresh_wafer_plan()
@@ -219,10 +224,19 @@ class EgNanozRecipePanel(ttk.Frame):
     def get_shots(self):
         return self._shots
 
+    def set_run_panel(self, run_panel):
+        """Wired by gui/eg_nanoz_layout.py once both tabs exist - this is
+        the ONLY thing this panel reads off the Run tab (its pickable
+        WaferMapPanel), and only ever through get_picked(), which returns
+        a fresh sorted list - never a reference into that map's own
+        internal state, let alone the real Wafer Builder map underneath
+        it. See _shots_from_map_selection and this module's docstring."""
+        self._run_panel = run_panel
+
     def _build_shot_bar(self):
         bar = ttk.Frame(self)
         bar.grid(row=2, column=0, sticky="ew", padx=6, pady=2)
-        ttk.Button(bar, text="🧮 Compute From Wafer Data", command=self._compute_shots
+        ttk.Button(bar, text="⬅ Take From Map Selection", command=self._shots_from_map_selection
                   ).pack(side="left")
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(bar, text="＋ Add", command=self._add_shot).pack(side="left")
@@ -283,18 +297,37 @@ class EgNanozRecipePanel(ttk.Frame):
                 self._tree.heading(cid, text=text)
                 self._tree.column(cid, width=width, anchor="w" if cid == "label" else "center")
 
-    def _compute_shots(self):
+    def _shots_from_map_selection(self):
+        """The only way a wafer selection becomes this recipe's touchdown
+        list - mirrors recipe_panel.RecipePanel._sites_from_map ("Take
+        from map selection") on the normal side exactly: read picks off
+        the Run tab's map, snapshot them into plain shot dicts, replace
+        self._shots. Never touches the wafer plan or the real Wafer
+        Builder map - get_picked() already returns a fresh copy (see
+        wafer_map_view.WaferMapPanel.get_picked), and the Run tab's map
+        itself is a separate WaferMapPanel instance populated by copying
+        rows out of the wafer plan (see EgNanozRunPanel.refresh_wafer_map),
+        never a shared reference to gui/recipe_gen_panel.py's live object.
+        """
         if self._wafer_plan is None:
             self._refresh_wafer_plan()
         plan = self._wafer_plan
         if plan is None:
             messagebox.showerror("No Wafer Data", "Refresh from Wafer Builder first.")
             return
+        if self._run_panel is None:
+            messagebox.showerror("No Run Tab", "Run tab not available.")
+            return
+        picks = self._run_panel.wafer_map.get_picked()
+        if not picks:
+            messagebox.showinfo("No Selection", "Click the top die of each touchdown "
+                                                "you want on the Run tab's map first.")
+            return
         ports = self._ports()
         slots_by_port = {sn: self._setup.identities[sn].chip_slots() for sn in ports}
-        self._shots = nzb.build_shots_from_windows(plan, plan.touchdowns, ports, slots_by_port)
+        self._shots = nzb.build_shots_from_windows(plan, picks, ports, slots_by_port)
         self._redraw_shot_tree()
-        self._log(f"[NANOZ] Computed {len(self._shots)} shot(s) from the wafer data.")
+        self._log(f"[NANOZ] Took {len(self._shots)} shot(s) from the map selection.")
 
     def _selected_indices(self):
         return sorted(self._tree.index(iid) for iid in self._tree.selection())
