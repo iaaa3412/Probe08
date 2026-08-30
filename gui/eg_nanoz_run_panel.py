@@ -205,8 +205,16 @@ class EgNanozRunPanel(ttk.Frame):
     # -- controls / table -------------------------------------------------
 
     def _build_controls_row(self):
+        # Mirrors the normal Electroglas Run tab's own control bar shape
+        # (instrument_panel._tab_execution2 / eg_pma_run_panel) - Sync ?P,
+        # Back/Next single-step, Run/Pause/Stop - just walking wafer-plan
+        # touchdowns via goto_die() instead of PMA touchdowns via MD.
         lf = ttk.LabelFrame(self, text="Run", padding=6)
         lf.grid(row=2, column=0, sticky="ew", padx=6, pady=2)
+        ttk.Button(lf, text="↻ Sync ?P", command=self._sync_position).pack(side="left")
+        ttk.Button(lf, text="⏮ Back", command=self._step_back).pack(side="left", padx=(6, 0))
+        ttk.Button(lf, text="⏭ Next", command=self._step_next).pack(side="left", padx=(2, 0))
+        ttk.Separator(lf, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(lf, text="▶ Run All", command=self._start_run).pack(side="left")
         ttk.Button(lf, text="⏸ Pause", command=self._pause).pack(side="left", padx=(6, 0))
         ttk.Button(lf, text="⏹ Stop", command=self._stop).pack(side="left", padx=(6, 0))
@@ -214,6 +222,9 @@ class EgNanozRunPanel(ttk.Frame):
                   ).pack(side="left", padx=(6, 0))
         self._status_var = tk.StringVar(value="idle")
         ttk.Label(lf, textvariable=self._status_var).pack(side="left", padx=(10, 0))
+        self._pos_var = tk.StringVar(value="—")
+        ttk.Label(lf, textvariable=self._pos_var, foreground="#0077cc").pack(
+            side="left", padx=(10, 0))
 
     def _build_table(self):
         lf = ttk.LabelFrame(self, text="Touchdowns (top die of each 1x20 column)", padding=4)
@@ -247,6 +258,34 @@ class EgNanozRunPanel(ttk.Frame):
             self._tree.set(str(idx), "status", text)
         except tk.TclError:
             pass
+
+    # -- single-step / position --------------------------------------------
+
+    def _sync_position(self):
+        drv = self._drv()
+        if not drv:
+            messagebox.showwarning("Sync", "Prober not connected.")
+            return
+
+        def _work():
+            pos = _read_position(drv)
+            self.after(0, lambda: self._pos_var.set(
+                f"?P = X{pos[0]}Y{pos[1]}" if pos else "?P = unreadable"))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _step_back(self):
+        if self._index is None or self._index <= 0:
+            return
+        self._run_indices([self._index - 1])
+
+    def _step_next(self):
+        plan = self._recipe.get_wafer_plan()
+        if plan is None:
+            return
+        nxt = 0 if self._index is None else self._index + 1
+        if nxt >= len(plan.touchdowns):
+            return
+        self._run_indices([nxt])
 
     # -- run loop -----------------------------------------------------------
 

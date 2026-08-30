@@ -159,7 +159,14 @@ class NanoZPanel(ttk.Frame):
 
         self._build_setup_tab(sub_nb)
         self._build_recipe_tab(sub_nb)
-        self._build_wafer_map_tab(sub_nb)
+        # Wafer Map tab removed - its own 4-source picker (Probe Plan/
+        # Accretech/CSV/Wafer Builder) duplicated what the Run tab's own
+        # self.wafer_map (WaferMapPanel) already does by auto-loading from
+        # the ATA folder the same way every other tab's wafer map does -
+        # "Wafer Builder" was already the option that matched that. The
+        # underlying _nzmap_*/_draw_*_nzmap/_on_nzmap_* methods below are
+        # left in place (unused, self-contained - nothing else calls them)
+        # rather than bulk-deleted in the same pass as this UI change.
         self._build_run_tab(sub_nb)
         self._build_charts_tab(sub_nb)
         self._build_results_tab(sub_nb)

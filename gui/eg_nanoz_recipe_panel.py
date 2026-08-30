@@ -1,25 +1,17 @@
-"""NanoZ board management + per-touchdown measurement for the Electroglas
-NanoZ main section (see gui/nanoz_mode.py, gui/eg_nanoz_layout.py).
+"""Wafer plan import + Global Pass/Fail Limits + per-touchdown measurement,
+for the Electroglas NanoZ Recipe tab - mirrors gui/nanoz_panel.py's own
+Recipe tab (minus the manual excluded-boards shot editor/named-recipe
+persistence - see run_cycle_and_collect's own docstring for why that's
+computed live instead here).
 
-Scope of this first version - deliberately narrower than the Accretech
-NanoZPanel (gui/nanoz_panel.py), which also has charts, cassette
-automation, named-recipe persistence with a manual excluded-boards editor,
-and NanoZ_EK/EEPROM tooling. None of that is reproduced here yet; this
-covers the load-bearing path only: connect boards, import a wafer plan,
-set Global Pass/Fail Limits, and run one 1x20 touchdown window's cycle on
-demand (called by gui/eg_nanoz_run_panel.py once per touchdown). Shot
-exclusions (which boards/chips have no real die under them for a given
-touchdown) are computed live from the current board slot assignments and
-wafer plan every time a touchdown runs, via instruments/nanoz_board.py's
-touchdown_slot_exclusions() - there is no separate "recipe" of saved
-shots to keep in sync with the boards the way NanoZPanel's Recipe tab has,
-since the wafer plan + live slot assignments are already the complete
-picture for a given touchdown.
+Board I/O itself (discovery/connect/console) lives on
+gui/eg_nanoz_setup_panel.py's EgNanozSetupPanel, passed in here as
+`setup_panel` - this panel only reads its .boards/.identities/.queue,
+it does not own a second copy of any of them.
 """
 
 import os
-import queue
-import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -27,15 +19,12 @@ import instruments.nanoz_board as nzb
 
 
 class EgNanozRecipePanel(ttk.Frame):
-    def __init__(self, parent, controller, get_ata_folder, log_fn):
+    def __init__(self, parent, controller, setup_panel, get_ata_folder, log_fn):
         super().__init__(parent)
         self.controller = controller
+        self._setup = setup_panel
         self._get_ata_folder = get_ata_folder
         self._log = log_fn
-
-        self._identities: dict[str, nzb.BoardIdentity] = {}   # serial_number -> identity
-        self._boards: dict[str, nzb.NanoZBoard] = {}          # serial_number -> live board
-        self._queue: "queue.Queue" = queue.Queue()
 
         self._wafer_plan: "nzb.WaferPlan | None" = None
         self._wafer_plan_path: "str | None" = None
@@ -46,13 +35,14 @@ class EgNanozRecipePanel(ttk.Frame):
             for s in (1, 2, 3, 4)
         }
 
+        # Every die measured this session, most recent last - read by
+        # gui/eg_nanoz_results_panel.py. Not persisted beyond the CSV
+        # export run_cycle_and_collect already writes per die.
+        self.results_history: list[dict] = []
+
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
         self._build_wafer_plan_row()
         self._build_limits_row()
-        self._build_boards_row()
-
-        self.after(200, self._drain_queue_loop)
 
     # -- wafer plan -----------------------------------------------------
 
@@ -120,10 +110,7 @@ class EgNanozRecipePanel(ttk.Frame):
             foreground="black")
 
     def on_ata_folder_loaded(self):
-        """Called when the Electroglas NanoZ layout's ATA folder changes -
-        picks up whatever wafer plan/known boards already live there."""
         self._reload_wafer_plan()
-        self._load_known_boards()
 
     # -- global pass/fail limits -----------------------------------------
 
@@ -162,165 +149,20 @@ class EgNanozRecipePanel(ttk.Frame):
                 continue
         return True
 
-    # -- boards -----------------------------------------------------------
-
-    def _build_boards_row(self):
-        lf = ttk.LabelFrame(self, text="NanoZ Boards", padding=6)
-        lf.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
-        lf.rowconfigure(1, weight=1)
-        lf.columnconfigure(0, weight=1)
-
-        bar = ttk.Frame(lf)
-        bar.grid(row=0, column=0, sticky="w", pady=(0, 4))
-        ttk.Button(bar, text="Discover Boards", command=self._discover_boards).pack(side="left")
-        ttk.Button(bar, text="Connect All", command=self._connect_all).pack(
-            side="left", padx=(6, 0))
-        ttk.Button(bar, text="Disconnect All", command=self._disconnect_all).pack(
-            side="left", padx=(6, 0))
-        ttk.Button(bar, text="Edit Slots...", command=self._edit_selected_slots).pack(
-            side="left", padx=(6, 0))
-
-        cols = ("sn", "port", "fw", "slot0", "slot1", "state")
-        self._tree = ttk.Treeview(lf, columns=cols, show="headings", height=8)
-        for col, head, width in (("sn", "Serial", 140), ("port", "Port", 70),
-                                 ("fw", "Firmware", 90), ("slot0", "Chip0 slot", 80),
-                                 ("slot1", "Chip1 slot", 80), ("state", "State", 90)):
-            self._tree.heading(col, text=head)
-            self._tree.column(col, width=width, anchor="w")
-        self._tree.grid(row=1, column=0, sticky="nsew")
-        sb = ttk.Scrollbar(lf, orient="vertical", command=self._tree.yview)
-        sb.grid(row=1, column=1, sticky="ns")
-        self._tree.configure(yscrollcommand=sb.set)
-
-        self._load_known_boards()
-
-    def _load_known_boards(self):
-        folder = self._get_ata_folder()
-        if not folder:
-            return
-        for ident in nzb.load_known_boards(folder):
-            if ident.serial_number:
-                self._identities.setdefault(ident.serial_number, ident)
-        self._refresh_tree()
-
-    def _save_known_boards(self):
-        folder = self._get_ata_folder()
-        if folder:
-            nzb.save_known_boards(folder, list(self._identities.values()))
-
-    def _refresh_tree(self):
-        self._tree.delete(*self._tree.get_children())
-        for sn, ident in sorted(self._identities.items()):
-            board = self._boards.get(sn)
-            state = board.state if board is not None else "not_connected"
-            self._tree.insert("", "end", iid=sn, values=(
-                sn, ident.port or ident.last_port or "", ident.firmware,
-                ident.slot0 if ident.slot0 is not None else "",
-                ident.slot1 if ident.slot1 is not None else "", state))
-
-    def _discover_boards(self):
-        def _work():
-            found = nzb.discover_boards(log=lambda m: self.after(0, lambda: self._log(f"[NANOZ] {m}")))
-            for ident in found:
-                if ident.serial_number:
-                    self._identities[ident.serial_number] = ident
-            self.after(0, self._refresh_tree)
-            self.after(0, self._save_known_boards)
-        threading.Thread(target=_work, daemon=True).start()
-
-    def _connect_all(self):
-        for sn, ident in list(self._identities.items()):
-            if sn in self._boards:
-                continue
-            port = ident.port or ident.last_port
-            if not port:
-                self._log(f"[NANOZ] {sn}: no known port - run Discover Boards first.")
-                continue
-            ident.port = port
-            board = nzb.NanoZBoard(ident, self._queue, env_interval_s=1.0)
-            try:
-                board.start()
-            except Exception as e:
-                self._log(f"[NANOZ] {sn}: connect failed - {e}")
-                continue
-            self._boards[sn] = board
-        self._refresh_tree()
-
-    def _disconnect_all(self):
-        for sn, board in list(self._boards.items()):
-            try:
-                board.stop()
-            except Exception:
-                pass
-        self._boards.clear()
-        self._refresh_tree()
-
-    def _edit_selected_slots(self):
-        sel = self._tree.selection()
-        if not sel:
-            messagebox.showinfo("Edit Slots", "Select a board row first.")
-            return
-        sn = sel[0]
-        ident = self._identities.get(sn)
-        if ident is None:
-            return
-        dlg = tk.Toplevel(self)
-        dlg.title(f"Slots for {sn}")
-        dlg.transient(self)
-        dlg.grab_set()
-        v0 = tk.StringVar(value=str(ident.slot0) if ident.slot0 is not None else "")
-        v1 = tk.StringVar(value=str(ident.slot1) if ident.slot1 is not None else "")
-        frm = ttk.Frame(dlg, padding=10)
-        frm.pack()
-        ttk.Label(frm, text="Chip 0 (right) physical slot (1-20):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=v0, width=6).grid(row=0, column=1)
-        ttk.Label(frm, text="Chip 1 (left) physical slot (1-20):").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=v1, width=6).grid(row=1, column=1)
-
-        def _save():
-            def _parse(v):
-                v = v.strip()
-                return int(v) if v else None
-            try:
-                ident.slot0, ident.slot1 = _parse(v0.get()), _parse(v1.get())
-            except ValueError:
-                messagebox.showerror("Edit Slots", "Slots must be whole numbers.")
-                return
-            self._save_known_boards()
-            self._refresh_tree()
-            dlg.destroy()
-        ttk.Button(frm, text="Save", command=_save).grid(row=2, column=0, columnspan=2, pady=(8, 0))
-
-    def _drain_queue_loop(self):
-        try:
-            while True:
-                item = self._queue.get_nowait()
-                self._handle_packet(item)
-        except queue.Empty:
-            pass
-        self.after(200, self._drain_queue_loop)
-
-    def _handle_packet(self, item: dict):
-        kind = item.get("kind")
-        if kind == "text":
-            self._log(f"[NANOZ {item.get('board_sn')}] {item.get('text')}")
-        elif kind == "unrecognized":
-            self._log(f"[NANOZ {item.get('board_sn')}] ? {item.get('raw')}")
-        # "spl"/"env" packets are consumed directly by run_cycle_and_collect
-        # via its own short-lived queue drain below, not here - this loop
-        # only surfaces board log/error text between cycles.
-
     # -- per-touchdown measurement ----------------------------------------
-
-    def get_connected_ports_and_slots(self):
-        ports = list(self._boards.keys())
-        slots_by_port = {sn: self._identities[sn].chip_slots() for sn in ports}
-        return ports, slots_by_port
 
     def run_cycle_and_collect(self, die_col: int, start_row: int, timeout_s: float = 15.0):
         """Runs the whole 1x20 touchdown window whose TOP die is
         (start_row, die_col) in the wafer plan's own row/col space - the
         touchdown's reference point, per the wafer plan's own convention.
+
+        Board/chip -> physical slot exclusions are computed fresh from the
+        wafer plan and the Setup tab's CURRENT board slot assignments every
+        time this runs (nzb.touchdown_slot_exclusions), rather than from a
+        separately maintained/saved shot list - the wafer plan plus live
+        slot assignments are already the complete picture for any given
+        touchdown, so there is nothing a saved shot could add except a
+        second copy to keep in sync.
 
         Returns (ok: bool, slot_verdicts: dict[int, bool], log_lines: list[str]).
         A slot with no product die under it (off-wafer/reference) is left
@@ -330,12 +172,13 @@ class EgNanozRecipePanel(ttk.Frame):
         plan = self._wafer_plan
         if plan is None:
             return False, {}, ["[NANOZ] No wafer plan loaded - cannot run a cycle."]
+        boards, identities, q = self._setup.boards, self._setup.identities, self._setup.queue
         end_row = start_row + plan.probe_height - 1
         exclusions = nzb.touchdown_slot_exclusions(die_col, start_row, end_row, plan)
 
         slot_to_board_chip = {}
-        for sn, ident in self._identities.items():
-            if sn not in self._boards:
+        for sn, ident in identities.items():
+            if sn not in boards:
                 continue
             for chip, slot in ident.chip_slots().items():
                 if slot is not None:
@@ -362,28 +205,27 @@ class EgNanozRecipePanel(ttk.Frame):
         for sn in active_boards:
             top = plan.dies.get((start_row, die_col))
             die_map_per_board[sn][None] = (start_row, die_col, top["serial"] if top else "")
-            self._boards[sn].set_active_die(die_map_per_board[sn])
+            boards[sn].set_active_die(die_map_per_board[sn])
 
         # Drain anything stale before triggering, so this cycle's results
         # can't be misread as leftovers from a previous one.
         try:
             while True:
-                self._queue.get_nowait()
-        except queue.Empty:
+                q.get_nowait()
+        except Exception:
             pass
 
         for sn in active_boards:
-            self._boards[sn].run_cycle(0)
+            boards[sn].run_cycle(0)
 
         wanted = {(sn, chip) for slot, (sn, chip) in slot_to_board_chip.items()
                  if sn in active_boards and exclusions.get(slot) is None}
         got: dict = {}
-        import time as _time
-        deadline = _time.time() + timeout_s
-        while got.keys() < wanted and _time.time() < deadline:
+        deadline = time.time() + timeout_s
+        while got.keys() < wanted and time.time() < deadline:
             try:
-                item = self._queue.get(timeout=0.2)
-            except queue.Empty:
+                item = q.get(timeout=0.2)
+            except Exception:
                 continue
             if item.get("kind") == "spl":
                 key = (item.get("board_sn"), str(item.get("header_chip")))
@@ -416,12 +258,14 @@ class EgNanozRecipePanel(ttk.Frame):
             slot_verdicts[slot] = passed
             logs.append(f"[NANOZ] slot {slot} (die {die_id or '?'}, {sn} chip{chip}): "
                        f"{'PASS' if passed else 'FAIL'}")
-            csv_rows.append({
+            row_data = {
                 "die_id": die_id, "row": row, "col": die_col, "slot": slot,
                 "board_sn": sn, "chip": chip, "pass": passed,
                 **{k: v for k, v in pkt.items()
                    if k.startswith(("adc_", "dac_", "heater"))},
-            })
+            }
+            csv_rows.append(row_data)
+            self.results_history.append(row_data)
 
         folder = self._get_ata_folder()
         if folder and csv_rows:
