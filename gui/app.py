@@ -191,12 +191,27 @@ class AtomicaDashboard(tk.Tk):
             init_hardware_fn=self.init_hardware, system="accretech")
         self._by_system["accretech"]["ui"] = self.instrument_panel
         self._main_pane.add(self.instrument_panel, weight=1)
+        # Whichever top-level widget is actually attached to _main_pane
+        # right now - self.ui always points at the active SYSTEM's
+        # MainLayout regardless of display (NanoZ mode still needs it as a
+        # data holder, see nanoz_mode.py), so this tracks the DISPLAYED
+        # widget separately. cmd_set_active_system/cmd_set_gui_mode both
+        # forget/add against this, not self.ui, so a mode swap and a
+        # system swap never fight over which widget is actually attached.
+        self._displayed_widget = self.instrument_panel
 
         self.instrument_panel_eg = MainLayout(
             parent=self._main_pane, controller=self,
             instrument_names=ELECTROGLAS_INSTRUMENT_NAMES,
             init_hardware_fn=self.init_hardware_eg, system="electroglas")
         self._by_system["electroglas"]["ui"] = self.instrument_panel_eg
+
+        # "normal" (the regular tabbed workspace) or "nanoz" (see
+        # gui/nanoz_mode.py) - built lazily by cmd_set_gui_mode the first
+        # time it's actually needed, not here, since most stations never
+        # use it.
+        self.gui_mode = "normal"
+        self._nanoz_mode_ui = None
 
         self._build_bottom_routing()
         if getattr(self, "_pending_setup_log", None):
@@ -207,6 +222,7 @@ class AtomicaDashboard(tk.Tk):
         # loaded; before init_hardware, so the first connect sweep runs
         # against the bench that was actually chosen.
         self._apply_default_prober()
+        self._apply_default_gui_mode()
         # Only the active system (Accretech unless a default prober says
         # otherwise, applied just above) sweeps at startup - pinging the
         # other rig's instruments when nobody selected it just produces
@@ -430,15 +446,23 @@ class AtomicaDashboard(tk.Tk):
     def cmd_set_active_system(self, system):
         if system == self.active_system or system not in self._by_system:
             return
-        old_ui = self.ui
-        carry_over_folder = old_ui._ata_folder
+        carry_over_folder = self.ui._ata_folder
+        old_widget = self._displayed_widget
         self.active_system = system
         self.title("Electrical Prober")
-        self._main_pane.forget(old_ui)
-        if self._main_pane.panes():
-            self._main_pane.insert(0, self.ui, weight=1)
+        if self.gui_mode == "nanoz" and self._nanoz_mode_ui is not None:
+            # Same widget object stays attached to _main_pane - NanoZ mode
+            # is one container that shows whichever system is active
+            # internally (see nanoz_mode.NanozModeLayout.refresh_for_system),
+            # so there is nothing to forget/re-add here.
+            self._nanoz_mode_ui.refresh_for_system()
         else:
-            self._main_pane.add(self.ui, weight=1)
+            self._main_pane.forget(old_widget)
+            if self._main_pane.panes():
+                self._main_pane.insert(0, self.ui, weight=1)
+            else:
+                self._main_pane.add(self.ui, weight=1)
+            self._displayed_widget = self.ui
         self._style_system_toggle()
         default_folder = app_settings.get_default_ata_folder()
         if default_folder and os.path.isdir(default_folder):
@@ -488,6 +512,80 @@ class AtomicaDashboard(tk.Tk):
 
             self.after(100, _run_and_dismiss)
 
+    def cmd_set_gui_mode(self, mode: str):
+        """Swap the WHOLE window's main section between "normal" (the
+        regular MainLayout tab set) and "nanoz" (gui/nanoz_mode.py's
+        NanozModeLayout) - same forget/add-on-_main_pane technique
+        cmd_set_active_system already uses to swap MainLayout instances,
+        just one level up: here the two things being swapped are entire
+        modes rather than the two systems within one mode.
+        """
+        if mode not in ("normal", "nanoz") or mode == self.gui_mode:
+            return
+        old_widget = self._displayed_widget
+        self.gui_mode = mode
+        if mode == "nanoz":
+            if self._nanoz_mode_ui is None:
+                from nanoz_mode import NanozModeLayout
+                self._nanoz_mode_ui = NanozModeLayout(self._main_pane, controller=self)
+            else:
+                self._nanoz_mode_ui.refresh_for_system()
+            new_widget = self._nanoz_mode_ui
+            # Same "about to look at NanoZ" moment the removed NanoZ tab's
+            # click handler used to catch - load NAUTATA if it isn't
+            # already the active ATA folder. Accretech-only for now since
+            # that MainLayout method is what NanoZ's folder convention was
+            # built against; harmless no-op call site otherwise.
+            try:
+                self._by_system["accretech"]["ui"].load_nautata_folder()
+            except Exception:
+                pass
+        else:
+            new_widget = self.ui
+
+        self._main_pane.forget(old_widget)
+        if self._main_pane.panes():
+            self._main_pane.insert(0, new_widget, weight=1)
+        else:
+            self._main_pane.add(new_widget, weight=1)
+        self._displayed_widget = new_widget
+        self.log(f"[SYSTEM] GUI mode switched to {mode}.")
+        for ui in (self._by_system["accretech"]["ui"], self._by_system["electroglas"]["ui"]):
+            try:
+                ui._refresh_nanoz_switch_state()
+            except Exception:
+                pass
+
+    def cmd_set_default_gui_mode(self, mode: str):
+        if mode not in ("normal", "nanoz"):
+            return
+        app_settings.set_default_gui_mode(mode)
+        self.log(f"[SYSTEM] Default GUI mode set to {mode} for this machine.")
+        for ui in (self._by_system["accretech"]["ui"], self._by_system["electroglas"]["ui"]):
+            try:
+                ui._refresh_nanoz_switch_state()
+            except Exception:
+                pass
+
+    def _apply_default_gui_mode(self):
+        """Startup only, mirrors _apply_default_prober. Silent when nothing
+        is set - "normal" stays the fallback."""
+        mode = app_settings.get_default_gui_mode()
+        if mode and mode != self.gui_mode:
+            self.cmd_set_gui_mode(mode)
+
+    def notify_nanoz_ata_folder_loaded(self, folder_path: str):
+        """Called by MainLayout.load_ata_folder (whichever system's) after
+        a folder finishes loading, so NanoZPanel - no longer nested inside
+        MainLayout, see gui/nanoz_mode.py - still hears about it. A no-op
+        until NanoZ mode has actually been entered at least once (nothing
+        to forward to before then)."""
+        if self._nanoz_mode_ui is not None:
+            try:
+                self._nanoz_mode_ui.on_ata_folder_loaded(folder_path)
+            except Exception:
+                pass
+
     def _system_ready_loop(self):
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
@@ -522,7 +620,12 @@ class AtomicaDashboard(tk.Tk):
         accr = getattr(ui, "accr_wafer", None)
         if accr is not None and getattr(accr, "_running", False):
             return True
-        nanoz = getattr(ui, "nanoz_panel", None)
+        # NanoZ is no longer a MainLayout tab (see gui/nanoz_mode.py) - its
+        # panel, when one exists, hangs off the NanoZ-mode container
+        # instead, and a run there can still be in progress even if the
+        # operator has switched back to normal mode mid-run.
+        nanoz_mode_ui = getattr(self, "_nanoz_mode_ui", None)
+        nanoz = getattr(nanoz_mode_ui, "nanoz_panel", None) if nanoz_mode_ui is not None else None
         if nanoz is not None and getattr(nanoz, "_running", False):
             return True
         return False

@@ -131,6 +131,23 @@ def clear_default_prober() -> None:
     save_settings(data)
 
 
+# Which top-level GUI mode this machine should come up in - "normal" (the
+# regular Accretech/Electroglas tabbed workspace) or "nanoz" (the alternate
+# whole-window NanoZ workspace, see gui/nanoz_mode.py). Per-computer (see
+# _this_machine) for the same reason as default_prober: whether a station
+# is actually wired up for NanoZ hardware is a physical fact about that PC,
+# not something every computer sharing the network GUI System folder should
+# inherit from whichever one last changed it.
+def get_default_gui_mode() -> str:
+    return _this_machine(load_settings()).get("default_gui_mode") or "normal"
+
+
+def set_default_gui_mode(mode: str) -> None:
+    data = load_settings()
+    _this_machine(data)["default_gui_mode"] = mode
+    save_settings(data)
+
+
 # Per-channel assignments for the Electroglas relay cards. The GUI only knows
 # what the CURRENT project wired (hp_switchbox.BENCH_WIRING covers probe02's
 # CH00-03 and probe03's eight); every other channel on all three cards is

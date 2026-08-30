@@ -29,7 +29,6 @@ from accr_wafer_panel import AccrWaferPanel
 from cassette_panel import CassettePanel
 from recipe_panel import RecipePanel, load_default_recipe, compute_target_derived
 from pma_wafer_panel import PmaWaferPanel, centroid_offset
-from nanoz_panel import NanoZPanel
 from pma_process_panel import PmaProcessPanel
 from recipe_gen_panel import RecipeGenPanel, shot_die_rc, present_slots
 import export_formats as xfmt
@@ -462,29 +461,19 @@ class MainLayout(ttk.Frame):
         self._tab_switch_settings(debug_nb)
         self._tab_prober_debug(debug_nb)
         self._tab_gpib_trace(debug_nb)
+        self._tab_nanoz_switch(debug_nb)
 
         self._build_exec_panel()
         self._build_alignment_panel()
 
-        if self._system == "accretech":
-            nanoz_frame = ttk.Frame(top_nb)
-            top_nb.add(nanoz_frame, text="  NanoZ  ")
-            self.nanoz_panel = NanoZPanel(nanoz_frame, controller=self.controller, main_layout=self)
-            self.nanoz_panel.pack(fill="both", expand=True)
-            self._nanoz_tab_frame = nanoz_frame
-            top_nb.bind("<<NotebookTabChanged>>", self._on_top_tab_changed, add="+")
-
-    def _on_top_tab_changed(self, event):
-        nb = event.widget
-        try:
-            selected = nb.select()
-        except Exception:
-            return
-        if selected != str(getattr(self, "_nanoz_tab_frame", None)):
-            return
-        # Clicking the NanoZ tab loads NAUTATA into the shared ATA folder,
-        # exactly as if it had been picked from the toolbar's ATA Folder
-        # dropdown — NanoZ doesn't track its own independent folder.
+    def load_nautata_folder(self):
+        """Loads NAUTATA into the shared ATA folder, exactly as if it had
+        been picked from the toolbar's ATA Folder dropdown - NanoZ doesn't
+        track its own independent folder. Used to run automatically when
+        the (removed) NanoZ tab was clicked; now called by
+        AtomicaDashboard.cmd_set_gui_mode when switching INTO NanoZ mode,
+        since that is the equivalent "about to look at NanoZ" moment now
+        that NanoZ is a whole separate window mode rather than a tab."""
         if self._ata_folder and os.path.basename(self._ata_folder).lower() == "nautata":
             return
         working_dir = self.working_dir_var.get()
@@ -495,7 +484,7 @@ class MainLayout(ttk.Frame):
                      and os.path.isdir(os.path.join(working_dir, n))), None)
         if not match:
             self.controller.log(
-                f"[SYSTEM] NanoZ tab: no NAUTATA folder found under '{working_dir}'.")
+                f"[SYSTEM] NanoZ mode: no NAUTATA folder found under '{working_dir}'.")
             return
         self.controller._do_load_ata_folder(os.path.join(working_dir, match))
 
@@ -2025,11 +2014,6 @@ class MainLayout(ttk.Frame):
         self._exec2_clear_overlay()
         self._exec2_wafer_map.clear_picks()
         self._exec2_on_sites_changed([])
-        nanoz_panel = getattr(self, "nanoz_panel", None)
-        if nanoz_panel is not None and hasattr(nanoz_panel, "_clear_overlay"):
-            nanoz_panel._clear_overlay()
-            nanoz_panel.wafer_map.clear_picks()
-            nanoz_panel._on_sites_changed([])
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._exec2_reapply_overlay()
         self._refresh_export_formats()
@@ -2057,12 +2041,11 @@ class MainLayout(ttk.Frame):
         # the index was already built, which made this look intermittent.
         self._exec2_autoload_default_recipe(folder_path)
 
-        nanoz = getattr(self, "nanoz_panel", None)
-        if nanoz is not None:
-            try:
-                nanoz.on_ata_folder_loaded(folder_path)
-            except Exception:
-                pass
+        # NanoZ is no longer a tab nested in this MainLayout (see
+        # gui/nanoz_mode.py) - forward the load to whichever NanoZPanel
+        # exists via the controller instead of reaching for a local
+        # self.nanoz_panel attribute that no longer exists.
+        self.controller.notify_nanoz_ata_folder_loaded(folder_path)
 
         self._update_default_ata_label()
         return n_dies
@@ -2590,6 +2573,67 @@ class MainLayout(ttk.Frame):
         tab.columnconfigure(0, weight=1)
         self.gpib_trace_panel = GpibTracePanel(tab, controller=self.controller)
         self.gpib_trace_panel.grid(row=0, column=0, sticky="nsew")
+
+    def _tab_nanoz_switch(self, nb):
+        """Debug sub-tab that switches the WHOLE window into NanoZ mode
+        (gui/nanoz_mode.py) rather than opening NanoZ as a tab here - see
+        that module's docstring for why NanoZ moved out of MainLayout.
+        Present on both systems (not just Accretech) since Electroglas
+        needs the same switch once its own NanoZ main section exists, even
+        though today it only shows a placeholder once switched to."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Nanoz Switch")
+        tab.columnconfigure(0, weight=1)
+
+        lf = ttk.LabelFrame(tab, text="GUI Mode", padding=10)
+        lf.grid(row=0, column=0, sticky="new", padx=8, pady=8)
+        lf.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            lf, wraplength=460, justify="left",
+            text=("NanoZ mode replaces this entire window's main section "
+                  "with the NanoZ (Nautilus 1x20-shot) workspace, on "
+                  "whichever system is active. Debug tabs are unaffected - "
+                  "switching back is available from NanoZ mode's own "
+                  "header, or by returning here.")
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self._nanoz_switch_state_var = tk.StringVar()
+        ttk.Label(lf, textvariable=self._nanoz_switch_state_var,
+                  font=("Consolas", 9), foreground="#1d4ed8"
+                  ).grid(row=1, column=0, sticky="w", pady=(0, 8))
+
+        btns = ttk.Frame(lf)
+        btns.grid(row=2, column=0, sticky="w")
+        ttk.Button(btns, text="Switch to NanoZ",
+                  command=lambda: self.controller.cmd_set_gui_mode("nanoz")
+                  ).pack(side="left")
+        ttk.Button(btns, text="Switch to Normal",
+                  command=lambda: self.controller.cmd_set_gui_mode("normal")
+                  ).pack(side="left", padx=(6, 0))
+
+        default_row = ttk.Frame(lf)
+        default_row.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(default_row, text="Startup default:").pack(side="left")
+        ttk.Button(default_row, text="⭐ Set NanoZ as Default",
+                  command=lambda: self.controller.cmd_set_default_gui_mode("nanoz")
+                  ).pack(side="left", padx=(6, 0))
+        ttk.Button(default_row, text="⭐ Set Normal as Default",
+                  command=lambda: self.controller.cmd_set_default_gui_mode("normal")
+                  ).pack(side="left", padx=(6, 0))
+
+        self._refresh_nanoz_switch_state()
+
+    def _refresh_nanoz_switch_state(self):
+        var = getattr(self, "_nanoz_switch_state_var", None)
+        if var is None:
+            return
+        current = getattr(self.controller, "gui_mode", "normal")
+        try:
+            default = app_settings.get_default_gui_mode()
+        except Exception:
+            default = "normal"
+        var.set(f"Current: {current}   |   Default at startup: {default}")
 
     def _tab_cassette(self, nb):
         tab = ttk.Frame(nb)
