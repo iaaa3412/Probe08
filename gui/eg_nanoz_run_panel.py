@@ -1,22 +1,23 @@
-"""Electroglas NanoZ Run tab - walks a wafer plan's 1x20 touchdown windows
-(instruments/nanoz_board.WaferPlan.touchdowns) using the Electroglas
-prober's own relative die-stepping (goto_die), then triggers a NanoZ
-board cycle at each stop via EgNanozRecipePanel.run_cycle_and_collect.
+"""Electroglas NanoZ Run tab - walks the Recipe tab's computed shot list
+(gui/eg_nanoz_recipe_panel.py's self._shots, one 1x20 touchdown window per
+shot) using the Electroglas prober's own relative die-stepping (goto_die),
+then triggers a NanoZ board cycle at each stop via
+EgNanozRecipePanel.run_cycle_and_collect.
 
 Datum handling mirrors gui/eg_pma_run_panel.py's "Set Initial" anchor: the
 prober's own die-grid zero moves every time the operator re-aligns (see
 instruments/electroglas_2001x.py's module docstring), so this never trusts
 it as fixed. Instead the operator points at a die whose (row, col) is
-known from the wafer plan, the chuck is physically sitting on it, and
-"Chuck Is Set" reads the REAL ?P and stores the offset between that and
-the wafer plan's own coordinate for that die - every later move is
-computed from the wafer plan's grid plus that one offset.
+known from the wafer data (the same Wafer Builder map the normal
+Electroglas side uses - see eg_nanoz_recipe_panel.py), the chuck is
+physically sitting on it, and "Chuck Is Set" reads the REAL ?P and stores
+the offset between that and the wafer grid's own coordinate for that die -
+every later move is computed from that grid plus this one offset.
 
-Touchdown reference point: each entry in wafer_plan.touchdowns is
-(start_row, die_col) - the TOP die of that 1x20 column, per the physical
-probe card's own convention (confirmed by the person who built this
-feature - the touchdown's reference is always the top slot, not the
-centre or bottom).
+Touchdown reference point: each shot's (td_start_row, die_column) is the
+TOP die of that 1x20 column, per the physical probe card's own convention
+(confirmed by the person who built this feature - the touchdown's
+reference is always the top slot, not the centre or bottom).
 
 AXIS MAPPING IS NOT HARDWARE-VERIFIED. This treats the wafer plan's
 column as the prober's X and row as the prober's Y (goto_die(x=col,
@@ -191,15 +192,15 @@ class EgNanozRunPanel(ttk.Frame):
                  f"origin offset {self._origin_offset}.")
 
     def _nearest_touchdown_index(self, row, col):
-        plan = self._recipe.get_wafer_plan()
-        if not plan or not plan.touchdowns:
+        shots = self._recipe.get_shots()
+        if not shots:
             return None
         # Not necessarily an exact touchdown top - just seeds self._index so
         # Next/Back have somewhere sane to start from; Run All always
-        # targets an absolute wafer-plan coordinate, never a delta from
+        # targets an absolute wafer-grid coordinate, never a delta from
         # this guess, so a loose starting guess costs nothing.
-        best = min(range(len(plan.touchdowns)),
-                  key=lambda i: abs(plan.touchdowns[i][0] - row) + abs(plan.touchdowns[i][1] - col))
+        best = min(range(len(shots)),
+                  key=lambda i: abs(shots[i]["td_start_row"] - row) + abs(shots[i]["die_column"] - col))
         return best
 
     # -- controls / table -------------------------------------------------
@@ -227,13 +228,14 @@ class EgNanozRunPanel(ttk.Frame):
             side="left", padx=(10, 0))
 
     def _build_table(self):
-        lf = ttk.LabelFrame(self, text="Touchdowns (top die of each 1x20 column)", padding=4)
+        lf = ttk.LabelFrame(self, text="Shots (Recipe tab) — top die of each 1x20 column", padding=4)
         lf.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
         lf.rowconfigure(0, weight=1)
         lf.columnconfigure(0, weight=1)
-        cols = ("idx", "top_die", "row", "col", "status")
+        cols = ("idx", "label", "top_die", "row", "col", "status")
         self._tree = ttk.Treeview(lf, columns=cols, show="headings", height=12)
-        for col, head, width in (("idx", "#", 40), ("top_die", "Top die", 120),
+        for col, head, width in (("idx", "#", 40), ("label", "Label", 140),
+                                 ("top_die", "Top die", 120),
                                  ("row", "row", 60), ("col", "col", 60),
                                  ("status", "Status", 200)):
             self._tree.heading(col, text=head)
@@ -246,12 +248,15 @@ class EgNanozRunPanel(ttk.Frame):
     def refresh_table(self):
         self._tree.delete(*self._tree.get_children())
         plan = self._recipe.get_wafer_plan()
-        if plan is None:
+        shots = self._recipe.get_shots()
+        if plan is None or not shots:
             return
-        for i, (row, col) in enumerate(plan.touchdowns):
+        for i, shot in enumerate(shots):
+            row, col = shot["td_start_row"], shot["die_column"]
             d = plan.dies.get((row, col))
             self._tree.insert("", "end", iid=str(i), values=(
-                i, d["serial"] if d else "?", row, col, "pending"))
+                i, shot.get("label") or f"Shot {i+1}", d["serial"] if d else "?",
+                row, col, "pending"))
 
     def _set_row_status(self, idx, text):
         try:
@@ -279,11 +284,11 @@ class EgNanozRunPanel(ttk.Frame):
         self._run_indices([self._index - 1])
 
     def _step_next(self):
-        plan = self._recipe.get_wafer_plan()
-        if plan is None:
+        shots = self._recipe.get_shots()
+        if not shots:
             return
         nxt = 0 if self._index is None else self._index + 1
-        if nxt >= len(plan.touchdowns):
+        if nxt >= len(shots):
             return
         self._run_indices([nxt])
 
@@ -296,14 +301,14 @@ class EgNanozRunPanel(ttk.Frame):
         self._run_indices([int(sel[0])])
 
     def _start_run(self):
-        plan = self._recipe.get_wafer_plan()
-        if plan is None:
-            messagebox.showwarning("Run", "Load a wafer plan first.")
+        shots = self._recipe.get_shots()
+        if not shots:
+            messagebox.showwarning("Run", "Compute shots on the Recipe tab first.")
             return
         if self._origin_offset is None:
             messagebox.showwarning("Run", "Set the anchor (Chuck Is Set) first.")
             return
-        self._run_indices(list(range(len(plan.touchdowns))))
+        self._run_indices(list(range(len(shots))))
 
     def _run_indices(self, indices):
         if self._running:
@@ -322,13 +327,14 @@ class EgNanozRunPanel(ttk.Frame):
         self._thread.start()
 
     def _run_thread(self, drv, indices):
-        plan = self._recipe.get_wafer_plan()
+        shots = self._recipe.get_shots()
         for idx in indices:
             while self._paused and not self._abort:
                 time.sleep(0.2)
             if self._abort:
                 break
-            row, col = plan.touchdowns[idx]
+            shot = shots[idx]
+            row, col = shot["td_start_row"], shot["die_column"]
             ox, oy = self._origin_offset
             target_x, target_y = col + ox, row + oy
             self.after(0, lambda i=idx: self._set_row_status(i, "moving..."))
@@ -340,7 +346,7 @@ class EgNanozRunPanel(ttk.Frame):
                 break
             self.after(0, lambda i=idx: self._set_row_status(i, "measuring..."))
             try:
-                ok, verdicts, logs = self._recipe.run_cycle_and_collect(col, row)
+                ok, verdicts, logs = self._recipe.run_cycle_and_collect(idx)
             except Exception as e:
                 msg = f"MEASURE FAILED: {type(e).__name__}: {e}"
                 self.after(0, lambda i=idx, m=msg: (self._set_row_status(i, m), self._log(f"[NANOZ] {m}")))
