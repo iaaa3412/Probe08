@@ -13,23 +13,27 @@ So this module is a second top-level widget AtomicaDashboard can swap into
 its _main_pane (see app.py's cmd_set_gui_mode), the same way it already
 swaps one MainLayout for another when the operator toggles Accretech <->
 Electroglas (cmd_set_active_system). NanozModeLayout itself is system-aware
-internally: it shows Accretech's NanoZPanel or an Electroglas placeholder
-(no EG NanoZ workflow exists yet) depending on controller.active_system,
-and swaps between them in place when the system toggle is used while in
-NanoZ mode, without the outer widget object itself changing.
+internally: it shows Accretech's NanoZPanel or Electroglas's
+EgNanozMainLayout (gui/eg_nanoz_layout.py - a wafer-plan/1x20-touchdown
+workflow using Electroglas's own relative die-stepping motion, NOT a port
+of NanoZPanel's Accretech-STB-based motion code) depending on
+controller.active_system, and swaps between them in place when the system
+toggle is used while in NanoZ mode, without the outer widget object itself
+changing.
 
-NanoZPanel is built against the ALREADY-EXISTING MainLayout instance for
-whichever system it is showing (controller._by_system[system]["ui"]) -
+Both panels are built against the ALREADY-EXISTING MainLayout instance(s)
+for whichever system they show (controller._by_system[system]["ui"]) -
 those instances are always constructed at startup regardless of which mode
-is displayed (see app.py __init__), so NanoZPanel keeps reading/writing the
-same ATA folder state, drivers, etc. it always has; only the container it
-is packed into is new.
+is displayed (see app.py __init__), so they keep reading/writing the same
+ATA folder state, drivers, etc. those MainLayouts always have; only the
+container packed around them is new.
 """
 
 import tkinter as tk
 from tkinter import ttk
 
 from nanoz_panel import NanoZPanel
+from eg_nanoz_layout import EgNanozMainLayout
 
 
 class NanozModeLayout(ttk.Frame):
@@ -91,20 +95,9 @@ class NanozModeLayout(ttk.Frame):
             panel.grid(row=0, column=0, sticky="nsew")
             holder.nanoz_panel = panel
         else:
-            holder.nanoz_panel = None
-            msg = ttk.Frame(holder)
-            msg.grid(row=0, column=0)
-            ttk.Label(
-                msg, text="NanoZ for Electroglas isn't built yet.",
-                font=("Segoe UI", 12, "bold"), foreground="#374558"
-            ).pack(pady=(40, 6))
-            ttk.Label(
-                msg, justify="center", foreground="#6b7280", wraplength=420,
-                text=("This is the placeholder main section for the "
-                      "Electroglas side of NanoZ mode - once an Electroglas "
-                      "Nautilus workflow exists, it replaces this label the "
-                      "same way NanoZPanel does for Accretech.")
-            ).pack()
+            panel = EgNanozMainLayout(holder, controller=self.controller)
+            panel.grid(row=0, column=0, sticky="nsew")
+            holder.nanoz_panel = panel
         return holder
 
     @property
@@ -118,20 +111,26 @@ class NanozModeLayout(ttk.Frame):
 
     def on_ata_folder_loaded(self, folder_path):
         """Forwarded from MainLayout.load_ata_folder (via app.py) so a
-        folder reload still reaches whichever NanoZPanel exists, even
-        though it is no longer a child of the MainLayout that loaded it.
+        folder reload still reaches whichever NanoZPanel/EgNanozMainLayout
+        exists, even though neither is a child of the MainLayout that
+        loaded it. Forwarded to EVERY built holder, not just whichever
+        system is currently displayed - EgNanozMainLayout in particular
+        reads the Electroglas MainLayout's ATA folder regardless of
+        whether NanoZ mode happens to be showing Accretech or Electroglas
+        right now, so it needs to hear about a change either way.
 
         Mirrors what MainLayout used to do directly when NanoZPanel was one
         of its own tabs: clear whatever overlay/picks belonged to the
         previous folder before loading the new one's own saved map."""
-        panel = self.nanoz_panel
-        if panel is None:
-            return
-        try:
-            if hasattr(panel, "_clear_overlay"):
-                panel._clear_overlay()
-                panel.wafer_map.clear_picks()
-                panel._on_sites_changed([])
-            panel.on_ata_folder_loaded(folder_path)
-        except Exception:
-            pass
+        for holder in self._holders.values():
+            panel = getattr(holder, "nanoz_panel", None)
+            if panel is None:
+                continue
+            try:
+                if hasattr(panel, "_clear_overlay"):
+                    panel._clear_overlay()
+                    panel.wafer_map.clear_picks()
+                    panel._on_sites_changed([])
+                panel.on_ata_folder_loaded(folder_path)
+            except Exception:
+                pass
