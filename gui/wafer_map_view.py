@@ -227,6 +227,41 @@ class WaferMapPanel(ttk.LabelFrame):
         else:
             self.draw_map()
 
+    def _center_view(self):
+        """Recentre the canvas's actual scrolled view on whatever was just
+        drawn. A full redraw (double-click reset, a new folder/die list
+        loaded) draws items centred at (W/2, H/2) in absolute canvas
+        coordinates, which only LOOKS centred on screen if the canvas's
+        current scroll position happens to already be showing that area -
+        after any panning (middle-drag) or scroll-wheel zoom (which
+        re-centres on the cursor, not the wafer, and tightens scrollregion
+        around wherever the view was at the time), it usually is not, so
+        the freshly-drawn wafer ends up off to one side instead of
+        centred. Recomputes scrollregion the same way _zoom()/_bind_zoom_
+        only's _zoom() already do (bbox + 500px padding, floored/ceiled to
+        the +/-20000 default), then explicitly moves the view so that
+        bounding box's centre lines up with the viewport's centre -
+        doesn't rely on whatever Tk's own default/leftover view position
+        happens to be."""
+        bbox = self.canvas.bbox("all")
+        if not bbox:
+            return
+        pad = 500
+        sx1, sy1 = min(bbox[0] - pad, -20000), min(bbox[1] - pad, -20000)
+        sx2, sy2 = max(bbox[2] + pad,  20000), max(bbox[3] + pad,  20000)
+        self.canvas.configure(scrollregion=(sx1, sy1, sx2, sy2))
+        self.update_idletasks()
+        vw = self.canvas.winfo_width() or 1
+        vh = self.canvas.winfo_height() or 1
+        icx, icy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        sw, sh = sx2 - sx1, sy2 - sy1
+        if sw <= 0 or sh <= 0:
+            return
+        fx = (icx - vw / 2 - sx1) / sw
+        fy = (icy - vh / 2 - sy1) / sh
+        self.canvas.xview_moveto(max(0.0, min(1.0, fx)))
+        self.canvas.yview_moveto(max(0.0, min(1.0, fy)))
+
     def _fire_zoom(self):
         if self.on_zoom:
             try:
@@ -322,6 +357,7 @@ class WaferMapPanel(ttk.LabelFrame):
                     self.dies[(row, col)] = rect
         self._recolor_statuses()
         self._recolor_picks()
+        self._center_view()
         self._run_on_redraw()
 
     def clear_status(self):
@@ -593,6 +629,7 @@ class WaferMapPanel(ttk.LabelFrame):
             self._draw_axis_ticks(dies, to_cx, to_cy, W, H, ccx, ccy, cr)
         self._recolor_statuses()
         self._recolor_picks()
+        self._center_view()
         self._run_on_redraw()
 
     def _axis_tick_values(self, dies):
