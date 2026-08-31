@@ -5960,14 +5960,28 @@ class MainLayout(ttk.Frame):
                         # Not gated - same "must stay/become ON regardless"
                         # reasoning as the plain "voltage" apply step above.
                         smu.turn_output_on(smu_ch)
-                        try:
-                            actual_current = smu.measure_current(smu_ch)
-                        except Exception:
-                            actual_current = None
-                        try:
-                            actual_voltage = smu.measure_voltage(smu_ch)
-                        except Exception:
-                            actual_voltage = None
+                        # One combined acquisition instead of two separate
+                        # ones where the driver supports it (confirmed on
+                        # the bench for the Keithley 2400: identical values,
+                        # in the time of ONE call, not two - see
+                        # Keithley2400.measure_current_and_voltage). Falls
+                        # back to the original two-call sequence for any
+                        # driver that doesn't have it yet.
+                        if hasattr(smu, "measure_current_and_voltage"):
+                            try:
+                                actual_current, actual_voltage = \
+                                    smu.measure_current_and_voltage(smu_ch)
+                            except Exception:
+                                actual_current = actual_voltage = None
+                        else:
+                            try:
+                                actual_current = smu.measure_current(smu_ch)
+                            except Exception:
+                                actual_current = None
+                            try:
+                                actual_voltage = smu.measure_voltage(smu_ch)
+                            except Exception:
+                                actual_voltage = None
                     if actual_current is None:
                         actual_current = abs(random.gauss(
                             float(lvl or 0), abs(float(lvl or 0)) * 0.0005 + 1e-12))
@@ -5994,6 +6008,11 @@ class MainLayout(ttk.Frame):
                 elif t == "current":
                     set_voltage = None
                     actual_voltage = None
+                    # Populated by read_one() below when the driver supports
+                    # a combined current+voltage acquisition, so the
+                    # post-average voltage readback a few lines down can
+                    # reuse it instead of taking a second, separate reading.
+                    _combined_reading = {}
                     # Only an "apply" step (a different type/mode entirely)
                     # is meant to leave the instrument supplying power past
                     # its own step - see _exec2_reset_output's mode=="apply"
@@ -6073,7 +6092,13 @@ class MainLayout(ttk.Frame):
                                 # avg_delay (ms).
                                 if avg_delay and hasattr(smu, "set_source_delay"):
                                     smu.set_source_delay(avg_delay / 1000.0)
-                            read_one = lambda: smu.measure_current(smu_ch)
+                            if hasattr(smu, "measure_current_and_voltage"):
+                                def read_one():
+                                    i_val, v_val = smu.measure_current_and_voltage(smu_ch)
+                                    _combined_reading["v"] = v_val
+                                    return i_val
+                            else:
+                                read_one = lambda: smu.measure_current(smu_ch)
                         else:
                             read_one = lambda: abs(random.gauss(4e-7, 2e-7))
                         bias_txt = f"  (bias {lvl} V via SMU)" if lvl else "  (via SMU)"
@@ -6088,10 +6113,19 @@ class MainLayout(ttk.Frame):
                         smu if instrument == "SMU" else dmm, smu_ch,
                         read_one, avg_count, avg_delay, "A"))
                     if instrument == "SMU" and not sim and smu and smu.inst:
-                        try:
-                            actual_voltage = smu.measure_voltage(smu_ch)
-                        except Exception:
-                            actual_voltage = None
+                        if "v" in _combined_reading:
+                            # read_one() above already captured this as part
+                            # of the same acquisition that produced i_raw -
+                            # _exec2_measure_averaged/_exec2_take_average
+                            # always call read_one() at least once, so this
+                            # is populated by the time we get here whenever
+                            # the combined-read path was used.
+                            actual_voltage = _combined_reading["v"]
+                        else:
+                            try:
+                                actual_voltage = smu.measure_voltage(smu_ch)
+                            except Exception:
+                                actual_voltage = None
                     # Diagnostic only - read while the output is still on
                     # (compliance state means nothing once it's off), never
                     # touches pass/fail. A reading whose magnitude looks
