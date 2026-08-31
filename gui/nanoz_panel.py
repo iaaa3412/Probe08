@@ -412,8 +412,20 @@ class NanoZPanel(ttk.Frame):
                                             foreground="#6b7280")
         self._recipe_active_lbl.pack(side="left", padx=(12, 0))
 
+        # Import Wafer Plan used to live on the (now-removed) Wafer Map
+        # tab - moved back here since Compute Recipe needs self._wafer_plan
+        # and this is otherwise the only place left to set it. _import_
+        # wafer_plan itself is unchanged.
+        plan_row = ttk.Frame(tab)
+        plan_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        ttk.Button(plan_row, text="📥 Import Wafer Plan (.xlsx)...",
+                  command=self._import_wafer_plan).pack(side="left")
+        self._recipe_plan_status_lbl = ttk.Label(plan_row, text="No wafer plan imported yet.",
+                                                 foreground="#6b7280")
+        self._recipe_plan_status_lbl.pack(side="left", padx=(10, 0))
+
         bar = ttk.Frame(tab)
-        bar.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        bar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
         self._btn_recipe_add = ttk.Button(bar, text="＋ Add Shot", command=self._add_shot)
         self._btn_recipe_add.pack(side="left", padx=(0, 4))
         self._btn_recipe_dup = ttk.Button(bar, text="⎘ Duplicate", command=self._duplicate_shot)
@@ -438,7 +450,7 @@ class NanoZPanel(ttk.Frame):
         self._recipe_boards_lbl.pack(side="left", padx=(12, 0))
 
         tree_frame = ttk.Frame(tab)
-        tree_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        tree_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
         tree_frame.columnconfigure(0, weight=1)
         # Shrunk from 16 to make room for Pass/Fail Limits below - the tab
         # scrolls now, and the tree has its own scrollbar for longer recipes.
@@ -454,7 +466,7 @@ class NanoZPanel(ttk.Frame):
         self._recipe_tree.bind("<Double-1>", self._on_recipe_double_click)
 
         pf_lf = ttk.LabelFrame(tab, text="Pass/Fail Limits")
-        pf_lf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        pf_lf.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
         pf_row = ttk.Frame(pf_lf)
         pf_row.pack(fill="x", padx=6, pady=6)
         ttk.Label(pf_row, text="Metric:").pack(side="left")
@@ -655,7 +667,10 @@ class NanoZPanel(ttk.Frame):
         def _finish():
             self._wafer_plan = plan
             self._wafer_plan_path = path
-            self._redraw_nanoz_wafer_map()
+            lbl = getattr(self, "_recipe_plan_status_lbl", None)
+            if lbl is not None:
+                lbl.config(text=f"{os.path.basename(path)} — {len(plan.dies)} die(s), "
+                                f"{len(plan.touchdowns)} touchdown(s)", foreground="black")
             self._log_main(f"Wafer map auto-loaded from '{os.path.basename(path)}'.")
         self.after(0, _finish)
 
@@ -799,7 +814,7 @@ class NanoZPanel(ttk.Frame):
                 "No Wafer Plan",
                 "Compute Recipe needs a wafer plan to tell product dies apart from "
                 "reference/alignment dies and off-wafer positions — import one first: "
-                "Wafer Map tab -> Import Wafer Plan (.xlsx).")
+                "Recipe tab -> Import Wafer Plan (.xlsx).")
             return
         # Left to right, then top to bottom across the wafer map - i.e. row
         # order first (top to bottom), columns within a row left to right.
@@ -869,7 +884,18 @@ class NanoZPanel(ttk.Frame):
             self._wafer_plan = plan
             self._wafer_plan_path = dest
             self._nzmap_source_var.set("probe_plan")
-            self._redraw_nanoz_wafer_map()
+            # _redraw_nanoz_wafer_map() (the removed Wafer Map tab's own
+            # matplotlib redraw) is NOT called here anymore - its canvas/
+            # axes are never created now that tab isn't built, so calling
+            # it would raise. The Recipe tab's own status label is the
+            # replacement.
+            status = (f"{os.path.basename(dest)} — {len(plan.dies)} die(s), "
+                      f"{len(plan.touchdowns)} touchdown(s), probe head "
+                      f"{plan.probe_height} — {stats['product']} product, "
+                      f"{stats['reference']} reference, {stats['off_wafer']} off-wafer")
+            lbl = getattr(self, "_recipe_plan_status_lbl", None)
+            if lbl is not None:
+                lbl.config(text=status, foreground="black")
             msg = (f"Wafer plan imported into this ATA folder ({nzb.WAFER_PLAN_XLSX_FILENAME}) "
                   f"— {len(plan.dies)} die(s) on Die Map, "
                   f"{len(plan.touchdowns)} touchdown(s), probe head {plan.probe_height} "
@@ -3619,7 +3645,9 @@ class NanoZPanel(ttk.Frame):
             self._autoload_wafer_plan(plan_path)
         else:
             self._wafer_plan = None
-            self._redraw_nanoz_wafer_map()
+            lbl = getattr(self, "_recipe_plan_status_lbl", None)
+            if lbl is not None:
+                lbl.config(text="No wafer plan imported yet.", foreground="#6b7280")
 
     def _refresh_console_boards(self):
         ports = sorted(self._boards.keys())
