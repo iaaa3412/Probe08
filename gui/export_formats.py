@@ -439,9 +439,21 @@ def resolve_column_value(col: Dict[str, Any], row: Dict[str, Any], context: Dict
             return col["template"]
     raw = resolve_source(col.get("source", ""), row, context)
     mult = col.get("multiply")
-    if mult not in (None, "", 1, 1.0) and raw not in (None, ""):
+    rnd = col.get("round")
+    has_mult = mult not in (None, "", 1, 1.0)
+    has_round = rnd not in (None, "")
+    if (has_mult or has_round) and raw not in (None, ""):
         try:
-            raw = f"{float(raw) * float(mult):.6g}"
+            val = float(raw)
+            if has_mult:
+                val *= float(mult)
+            # Fixed decimal places (".{n}f"), not the usual ".6g" - "round
+            # to N decimals" means a caller wants exactly N digits after
+            # the point on every row (e.g. a readable nA column after a
+            # 1e9 multiply), not however many significant figures .6g
+            # happens to keep. Independent of multiply - a column can ask
+            # for either, both, or neither.
+            raw = f"{val:.{int(rnd)}f}" if has_round else f"{val:.6g}"
         except (TypeError, ValueError):
             return raw
     # Report resistance as a magnitude, matching a reference system's own
@@ -455,7 +467,8 @@ def resolve_column_value(col: Dict[str, Any], row: Dict[str, Any], context: Dict
     # project's numbers.
     if col.get("abs") and raw not in (None, ""):
         try:
-            return f"{abs(float(raw)):.6g}"
+            val = abs(float(raw))
+            return f"{val:.{int(rnd)}f}" if has_round else f"{val:.6g}"
         except (TypeError, ValueError):
             return raw
     return raw

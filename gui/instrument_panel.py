@@ -7387,6 +7387,13 @@ class MainLayout(ttk.Frame):
         ttk.Label(add_row2, text="Or always use constant:").pack(side="left")
         constant_var = tk.StringVar()
         ttk.Entry(add_row2, textvariable=constant_var, width=14).pack(side="left", padx=(2, 8))
+        ttk.Label(add_row2, text="Round to decimals:").pack(side="left", padx=(12, 0))
+        round_var = tk.StringVar()
+        # Independent of Multiply by - combine both (multiply first, then
+        # round the result) or use Round alone on the plain source value.
+        # Not offered alongside a constant/template column: both already
+        # produce an exact, deliberately-chosen string.
+        ttk.Entry(add_row2, textvariable=round_var, width=4).pack(side="left", padx=(2, 8))
         ttk.Button(add_row2, text="+ Add Column", command=lambda: add_col()).pack(
             side="left", padx=(8, 0))
 
@@ -7497,19 +7504,31 @@ class MainLayout(ttk.Frame):
 
         def _parse_transform(txt):
             txt = (txt or "").strip()
+            result = {}
+            # Trailing "~N" (round to N decimals) can ride along with any
+            # of the other forms below, or stand alone on a plain source
+            # column - stripped off first so what's left parses the same
+            # as before.
+            m = re.search(r"~(\d+)\s*$", txt)
+            if m:
+                result["round"] = int(m.group(1))
+                txt = txt[:m.start()].strip()
             if txt.startswith("="):
-                return {"constant": txt[1:].strip()}
+                result["constant"] = txt[1:].strip()
+                return result
             if txt[:1] in ("×", "x", "X"):
                 try:
-                    return {"multiply": float(txt[1:].strip())}
+                    result["multiply"] = float(txt[1:].strip())
                 except ValueError:
-                    return {}
+                    pass
+                return result
             # A template's own braces are the marker - no prefix character
             # needed, since "={...}" would otherwise read as a literal
             # constant string containing braces instead.
             if "{" in txt and "}" in txt:
-                return {"template": txt}
-            return {}
+                result["template"] = txt
+                return result
+            return result
 
         def add_col():
             field = field_var.get().strip()
@@ -7517,17 +7536,26 @@ class MainLayout(ttk.Frame):
             constant = constant_var.get().strip()
             mult = multiply_var.get().strip()
             template = template_var.get().strip()
+            rnd = round_var.get().strip()
             if not field or not (source or constant or template):
                 return
             transform_txt = (template if template else
                             (f"={constant}" if constant else
                              (f"×{mult}" if mult else "")))
+            if rnd:
+                try:
+                    int(rnd)
+                    transform_txt = (transform_txt + f" ~{rnd}").strip()
+                except ValueError:
+                    messagebox.showerror("Invalid", "Round to decimals must be a whole number.")
+                    return
             cols_tree.insert("", "end", values=(
                 field, source, "yes" if quote_var.get() else "no", transform_txt))
             field_var.set("")
             multiply_var.set("")
             constant_var.set("")
             template_var.set("")
+            round_var.set("")
 
         def remove_col():
             sel = cols_tree.selection()
@@ -7558,6 +7586,7 @@ class MainLayout(ttk.Frame):
             multiply_var.set(str(parsed["multiply"]) if "multiply" in parsed else "")
             constant_var.set(parsed.get("constant", ""))
             template_var.set(parsed.get("template", ""))
+            round_var.set(str(parsed["round"]) if "round" in parsed else "")
             cols_tree.delete(iid)
         cols_tree.bind("<Double-Button-1>", _edit_selected)
 
@@ -7570,6 +7599,8 @@ class MainLayout(ttk.Frame):
                     tr = c["template"]
                 elif c.get("multiply") not in (None, "", 1, 1.0):
                     tr = f"×{c['multiply']}"
+                if c.get("round") not in (None, ""):
+                    tr = (tr + f" ~{c['round']}").strip()
                 cols_tree.insert("", "end", values=(
                     c.get("field", ""), c.get("source", ""),
                     "yes" if c.get("quote") else "no", tr))
