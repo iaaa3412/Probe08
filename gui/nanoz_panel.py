@@ -17,6 +17,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from wafer_map_view import WaferMapPanel
 from pma_wafer_panel import pma_shots_to_grid, merge_with_accretech, centroid_offset
 from prober_debug_panel import ProberDebugPanel
+from eg_prober_debug_panel import EgProberDebugPanel
 import instruments.nanoz_board as nzb
 
 try:
@@ -56,10 +57,23 @@ class NanoZPanel(ttk.Frame):
     _CHIP_LABELS = {"0": "1 (right)", "1": "2 (left)"}
     _CHIP_LABEL_TO_VALUE = {v: k for k, v in _CHIP_LABELS.items()}
 
-    def __init__(self, parent, controller, main_layout):
+    def __init__(self, parent, controller, main_layout, system: str = "accretech"):
         super().__init__(parent)
         self.controller = controller
         self._main_layout = main_layout
+        # Which prober this instance is driving - "accretech" (native G/J/
+        # STB wafer-map walk) or "electroglas" (relative die-stepping via
+        # goto_die, software-anchored datum - no onboard wafer map). Board
+        # I/O, the shot list/named recipes, Pass/Fail Limits, Charts,
+        # Results and NanoZ_EK are ALL prober-agnostic (they only touch
+        # self._boards/self._current_rc/self._wafer_plan, never the prober
+        # driver directly) and stay completely unbranched - only the Run
+        # tab's own manual-move handlers and wafer-plan/wafer-map data
+        # source differ, branched inline where they occur rather than
+        # duplicated into a second class, so Electroglas gets the exact
+        # same Recipe/Charts/Results/NanoZ_EK code Accretech does, not a
+        # hand-kept copy that can drift.
+        self._system = system
 
         self._boards: dict[str, nzb.NanoZBoard] = {}
         self._board_rows: dict[str, str] = {}
@@ -70,6 +84,15 @@ class NanoZPanel(ttk.Frame):
         self._run_mode: str | None = None
         self._lot_thread: threading.Thread | None = None
         self._current_rc = (None, None)
+        # Electroglas only - the datum anchor eg_pma_run_panel.py's own
+        # "Set Initial" already uses: (dx, dy) between a real ?P reading
+        # and the wafer grid's own (col, row) for the die the operator
+        # names as where the chuck physically is. Electroglas has no
+        # onboard wafer map (electroglas_2001x.py's own docstring), so
+        # there is nothing equivalent to Accretech's First Die (G) - this
+        # is what establishes "where am I" instead. None until "Chuck Is
+        # Set" is pressed.
+        self._eg_origin_offset: "tuple | None" = None
         # Held for the duration of any XY query (manual Refresh XY or the
         # auto-refresh below) so a cycle trigger that lands while a refresh
         # is still in flight waits for it instead of firing against a
@@ -187,16 +210,17 @@ class NanoZPanel(ttk.Frame):
         self.log_text.grid(row=0, column=0, sticky="nsew", padx=(2, 0), pady=2)
 
     def _build_prober_debug_tab(self, nb):
-        """Same ProberDebugPanel the normal Accretech Debug tab uses
-        (instrument_panel._tab_prober_debug) - the prober/hardware is the
-        physically same UF200R either way, so its low-level bring-up
-        controls (STB polling, raw command send, etc.) apply unchanged
-        here. Placed last, after NanoZ_EK."""
+        """Same ProberDebugPanel/EgProberDebugPanel the normal Debug tab
+        uses on either system (instrument_panel._tab_prober_debug) - the
+        prober/hardware is physically the same UF200R or 2001X either
+        way, so its low-level bring-up controls apply unchanged here.
+        Placed last, after NanoZ_EK."""
         tab = ttk.Frame(nb)
         nb.add(tab, text="Prober Debug")
         tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
-        self.prober_debug = ProberDebugPanel(tab, controller=self.controller)
+        cls = EgProberDebugPanel if self._system == "electroglas" else ProberDebugPanel
+        self.prober_debug = cls(tab, controller=self.controller)
         self.prober_debug.grid(row=0, column=0, sticky="nsew")
 
     def _make_scrollable_tab(self, nb, title: str) -> ttk.Frame:
@@ -420,6 +444,15 @@ class NanoZPanel(ttk.Frame):
         plan_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
         ttk.Button(plan_row, text="📥 Import Wafer Plan (.xlsx)...",
                   command=self._import_wafer_plan).pack(side="left")
+        if self._system == "electroglas":
+            # Electroglas has no internal/native wafer map to overlay a
+            # plan onto (unlike Accretech - see this method's own history
+            # above) - the Wafer Builder map IS the wafer data here,
+            # taken directly rather than requiring an .xlsx at all. xlsx
+            # import above still works too if that's ever preferred.
+            ttk.Button(plan_row, text="↻ Refresh From Wafer Builder",
+                      command=self._eg_refresh_wafer_plan_from_wafer_builder).pack(
+                      side="left", padx=(6, 0))
         self._recipe_plan_status_lbl = ttk.Label(plan_row, text="No wafer plan imported yet.",
                                                  foreground="#6b7280")
         self._recipe_plan_status_lbl.pack(side="left", padx=(10, 0))
@@ -905,7 +938,70 @@ class NanoZPanel(ttk.Frame):
                   f"Use Select Plan (Run tab) to highlight one die per touchdown, then "
                   f"Compute Recipe to build the recipe.")
             self._log_main(msg)
+            self.refresh_eg_anchor_choices()
         self.after(0, _finish)
+
+    def _eg_refresh_wafer_plan_from_wafer_builder(self):
+        """Electroglas only - builds self._wafer_plan directly from the
+        Wafer Builder tab's Die Map (main_layout.recipe_gen), the same
+        data _wafer_builder_dies() below already reads for the (removed)
+        Wafer Map tab, instead of requiring an .xlsx import. Touchdown
+        windows are computed by grouping each column's dies into
+        probe-height-tall chunks top-down - the touchdown's reference
+        point is always the TOP die of the column, per the physical probe
+        card's own convention."""
+        gen = getattr(self._main_layout, "recipe_gen", None)
+        if gen is None:
+            messagebox.showwarning("Wafer Builder", "Wafer Builder tab not available.")
+            return
+        try:
+            dpx, dpy = gen._die_pitch()
+        except Exception:
+            dpx = dpy = None
+        if not dpx or not dpy:
+            messagebox.showwarning(
+                "Wafer Builder", "No Wafer Builder die map yet - set die IDs on the "
+                                 "normal Electroglas side's Wafer Builder tab first.")
+            return
+        dies, serial_to_rc = {}, {}
+        for d in gen._die_positions():
+            if d.get("status") != "normal" or not d.get("die_id"):
+                continue
+            row, col = round(d["y"] / dpy), round(d["x"] / dpx)
+            serial = str(d["die_id"])
+            dies[(row, col)] = {"serial": serial, "status": "product"}
+            serial_to_rc[serial.upper()] = (row, col)
+        if not dies:
+            messagebox.showwarning(
+                "Wafer Builder", "No Wafer Builder die map yet - set die IDs on the "
+                                 "normal Electroglas side's Wafer Builder tab first.")
+            return
+        probe_height = nzb.DEFAULT_PROBE_HEIGHT
+        by_col: dict = {}
+        for (row, col) in dies:
+            by_col.setdefault(col, []).append(row)
+        touchdowns = []
+        for col, rows in sorted(by_col.items()):
+            rows.sort()
+            start = rows[0]
+            while start <= rows[-1]:
+                touchdowns.append((start, col))
+                start += probe_height
+        plan = nzb.WaferPlan(dies=dies, serial_to_rc=serial_to_rc,
+                             touchdowns=touchdowns, probe_height=probe_height)
+        self._wafer_plan = plan
+        self._wafer_plan_path = None
+        stats = nzb.wafer_plan_stats(plan)
+        status = (f"Wafer Builder — {len(plan.dies)} die(s), "
+                 f"{len(plan.touchdowns)} touchdown(s), probe head {plan.probe_height} — "
+                 f"{stats['product']} product, {stats['reference']} reference, "
+                 f"{stats['off_wafer']} off-wafer")
+        lbl = getattr(self, "_recipe_plan_status_lbl", None)
+        if lbl is not None:
+            lbl.config(text=status, foreground="black")
+        self._log_main(f"Wafer data refreshed from Wafer Builder: {len(plan.dies)} die(s), "
+                       f"{len(plan.touchdowns)} touchdown(s).")
+        self.refresh_eg_anchor_choices()
 
     def _build_wafer_map_tab(self, nb):
         tab = ttk.Frame(nb)
@@ -1656,15 +1752,57 @@ class NanoZPanel(ttk.Frame):
         self._btn_manual_zup.grid(row=1, column=0, sticky="ew", padx=(0, 1), pady=1)
         self._btn_manual_zdown = ttk.Button(pos_lf, text="⬇ Z Down", command=self._manual_z_down)
         self._btn_manual_zdown.grid(row=1, column=1, sticky="ew", padx=(1, 0), pady=1)
-        self._btn_manual_first_die = ttk.Button(pos_lf, text="⏮ First Die (G)", command=self._manual_first_die)
-        self._btn_manual_first_die.grid(row=2, column=0, sticky="ew", padx=(0, 1), pady=1)
-        self._btn_manual_xy = ttk.Button(pos_lf, text="↻ Refresh XY", command=self._manual_xy)
+        if self._system == "electroglas":
+            # No First Die (G) equivalent - Electroglas has no onboard
+            # wafer map, so its die-grid zero moves every time the
+            # operator re-aligns (electroglas_2001x.py's own docstring).
+            # "Chuck Is Set" establishes the datum instead (see
+            # _eg_set_anchor) - everything downstream of it (Next Die,
+            # Move to Selected, Measure) is unchanged from Accretech's own
+            # versions once self._current_rc/self._eg_origin_offset are
+            # right.
+            self._btn_manual_first_die = ttk.Button(
+                pos_lf, text="⚓ Chuck Is Set", command=self._eg_set_anchor)
+            self._btn_manual_first_die.grid(row=2, column=0, sticky="ew", padx=(0, 1), pady=1)
+        else:
+            self._btn_manual_first_die = ttk.Button(pos_lf, text="⏮ First Die (G)", command=self._manual_first_die)
+            self._btn_manual_first_die.grid(row=2, column=0, sticky="ew", padx=(0, 1), pady=1)
+        self._btn_manual_xy = ttk.Button(
+            pos_lf, text="↻ Sync ?P" if self._system == "electroglas" else "↻ Refresh XY",
+            command=self._manual_xy)
         self._btn_manual_xy.grid(row=2, column=1, sticky="ew", padx=(1, 0), pady=1)
+        if self._system == "electroglas":
+            anchor_row = ttk.Frame(pos_lf)
+            anchor_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=1)
+            ttk.Label(anchor_row, text="Chuck is on die:", font=("Segoe UI", 8)
+                     ).pack(side="left")
+            self._eg_anchor_var = tk.StringVar()
+            self._eg_anchor_cb = ttk.Combobox(anchor_row, textvariable=self._eg_anchor_var, width=14)
+            self._eg_anchor_cb.pack(side="left", padx=(2, 0))
+            self._eg_anchor_state_var = tk.StringVar(value="not anchored")
+            ttk.Label(pos_lf, textvariable=self._eg_anchor_state_var, foreground="#b45309",
+                     font=("Segoe UI", 8), wraplength=260, justify="left").grid(
+                     row=4, column=0, columnspan=2, sticky="ew", pady=(0, 2))
+
+            pitch_row = ttk.Frame(pos_lf)
+            pitch_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=1)
+            ttk.Label(pitch_row, text="Pitch X/Y (mm):", font=("Segoe UI", 8)).pack(side="left")
+            self._eg_pitch_x_var = tk.StringVar()
+            ttk.Entry(pitch_row, textvariable=self._eg_pitch_x_var, width=6).pack(
+                side="left", padx=(2, 2))
+            self._eg_pitch_y_var = tk.StringVar()
+            ttk.Entry(pitch_row, textvariable=self._eg_pitch_y_var, width=6).pack(side="left")
+            ttk.Button(pos_lf, text="Set/Verify Pitch on Prober", command=self._eg_pitch_action
+                      ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(1, 4))
+        # Fixed row 7 regardless of system - rows 3-6 are only occupied on
+        # Electroglas (anchor/pitch controls above); an unused row with no
+        # widget in it takes zero grid space, so this leaves a harmless
+        # gap on Accretech rather than needing two different row numbers.
         self._btn_reset_counts = ttk.Button(pos_lf, text="Reset Counts", command=self._reset_counts)
-        self._btn_reset_counts.grid(row=3, column=0, columnspan=2, sticky="ew", pady=1)
+        self._btn_reset_counts.grid(row=7, column=0, columnspan=2, sticky="ew", pady=1)
         self._btn_manual_next_die = ttk.Button(pos_lf, text="▶▶ Next Die (Recipe)",
                                                command=self._manual_next_die)
-        self._btn_manual_next_die.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(1, 0))
+        self._btn_manual_next_die.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(1, 0))
         # Only meaningful with exactly one die picked on the wafer map (see
         # _on_sites_changed for that toggle) - mirrors Accretech's Run tab
         # button of the same name. Deliberately NOT in _LOCKABLE_WIDGETS:
@@ -1674,7 +1812,7 @@ class NanoZPanel(ttk.Frame):
         self._btn_manual_move_selected = ttk.Button(
             pos_lf, text="➡ Move to Selected",
             command=self._manual_move_to_selected, state="disabled")
-        self._btn_manual_move_selected.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(1, 0))
+        self._btn_manual_move_selected.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(1, 0))
         # Not gridded - Measure is no longer a separate manual control. Kept
         # unpacked, not deleted, since _LOCKABLE_WIDGETS still toggles its
         # state alongside the rest of Manual Control.
@@ -3606,7 +3744,19 @@ class NanoZPanel(ttk.Frame):
                        f"{idle} not connected ({len(self._boards)} known).")
 
     def on_ata_folder_loaded(self, folder_path: str):
-        n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
+        if self._system == "electroglas":
+            # No ata_wafer_map_accretech.csv on this side - the Wafer
+            # Builder map is the wafer data here (see
+            # _eg_refresh_wafer_plan_from_wafer_builder), so both the
+            # pickable wafer_map AND self._wafer_plan come from it.
+            self._eg_refresh_wafer_plan_from_wafer_builder()
+            plan = self._wafer_plan
+            dies = ([{"row": r, "col": c, "x_um": float(c), "y_um": -float(r),
+                     "die_id": d["serial"]} for (r, c), d in plan.dies.items()]
+                   if plan else [])
+            n = self.wafer_map.load_die_list(dies, label="dies")
+        else:
+            n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
         if n:
             self._log_main(f"Wafer map auto-loaded from "
                            f"'{os.path.basename(folder_path)}' — {n} die(s).")
@@ -3975,6 +4125,100 @@ class NanoZPanel(ttk.Frame):
         self._do_manual_call("First Die", lambda p: p.move_to_start_die(),
                              ">> G  (Position start die)", refresh_xy=True)
 
+    # -- Electroglas-only: datum anchor + die pitch ------------------------
+    # No First Die (G)/native wafer map to fall back on - see
+    # electroglas_2001x.py's own docstring ("THE DIE GRID DEPENDS ENTIRELY
+    # ON WHERE THE DATUM WAS SET"). Same idea as eg_pma_run_panel.py's own
+    # "Set Initial": read the real ?P once the operator says the chuck is
+    # physically on a named die, and store the offset between that and the
+    # wafer plan's own (row, col) for it - every later move (Next Die,
+    # Move to Selected, the eventual automated run) is computed from the
+    # wafer plan's grid plus this one offset.
+
+    def refresh_eg_anchor_choices(self):
+        if self._system != "electroglas" or not hasattr(self, "_eg_anchor_cb"):
+            return
+        plan = self._wafer_plan
+        serials = sorted(plan.serial_to_rc.keys()) if plan else []
+        self._eg_anchor_cb.config(values=serials)
+
+    def _eg_set_anchor(self):
+        if self._run_guard("Chuck Is Set"):
+            return
+        plan = self._wafer_plan
+        if plan is None:
+            messagebox.showwarning("Anchor", "Import a wafer plan first (Recipe tab).")
+            return
+        serial = self._eg_anchor_var.get().strip().upper()
+        rc = plan.serial_to_rc.get(serial)
+        if rc is None:
+            messagebox.showwarning("Anchor", f"'{serial}' is not on the wafer plan's Die Map.")
+            return
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            messagebox.showwarning("Anchor", "Prober not connected.")
+            return
+        threading.Thread(target=self._eg_set_anchor_thread, args=(prober, rc, serial),
+                         daemon=True).start()
+
+    def _eg_set_anchor_thread(self, prober, rc, serial):
+        try:
+            real = prober.get_die_position()
+        except Exception as e:
+            self.after(0, lambda: self._log_main(f"Anchor: could not read ?P — {e}"))
+            return
+        row, col = rc
+        offset = (real[0] - col, real[1] - row)
+        self._eg_origin_offset = offset
+        self._current_rc = (row, col)
+
+        def _finish():
+            self._eg_anchor_state_var.set(
+                f"anchored at {serial} (row {row}, col {col}) — real "
+                f"X{real[0]}Y{real[1]} — offset {offset}")
+            self.manual_xy_var.set(f"X: {col:.0f}  Y: {row:.0f}")
+            self._log_main(f"Anchored: {serial} is real X{real[0]}Y{real[1]}, offset {offset}.")
+            self.wafer_map.update_die(row, col, "CURRENT")
+            self._update_position_window()
+        self.after(0, _finish)
+
+    def _eg_pitch_action(self):
+        """One button, two effects: sets the prober's die pitch (SP1) to
+        the entered X/Y, then immediately reads it back via
+        infer_die_size() (the only way to verify SP1 - electroglas_2001x.
+        py has no direct query for it) and reports whether it matches."""
+        if self._run_guard("Pitch"):
+            return
+        try:
+            x_mm, y_mm = float(self._eg_pitch_x_var.get()), float(self._eg_pitch_y_var.get())
+        except ValueError:
+            messagebox.showerror("Pitch", "X/Y must be numbers (mm).")
+            return
+        prober = self.controller.drivers.get("prober")
+        if not prober or not prober.inst:
+            messagebox.showwarning("Pitch", "Prober not connected.")
+            return
+        threading.Thread(target=self._eg_pitch_action_thread, args=(prober, x_mm, y_mm),
+                         daemon=True).start()
+
+    def _eg_pitch_action_thread(self, prober, x_mm, y_mm):
+        try:
+            prober.set_die_size_mm(x_mm, y_mm)
+        except Exception as e:
+            self.after(0, lambda: self._log_main(f"Pitch: could not set — {e}"))
+            return
+        self.after(0, lambda: self._log_main(f"Die pitch set: {x_mm} x {y_mm} mm."))
+        try:
+            size_x_um, size_y_um = prober.infer_die_size()
+        except Exception as e:
+            self.after(0, lambda: self._log_main(f"Pitch: could not verify — {e}"))
+            return
+        got_x_mm, got_y_mm = size_x_um / 1000.0, size_y_um / 1000.0
+        match = abs(got_x_mm - x_mm) < 0.001 and abs(got_y_mm - y_mm) < 0.001
+        self.after(0, lambda: self._log_main(
+            f"Pitch verify: prober reports {got_x_mm:.3f} x {got_y_mm:.3f} mm — "
+            f"{'MATCHES' if match else 'DOES NOT MATCH'} entered pitch."))
+
     def _manual_move_to_selected(self):
         if self._run_guard("Move to Selected"):
             return
@@ -3992,6 +4236,17 @@ class NanoZPanel(ttk.Frame):
         instrument_panel._exec2_move_to_selected)."""
         row, col = rc
         if not self._do_manual_call("Separate", lambda p: p.z_down(), ">> D  (Separate)"):
+            return
+        if self._system == "electroglas":
+            if self._eg_origin_offset is None:
+                self.after(0, lambda: self._log_main(
+                    "Move to Selected: set the anchor (Chuck Is Set) first."))
+                return
+            ox, oy = self._eg_origin_offset
+            target_x, target_y = col + ox, row + oy
+            self._do_manual_call(
+                "Move to Selected", lambda p: p.goto_die(target_x, target_y),
+                f">> goto_die(X={target_x}, Y={target_y})", refresh_xy=True)
             return
         self._do_manual_call(
             "Move to Selected", lambda p: p.move_to_die_xy(col, row),
@@ -4060,6 +4315,28 @@ class NanoZPanel(ttk.Frame):
                 "position."))
             return
         self.after(0, lambda i=idx, s=shot: self._show_current_shot(i, s))
+        if self._system == "electroglas":
+            if self._eg_origin_offset is None:
+                self.after(0, lambda: self._log_main(
+                    f"{label}: set the anchor (Chuck Is Set) first."))
+                return
+            ox, oy = self._eg_origin_offset
+            target_x, target_y = die_col + ox, row + oy
+            try:
+                self.after(0, lambda: self._log(
+                    f">> goto_die(X={target_x}, Y={target_y})"))
+                prober.goto_die(target_x, target_y)
+                self.after(0, lambda: self._log(f"{label} complete."))
+            except Exception as e:
+                self.after(0, lambda e=e: self._log_main(f"{label} error: {e}"))
+                return
+            self._current_rc = (row, die_col)
+            self.after(0, lambda: self.die_var.set(f"Die: R{row}C{die_col}"))
+            self.after(0, lambda: self.manual_xy_var.set(f"X: {die_col:.0f}  Y: {row:.0f}"))
+            self.after(0, lambda r=row, c=die_col: self.wafer_map.update_die(r, c, "CURRENT"))
+            self.after(0, self._update_position_window)
+            self.after(0, lambda i=idx: self._select_touchdown_row(i))
+            return
         try:
             self.after(0, lambda: self._log(">> D  (Separate)"))
             prober.z_down()
@@ -4115,19 +4392,31 @@ class NanoZPanel(ttk.Frame):
     def _query_xy_thread_body(self) -> bool:
         """Query the prober for its current die XY and update
         _current_rc/the XY label. Runs on a background thread (real prober
-        I/O); returns True on success. Shared by the manual "Refresh XY"
-        button and _ensure_xy_then's auto-refresh for cycle triggers."""
+        I/O); returns True on success. Shared by the manual "Refresh XY"/
+        "Sync ?P" button and _ensure_xy_then's auto-refresh for cycle
+        triggers - branches internally on self._system rather than at
+        each call site, so nothing that already calls this (including
+        _ensure_xy_then, used by every cycle trigger) needs to know which
+        prober is active."""
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             self.after(0, lambda: self.manual_xy_var.set("X: —  Y: —"))
             self.after(0, lambda: self._log_main("XY: prober not connected."))
             return False
         try:
-            raw = prober.get_xy_position()
-            x, y = _parse_q_response(raw)
+            if self._system == "electroglas":
+                # get_die_position() already returns a parsed (x, y) tuple
+                # of die counts - no ASCII response to parse, unlike
+                # Accretech's Q reply.
+                x, y = prober.get_die_position()
+                cmd_label = "?P"
+            else:
+                raw = prober.get_xy_position()
+                x, y = _parse_q_response(raw)
+                cmd_label = "Q"
             self._current_rc = (int(y), int(x))
             self.after(0, lambda: self.manual_xy_var.set(f"X: {x:.0f}  Y: {y:.0f}"))
-            self.after(0, lambda: self._log(f"Q -> die X={x:.0f} Y={y:.0f}"))
+            self.after(0, lambda: self._log(f"{cmd_label} -> die X={x:.0f} Y={y:.0f}"))
             self.after(0, lambda: self.wafer_map.update_die(int(y), int(x), "CURRENT"))
             self.after(0, self._update_position_window)
             return True
@@ -4389,6 +4678,17 @@ class NanoZPanel(ttk.Frame):
         if self._running:
             self._log_main("A run is already active.")
             return
+        if self._system == "electroglas":
+            # This walk is Accretech-only (native G/J/STB wafer-map
+            # stepping) - Electroglas has no onboard wafer map and no
+            # equivalent command. Use Next Die (Recipe) + Run Cycle
+            # (Active)/Measure to step through touchdowns manually
+            # instead; the fully automated multi-touchdown walk for
+            # Electroglas is not built yet.
+            self._log_main("Test Die: this walk is Accretech-only (native wafer-map "
+                           "stepping). Use Next Die (Recipe) + Run Cycle (Active) to "
+                           "step through touchdowns on Electroglas instead.")
+            return
         prober = self.controller.drivers.get("prober")
         if not prober or not prober.inst:
             messagebox.showerror("Prober Not Connected", "🔌 Connect Prober first.")
@@ -4649,6 +4949,14 @@ class NanoZPanel(ttk.Frame):
     def _start_recipe_run(self):
         if self._running:
             self._log_main("A run is already active.")
+            return
+        if self._system == "electroglas":
+            # Same Accretech-only walk as _start_test_die - see that
+            # method's own comment.
+            self._log_main("Run Recipe: the automated multi-touchdown walk is "
+                           "Accretech-only. Use Next Die (Recipe) + Run Cycle "
+                           "(Active)/Measure to step through touchdowns on "
+                           "Electroglas instead.")
             return
         if not self._shots:
             messagebox.showerror("No Recipe",

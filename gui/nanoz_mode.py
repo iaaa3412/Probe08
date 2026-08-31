@@ -13,13 +13,16 @@ So this module is a second top-level widget AtomicaDashboard can swap into
 its _main_pane (see app.py's cmd_set_gui_mode), the same way it already
 swaps one MainLayout for another when the operator toggles Accretech <->
 Electroglas (cmd_set_active_system). NanozModeLayout itself is system-aware
-internally: it shows Accretech's NanoZPanel or Electroglas's
-EgNanozMainLayout (gui/eg_nanoz_layout.py - a wafer-plan/1x20-touchdown
-workflow using Electroglas's own relative die-stepping motion, NOT a port
-of NanoZPanel's Accretech-STB-based motion code) depending on
-controller.active_system, and swaps between them in place when the system
-toggle is used while in NanoZ mode, without the outer widget object itself
-changing.
+internally: it shows the SAME NanoZPanel class for both systems, just
+constructed with system="accretech" or system="electroglas" - NanoZPanel
+itself branches internally wherever prober motion actually differs (the
+Run tab's manual controls, and the wafer-plan/wafer-map data source), and
+is completely unbranched everywhere else (board I/O, the shot list/named
+recipes, Pass/Fail Limits, Charts, Results, NanoZ_EK), so both systems
+get the exact same code there rather than two hand-kept copies that can
+drift - see nanoz_panel.py's own __init__ docstring. Swaps between them
+in place when the system toggle is used while in NanoZ mode, without the
+outer widget object itself changing.
 
 Both panels are built against the ALREADY-EXISTING MainLayout instance(s)
 for whichever system they show (controller._by_system[system]["ui"]) -
@@ -33,7 +36,6 @@ import tkinter as tk
 from tkinter import ttk
 
 from nanoz_panel import NanoZPanel
-from eg_nanoz_layout import EgNanozMainLayout
 
 
 class NanozModeLayout(ttk.Frame):
@@ -89,15 +91,11 @@ class NanozModeLayout(ttk.Frame):
         holder = ttk.Frame(self._body)
         holder.columnconfigure(0, weight=1)
         holder.rowconfigure(0, weight=1)
-        if system == "accretech":
-            main_layout = self.controller._by_system["accretech"]["ui"]
-            panel = NanoZPanel(holder, controller=self.controller, main_layout=main_layout)
-            panel.grid(row=0, column=0, sticky="nsew")
-            holder.nanoz_panel = panel
-        else:
-            panel = EgNanozMainLayout(holder, controller=self.controller)
-            panel.grid(row=0, column=0, sticky="nsew")
-            holder.nanoz_panel = panel
+        main_layout = self.controller._by_system[system]["ui"]
+        panel = NanoZPanel(holder, controller=self.controller, main_layout=main_layout,
+                           system=system)
+        panel.grid(row=0, column=0, sticky="nsew")
+        holder.nanoz_panel = panel
         return holder
 
     @property
@@ -111,13 +109,13 @@ class NanozModeLayout(ttk.Frame):
 
     def on_ata_folder_loaded(self, folder_path):
         """Forwarded from MainLayout.load_ata_folder (via app.py) so a
-        folder reload still reaches whichever NanoZPanel/EgNanozMainLayout
-        exists, even though neither is a child of the MainLayout that
-        loaded it. Forwarded to EVERY built holder, not just whichever
-        system is currently displayed - EgNanozMainLayout in particular
-        reads the Electroglas MainLayout's ATA folder regardless of
-        whether NanoZ mode happens to be showing Accretech or Electroglas
-        right now, so it needs to hear about a change either way.
+        folder reload still reaches whichever NanoZPanel instance exists,
+        even though neither is a child of the MainLayout that loaded it.
+        Forwarded to EVERY built holder, not just whichever system is
+        currently displayed - each NanoZPanel reads its own system's
+        MainLayout's ATA folder regardless of whether NanoZ mode happens
+        to be showing Accretech or Electroglas right now, so it needs to
+        hear about a change either way.
 
         Mirrors what MainLayout used to do directly when NanoZPanel was one
         of its own tabs: clear whatever overlay/picks belonged to the
