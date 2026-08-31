@@ -533,11 +533,20 @@ class AtomicaDashboard(tk.Tk):
             new_widget = self._nanoz_mode_ui
             # Same "about to look at NanoZ" moment the removed NanoZ tab's
             # click handler used to catch - load NAUTATA if it isn't
-            # already the active ATA folder. Accretech-only for now since
-            # that MainLayout method is what NanoZ's folder convention was
-            # built against; harmless no-op call site otherwise.
+            # already the active ATA folder. Targets self.active_system's
+            # own MainLayout, NOT hardcoded to Accretech: load_nautata_
+            # folder's own early-return guard checks THAT instance's
+            # _ata_folder, and the actual load
+            # (controller._do_load_ata_folder) always lands on self.ui
+            # (the active system) regardless of which MainLayout this is
+            # called on - calling it on Accretech while Electroglas was
+            # the active system used to check Accretech's folder state
+            # (often already "nautata" from earlier use) and skip loading
+            # anything, leaving Electroglas showing whatever unrelated ATA
+            # folder it last had rather than the Nautilus wafer builder
+            # map.
             try:
-                self._by_system["accretech"]["ui"].load_nautata_folder()
+                self._by_system[self.active_system]["ui"].load_nautata_folder()
             except Exception:
                 pass
         else:
