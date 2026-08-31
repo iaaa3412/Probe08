@@ -336,12 +336,142 @@ class EgNanozRunPanel(ttk.Frame):
         ttk.Separator(lf, orient="horizontal").grid(
             row=1, column=0, columnspan=2, sticky="ew", pady=3)
 
+        # Same move commands the normal Electroglas Chuck Position section
+        # has (instrument_panel._tab_execution2), wired the same way -
+        # Z Up/Down/Measure call the SAME prober driver instance
+        # (self.controller.drivers["prober"], resolved by active_system)
+        # the normal tab uses, since it's the physically same 2001X either
+        # way. "First Die"/Full Die's G-command equivalent is NOT ported -
+        # that calls Accretech-only move_to_start_die() even on the
+        # normal tab (see instrument_panel._exec2_manual_go_to_start) and
+        # has no NanoZ/wafer-plan equivalent; "Chuck Is Set" (Set Initial,
+        # above) is this flow's actual datum-establishing step instead.
         ttk.Button(lf, text="↻ Sync ?P", command=self._sync_position).grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=1)
+        ttk.Button(lf, text="Measure", command=self._manual_measure).grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=1)
+        ttk.Button(lf, text="⬆ Z Up", command=self._manual_z_up).grid(
+            row=4, column=0, sticky="ew", padx=(0, 1), pady=1)
+        ttk.Button(lf, text="⬇ Z Down", command=self._manual_z_down).grid(
+            row=4, column=1, sticky="ew", padx=(1, 0), pady=1)
         ttk.Button(lf, text="⏮ Back", command=self._step_back).grid(
-            row=3, column=0, sticky="ew", padx=(0, 1), pady=1)
+            row=5, column=0, sticky="ew", padx=(0, 1), pady=1)
         ttk.Button(lf, text="⏭ Next", command=self._step_next).grid(
-            row=3, column=1, sticky="ew", padx=(1, 0), pady=1)
+            row=5, column=1, sticky="ew", padx=(1, 0), pady=1)
+        ttk.Button(lf, text="➡ Move to Selected", command=self._goto_selected_shot).grid(
+            row=6, column=0, columnspan=2, sticky="ew", pady=1)
+
+    def _manual_z_up(self):
+        # Mirrors instrument_panel._exec2_manual_z_up exactly - same
+        # driver call, same "prober not connected" guard.
+        drv = self._drv()
+        if not drv:
+            self._log("[NANOZ] Z Up: prober not connected.")
+            return
+
+        def _work():
+            try:
+                self.after(0, lambda: self._log("[NANOZ] >> Z  (Contact)"))
+                drv.z_up()
+                self.after(0, lambda: self._log("[NANOZ] Z Up complete."))
+            except Exception as e:
+                self.after(0, lambda e=e: self._log(f"[NANOZ] Z Up error: {e}"))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _manual_z_down(self):
+        # Mirrors instrument_panel._exec2_manual_z_down exactly.
+        drv = self._drv()
+        if not drv:
+            self._log("[NANOZ] Z Down: prober not connected.")
+            return
+
+        def _work():
+            try:
+                self.after(0, lambda: self._log("[NANOZ] >> D  (Separate)"))
+                drv.z_down()
+                self.after(0, lambda: self._log("[NANOZ] Z Down complete."))
+            except Exception as e:
+                self.after(0, lambda e=e: self._log(f"[NANOZ] Z Down error: {e}"))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _manual_measure(self):
+        # Mirrors instrument_panel._exec2_touchdown_measure's intent -
+        # measure wherever the chuck currently is, not a picked recipe
+        # row - but triggers a NanoZ board cycle (recipe.run_cycle_at)
+        # instead of the SMU/DMM step engine. Needs the anchor already
+        # set so the real ?P reading can be translated back into wafer-
+        # grid (die_col, row) coordinates.
+        if self._running:
+            self._log("[NANOZ] A run is active - stop it first.")
+            return
+        if self._origin_offset is None:
+            messagebox.showwarning("Measure", "Set the anchor (Chuck Is Set) first.")
+            return
+        drv = self._drv()
+        if not drv:
+            messagebox.showwarning("Measure", "Prober not connected.")
+            return
+
+        def _work():
+            real = _read_position(drv)
+            if real is None:
+                self.after(0, lambda: self._log("[NANOZ] Measure: could not read ?P."))
+                return
+            ox, oy = self._origin_offset
+            die_col, start_row = real[0] - ox, real[1] - oy
+            self.after(0, lambda: self._log(
+                f"[NANOZ] Measuring at real X{real[0]}Y{real[1]} "
+                f"(wafer grid col {die_col}, row {start_row})..."))
+            try:
+                ok, verdicts, logs = self._recipe.run_cycle_at(die_col, start_row)
+            except Exception as e:
+                self.after(0, lambda: self._log(
+                    f"[NANOZ] Measure error: {type(e).__name__}: {e}"))
+                return
+            for line in logs:
+                self.after(0, lambda l=line: self._log(l))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _goto_selected_shot(self):
+        # Simplified relative of eg_pma_run_panel.EgPmaRunPanel.
+        # toggle_move_armed - moves straight to whichever shot row is
+        # selected, without the full arm/click-to-target state machine
+        # (there's no separate "Die list" pane here to click into; the
+        # shot table itself is that list - see pane 1's _build_shot_table).
+        sel = self._tree.selection()
+        if not sel:
+            messagebox.showinfo("Move to Selected", "Select a shot row first.")
+            return
+        idx = int(sel[0])
+        if self._running:
+            self._log("[NANOZ] A run is active - stop it first.")
+            return
+        if self._origin_offset is None:
+            messagebox.showwarning("Move to Selected", "Set the anchor (Chuck Is Set) first.")
+            return
+        drv = self._drv()
+        if not drv:
+            messagebox.showwarning("Move to Selected", "Prober not connected.")
+            return
+        shots = self._recipe.get_shots()
+        if not (0 <= idx < len(shots)):
+            return
+        shot = shots[idx]
+        row, col = shot["td_start_row"], shot["die_column"]
+        ox, oy = self._origin_offset
+        target_x, target_y = col + ox, row + oy
+
+        def _work():
+            self.after(0, lambda: self._log(f"[NANOZ] Moving to shot #{idx+1}..."))
+            try:
+                drv.goto_die(target_x, target_y)
+            except Exception as e:
+                self.after(0, lambda: self._log(
+                    f"[NANOZ] Move to Selected failed: {type(e).__name__}: {e}"))
+                return
+            self.after(0, lambda: self._log(f"[NANOZ] Arrived at shot #{idx+1}."))
+            self._index = idx
+        threading.Thread(target=_work, daemon=True).start()
 
     def _sync_position(self):
         drv = self._drv()

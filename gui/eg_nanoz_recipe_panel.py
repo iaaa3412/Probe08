@@ -467,12 +467,28 @@ class EgNanozRecipePanel(ttk.Frame):
         out of slot_verdicts entirely, same as a shot's NA corners in the
         Electroglas PMA run - not measured, not counted.
         """
-        plan = self._wafer_plan
-        if plan is None or not (0 <= shot_index < len(self._shots)):
-            return False, {}, ["[NANOZ] No wafer data/shot to run."]
+        if not (0 <= shot_index < len(self._shots)):
+            return False, {}, ["[NANOZ] No shot at that index."]
         shot = self._shots[shot_index]
-        die_col, start_row = shot["die_column"], shot["td_start_row"]
-        excluded_boards = shot.get("excluded_boards", set())
+        return self._run_cycle_core(shot["die_column"], shot["td_start_row"],
+                                    shot.get("excluded_boards", set()), timeout_s)
+
+    def run_cycle_at(self, die_col: int, start_row: int, timeout_s: float = 15.0):
+        """Ad-hoc single-touchdown measurement at an explicit wafer-grid
+        position, NOT tied to a saved shot - used by the Run tab's manual
+        "Measure" button (mirrors the normal Electroglas Run tab's own
+        Measure, instrument_panel._exec2_touchdown_measure, which also
+        measures wherever the chuck currently is rather than requiring a
+        selected recipe row). Only the wafer plan's own computed
+        exclusions apply here - there is no shot-level manual override to
+        honor since this isn't a saved shot."""
+        return self._run_cycle_core(die_col, start_row, set(), timeout_s)
+
+    def _run_cycle_core(self, die_col: int, start_row: int, excluded_boards: set,
+                        timeout_s: float = 15.0):
+        plan = self._wafer_plan
+        if plan is None:
+            return False, {}, ["[NANOZ] No wafer data/shot to run."]
         end_row = start_row + plan.probe_height - 1
         exclusions = nzb.touchdown_slot_exclusions(die_col, start_row, end_row, plan)
 

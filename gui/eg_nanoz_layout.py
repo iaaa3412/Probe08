@@ -36,6 +36,7 @@ from eg_nanoz_run_panel import EgNanozRunPanel
 from eg_nanoz_charts_panel import EgNanozChartsPanel
 from eg_nanoz_results_panel import EgNanozResultsPanel
 from eg_nanoz_ek_panel import EgNanozEkPanel
+from eg_prober_debug_panel import EgProberDebugPanel
 
 
 class EgNanozMainLayout(ttk.Frame):
@@ -153,6 +154,18 @@ class EgNanozMainLayout(ttk.Frame):
         ek_tab.columnconfigure(0, weight=1)
         self.ek_panel = EgNanozEkPanel(ek_tab, setup_panel=self.setup_panel)
         self.ek_panel.grid(row=0, column=0, sticky="nsew")
+
+        # Same EgProberDebugPanel the normal Electroglas Debug tab uses
+        # (instrument_panel._tab_prober_debug) - the prober/hardware is the
+        # physically same 2001X either way, so its low-level bring-up
+        # controls (jog pad, init sequence, telemetry) apply unchanged
+        # here. Placed last, after NanoZ_EK.
+        debug_tab = ttk.Frame(nb)
+        nb.add(debug_tab, text="Prober Debug")
+        debug_tab.rowconfigure(0, weight=1)
+        debug_tab.columnconfigure(0, weight=1)
+        self.prober_debug_panel = EgProberDebugPanel(debug_tab, controller=self.controller)
+        self.prober_debug_panel.grid(row=0, column=0, sticky="nsew")
 
         self.refresh_ata_folder()
 

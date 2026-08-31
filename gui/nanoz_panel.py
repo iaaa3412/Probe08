@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
 from pma_wafer_panel import pma_shots_to_grid, merge_with_accretech, centroid_offset
+from prober_debug_panel import ProberDebugPanel
 import instruments.nanoz_board as nzb
 
 try:
@@ -172,6 +173,7 @@ class NanoZPanel(ttk.Frame):
         self._build_results_tab(sub_nb)
         self._build_cassette_tab(sub_nb)
         self._build_nanoz_ek_tab(sub_nb)
+        self._build_prober_debug_tab(sub_nb)
 
         log_frame = ttk.LabelFrame(outer, text="NanoZ Log")
         outer.add(log_frame, weight=1)
@@ -183,6 +185,19 @@ class NanoZPanel(ttk.Frame):
         self.log_text.configure(yscrollcommand=log_sb.set)
         log_sb.grid(row=0, column=1, sticky="ns", pady=2)
         self.log_text.grid(row=0, column=0, sticky="nsew", padx=(2, 0), pady=2)
+
+    def _build_prober_debug_tab(self, nb):
+        """Same ProberDebugPanel the normal Accretech Debug tab uses
+        (instrument_panel._tab_prober_debug) - the prober/hardware is the
+        physically same UF200R either way, so its low-level bring-up
+        controls (STB polling, raw command send, etc.) apply unchanged
+        here. Placed last, after NanoZ_EK."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Prober Debug")
+        tab.rowconfigure(0, weight=1)
+        tab.columnconfigure(0, weight=1)
+        self.prober_debug = ProberDebugPanel(tab, controller=self.controller)
+        self.prober_debug.grid(row=0, column=0, sticky="nsew")
 
     def _make_scrollable_tab(self, nb, title: str) -> ttk.Frame:
         """Adds a tab to nb that scrolls vertically (mouse wheel or the
