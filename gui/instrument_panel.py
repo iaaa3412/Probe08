@@ -10,7 +10,8 @@ import time
 
 from wafer_map_view import (WaferMapPanel, PadLayoutPanel, ProbeCardWiringFrame,
                             ATA_KEY_FILES, WAFER_MAP_SOURCES, _pz_bind,
-                            recipe_file_path, copy_recipe, copy_probe_card, copy_wafer_map)
+                            recipe_file_path, copy_recipe, copy_probe_card, copy_wafer_map,
+                            delete_recipe, delete_probe_card, delete_wafer_map)
 from execution_panel import ExecutionDashboard
 from gds_parser_panel import GdsParserPanel
 from switch_debug_panel import SwitchDebugPanel
@@ -1730,13 +1731,50 @@ class MainLayout(ttk.Frame):
             return
         tree.selection_set(item)
         menu = tk.Menu(self, tearoff=0)
-        label = {"recipe": "📋 Copy Recipe…", "wafer_map": "📋 Copy Wafer Map…",
-                "probe_card": "📋 Copy Probe Card…"}[meta["kind"]]
-        menu.add_command(label=label, command=lambda: self._ata_copy_dialog(meta))
+        copy_label = {"recipe": "📋 Copy Recipe…", "wafer_map": "📋 Copy Wafer Map…",
+                     "probe_card": "📋 Copy Probe Card…"}[meta["kind"]]
+        delete_label = {"recipe": "🗑 Delete Recipe…", "wafer_map": "🗑 Delete Wafer Map…",
+                       "probe_card": "🗑 Delete Probe Card…"}[meta["kind"]]
+        menu.add_command(label=copy_label, command=lambda: self._ata_copy_dialog(meta))
+        menu.add_command(label=delete_label, command=lambda: self._ata_delete_item(meta))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _ata_delete_item(self, meta: dict):
+        kind = meta["kind"]
+        if kind == "recipe":
+            desc = f"{meta['name']}  (card {meta['card_base']!r}, {meta['system'].capitalize()})"
+        elif kind == "wafer_map":
+            desc = meta["name"]
+        else:
+            desc = meta["base"]
+        kind_title = {"recipe": "Recipe", "wafer_map": "Wafer Map",
+                     "probe_card": "Probe Card"}[kind]
+        if not messagebox.askyesno(
+                f"Delete {kind_title}",
+                f"Delete {kind_title.lower()} {desc!r}? This cannot be undone.",
+                parent=self):
+            return
+
+        if kind == "recipe":
+            cards_dir = os.path.join(self._ata_folder, "probe_cards")
+            path = recipe_file_path(cards_dir, meta["card_base"], meta["system"])
+            err = delete_recipe(path, meta["name"])
+        elif kind == "wafer_map":
+            maps_dir = os.path.join(self._ata_folder, "wafer_builder_maps")
+            err = delete_wafer_map(maps_dir, meta["name"])
+        else:
+            cards_dir = os.path.join(self._ata_folder, "probe_cards")
+            err = delete_probe_card(cards_dir, meta["base"])
+
+        if err:
+            messagebox.showerror("Delete Failed", err, parent=self)
+            self.controller.log(f"[INTERNAL] Delete {kind} {desc!r} failed: {err}")
+            return
+        self.controller.log(f"[INTERNAL] Deleted {kind} {desc!r}")
+        self._build_internal_tree(self._ata_folder)
 
     def _ata_copy_dialog(self, meta: dict):
         kind = meta["kind"]

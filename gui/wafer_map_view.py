@@ -1026,6 +1026,63 @@ def copy_wafer_map(src_dir: str, src_name: str, dst_dir: str, dst_name: str) -> 
     return None
 
 
+def delete_recipe(path: str, name: str) -> "str | None":
+    """Remove one recipe's RECIPE/STEP/SITE rows from `path` in place -
+    the delete-side mirror of copy_recipe. Returns an error string on
+    failure, None on success."""
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+    except OSError as exc:
+        return f"Could not read {path}: {exc}"
+    if not rows:
+        return f"{path} is empty."
+    header = rows[0]
+    try:
+        kind_i = header.index("kind")
+        recipe_i = header.index("recipe")
+    except ValueError:
+        return f"{path} has no 'kind'/'recipe' column."
+
+    def _get(row, i):
+        return row[i] if i < len(row) else ""
+
+    kept = [r for r in rows[1:]
+           if not (_get(r, kind_i) in ("RECIPE", "STEP", "SITE")
+                  and _get(r, recipe_i) == name)]
+    if len(kept) == len(rows) - 1:
+        return f"Recipe {name!r} not found in {path}."
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows([header] + kept)
+    return None
+
+
+def delete_wafer_map(dir_path: str, name: str) -> "str | None":
+    """Delete one Wafer Builder map (wafer_builder_maps/<name>.json) - the
+    delete-side mirror of copy_wafer_map. Returns an error string on
+    failure, None on success."""
+    path = os.path.join(dir_path, f"{name}.json")
+    if not os.path.isfile(path):
+        return f"{path} does not exist."
+    os.remove(path)
+    return None
+
+
+def delete_probe_card(dir_path: str, base: str) -> "str | None":
+    """Delete a probe card's main CSV plus its Electroglas side files -
+    the delete-side mirror of copy_probe_card. Returns an error string on
+    failure, None on success."""
+    main = os.path.join(dir_path, f"{base}.csv")
+    if not os.path.isfile(main):
+        return f"{main} does not exist."
+    os.remove(main)
+    for suffix in (".recipes.electroglas.csv", ".movelist.electroglas.csv"):
+        side = os.path.join(dir_path, f"{base}{suffix}")
+        if os.path.isfile(side):
+            os.remove(side)
+    return None
+
+
 class ProbeCardWiringFrame(ttk.LabelFrame):
 
     def __init__(self, parent, get_folder=None, log_fn=None, on_card_change=None,
