@@ -156,11 +156,18 @@ class Keithley2400(GPIBInstrument):
         when both values come from the same forced/compliance pair
         anyway. Verified on the bench: a combined read returns identical
         values to the two separate calls, in the time of ONE of them
-        (2703ms -> 1467ms at NPLC=1/avg=20)."""
+        (2703ms -> 1467ms at NPLC=1/avg=20).
+
+        The 2400 ignores the requested element order and always returns
+        VOLT before CURR regardless of what :FORM:ELEM asks for -
+        confirmed on the bench: requesting CURR,VOLT and VOLT,CURR both
+        came back as "+9.996V, -5.6e-11A". Read index 1 for current,
+        0 for voltage to match what the instrument actually sends, not
+        the request order."""
         self.write(":SENS:FUNC 'CURR','VOLT'")
         self.write(":FORM:ELEM CURR,VOLT")
         raw = self.query(":READ?")
-        return _read_element(raw, 0), _read_element(raw, 1)
+        return _read_element(raw, 1), _read_element(raw, 0)
 
     def measure_resistance(self, channel):
         # MANUAL, not the 2400's own AUTO ohms - AUTO uses the instrument's
