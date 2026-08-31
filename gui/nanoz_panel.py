@@ -194,7 +194,20 @@ class NanoZPanel(ttk.Frame):
         self._build_run_tab(sub_nb)
         self._build_charts_tab(sub_nb)
         self._build_results_tab(sub_nb)
-        self._build_cassette_tab(sub_nb)
+        if self._system == "accretech":
+            # Cassette automation is built entirely on
+            # drv.cassette_unload_and_load_next() - an Accretech-only STB=70
+            # unload/load-next handshake the Electroglas driver has no
+            # equivalent for - and its auto-run target (_start_recipe_run)
+            # is already refused as Accretech-only on Electroglas anyway
+            # (see that method's own guard). Showing the tab there would
+            # just be a Cassette workflow that silently can't do anything;
+            # leaving it Accretech-only avoids that rather than needing a
+            # runtime warning inside a tab that shouldn't be reachable at
+            # all. The _cst_* methods below are otherwise unbranched (they
+            # never touch self._system) so they still work unchanged for
+            # Accretech.
+            self._build_cassette_tab(sub_nb)
         self._build_nanoz_ek_tab(sub_nb)
         self._build_prober_debug_tab(sub_nb)
 
