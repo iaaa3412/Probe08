@@ -4,6 +4,16 @@ shot) using the Electroglas prober's own relative die-stepping (goto_die),
 then triggers a NanoZ board cycle at each stop via
 EgNanozRecipePanel.run_cycle_and_collect.
 
+LAYOUT mirrors the normal Electroglas Run tab (instrument_panel.py's
+_tab_execution2) as closely as this tab's own content allows: a top
+control bar (bg #f1f5f9, Run/Pause/Stop + a state label on the right),
+then a horizontal 25:20:55 split - [pitch/anchor/shot list] |
+[Chuck Position: live ?P + Back/Next] | [Wafer Map] - same three-pane
+shape and sash ratio as the normal tab's [EgPmaRunPanel] | [Chuck
+Position + Recipe Steps] | [Wafer Map] split, just with NanoZ's own
+content (die pitch/shot list instead of PMA touchdowns, no Recipe Steps
+box since there is no SMU/DMM step list here).
+
 Datum handling mirrors gui/eg_pma_run_panel.py's "Set Initial" anchor: the
 prober's own die-grid zero moves every time the operator re-aligns (see
 instruments/electroglas_2001x.py's module docstring), so this never trusts
@@ -65,33 +75,99 @@ class EgNanozRunPanel(ttk.Frame):
         self._thread = None
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
-        self._build_pitch_row()
-        self._build_anchor_row()
-        self._build_controls_row()
-        self._build_table()
+        self.rowconfigure(1, weight=1)
+        self._build_ctrl_bar()
+        self._build_body()
 
     def _drv(self):
         drv = self.controller.drivers.get("prober")
         return drv if (drv and drv.inst) else None
 
-    # -- pitch --------------------------------------------------------------
+    # -- top control bar ----------------------------------------------------
 
-    def _build_pitch_row(self):
-        lf = ttk.LabelFrame(self, text="Die Pitch", padding=6)
-        lf.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        ttk.Label(lf, text="X (mm):").pack(side="left")
+    def _build_ctrl_bar(self):
+        ctrl = tk.Frame(self, bg="#f1f5f9", relief="solid", bd=1)
+        ctrl.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+
+        run_border = tk.Frame(ctrl, background="#15803d")
+        run_border.pack(side="left", padx=(6, 6), pady=5)
+        ttk.Button(run_border, text="▶  Run All", command=self._start_run
+                  ).pack(padx=2, pady=2)
+        ttk.Button(ctrl, text="⏭  Run Selected Touchdown", command=self._run_selected
+                  ).pack(side="left", padx=3, pady=5)
+        ttk.Button(ctrl, text="⏸  Pause", command=self._pause).pack(
+            side="left", padx=3, pady=5)
+        ttk.Button(ctrl, text="⏹  Stop", command=self._stop).pack(
+            side="left", padx=3, pady=5)
+
+        self._status_var = tk.StringVar(value="IDLE")
+        tk.Label(ctrl, textvariable=self._status_var, bg="#f1f5f9", fg="#6b7280",
+                font=("Segoe UI", 11, "bold")).pack(side="right", padx=12)
+
+    # -- body: 25:20:55 split, same technique as instrument_panel.py's
+    # own _tab_execution2 (PanedWindow has no percentage-based initial
+    # layout - sash positions are only real once the pane has a real
+    # width, so this waits for the first <Configure> with a usable width
+    # rather than fighting an after_idle measured too early).
+
+    def _build_body(self):
+        body = ttk.PanedWindow(self, orient="horizontal")
+        body.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+
+        pane1 = ttk.Frame(body)
+        body.add(pane1, weight=25)
+        pane1.columnconfigure(0, weight=1)
+        pane1.rowconfigure(2, weight=1)
+        self._build_pitch_row(pane1)
+        self._build_anchor_row(pane1)
+        self._build_shot_table(pane1)
+
+        pane2 = ttk.Frame(body)
+        body.add(pane2, weight=20)
+        self._build_chuck_position(pane2)
+
+        pane3 = ttk.LabelFrame(body, text="Wafer Map")
+        body.add(pane3, weight=55)
+        pane3.rowconfigure(1, weight=1)
+        pane3.columnconfigure(0, weight=1)
+        self._build_map(pane3)
+
+        def _apply_initial_sashes():
+            w = body.winfo_width()
+            if w <= 1:
+                return
+            body.sashpos(0, int(w * 0.25))
+            body.sashpos(1, int(w * 0.45))
+
+        def _set_initial_sashes(_event=None):
+            if body.winfo_width() <= 1:
+                return
+            body.unbind("<Configure>", sash_bind_id[0])
+            body.after_idle(_apply_initial_sashes)
+
+        sash_bind_id = [body.bind("<Configure>", _set_initial_sashes)]
+
+    # -- pane 1a: pitch -------------------------------------------------
+
+    def _build_pitch_row(self, parent):
+        lf = ttk.LabelFrame(parent, text="Die Pitch", padding=6)
+        lf.grid(row=0, column=0, sticky="ew", pady=(0, 2))
+        row1 = ttk.Frame(lf)
+        row1.pack(fill="x")
+        ttk.Label(row1, text="X (mm):").pack(side="left")
         self._pitch_x_var = tk.StringVar()
-        ttk.Entry(lf, textvariable=self._pitch_x_var, width=10).pack(side="left", padx=(2, 10))
-        ttk.Label(lf, text="Y (mm):").pack(side="left")
+        ttk.Entry(row1, textvariable=self._pitch_x_var, width=8).pack(side="left", padx=(2, 8))
+        ttk.Label(row1, text="Y (mm):").pack(side="left")
         self._pitch_y_var = tk.StringVar()
-        ttk.Entry(lf, textvariable=self._pitch_y_var, width=10).pack(side="left", padx=(2, 10))
-        ttk.Button(lf, text="Set on Prober", command=self._set_pitch).pack(side="left")
-        ttk.Button(lf, text="Verify (infer from ?P)", command=self._verify_pitch).pack(
-            side="left", padx=(6, 0))
+        ttk.Entry(row1, textvariable=self._pitch_y_var, width=8).pack(side="left", padx=(2, 0))
+        row2 = ttk.Frame(lf)
+        row2.pack(fill="x", pady=(4, 0))
+        ttk.Button(row2, text="Set on Prober", command=self._set_pitch).pack(side="left")
+        ttk.Button(row2, text="Verify", command=self._verify_pitch).pack(
+            side="left", padx=(4, 0))
         self._pitch_status_var = tk.StringVar(value="not verified")
-        ttk.Label(lf, textvariable=self._pitch_status_var, foreground="#b45309"
-                 ).pack(side="left", padx=(10, 0))
+        ttk.Label(lf, textvariable=self._pitch_status_var, foreground="#b45309",
+                 wraplength=220, justify="left").pack(anchor="w", pady=(4, 0))
 
     def _set_pitch(self):
         drv = self._drv()
@@ -137,19 +213,19 @@ class EgNanozRunPanel(ttk.Frame):
                 self._log(f"[NANOZ] Pitch verify: {text}")))
         threading.Thread(target=_work, daemon=True).start()
 
-    # -- anchor ---------------------------------------------------------
+    # -- pane 1b: anchor --------------------------------------------------
 
-    def _build_anchor_row(self):
-        lf = ttk.LabelFrame(self, text="Set Initial (Chuck Position)", padding=6)
-        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
-        ttk.Label(lf, text="Chuck is on die (serial):").pack(side="left")
+    def _build_anchor_row(self, parent):
+        lf = ttk.LabelFrame(parent, text="Set Initial", padding=6)
+        lf.grid(row=1, column=0, sticky="ew", pady=2)
+        ttk.Label(lf, text="Chuck is on die (serial):").pack(anchor="w")
         self._anchor_var = tk.StringVar()
-        self._anchor_cb = ttk.Combobox(lf, textvariable=self._anchor_var, width=30)
-        self._anchor_cb.pack(side="left", padx=(4, 10))
-        ttk.Button(lf, text="Chuck Is Set", command=self._set_anchor).pack(side="left")
+        self._anchor_cb = ttk.Combobox(lf, textvariable=self._anchor_var, width=28)
+        self._anchor_cb.pack(anchor="w", pady=(2, 4))
+        ttk.Button(lf, text="Chuck Is Set", command=self._set_anchor).pack(anchor="w")
         self._anchor_state_var = tk.StringVar(value="not anchored")
-        ttk.Label(lf, textvariable=self._anchor_state_var, foreground="#b45309"
-                 ).pack(side="left", padx=(10, 0))
+        ttk.Label(lf, textvariable=self._anchor_state_var, foreground="#b45309",
+                 wraplength=220, justify="left").pack(anchor="w", pady=(4, 0))
 
     def refresh_anchor_choices(self):
         plan = self._recipe.get_wafer_plan()
@@ -205,79 +281,25 @@ class EgNanozRunPanel(ttk.Frame):
                   key=lambda i: abs(shots[i]["td_start_row"] - row) + abs(shots[i]["die_column"] - col))
         return best
 
-    # -- controls / table -------------------------------------------------
+    # -- pane 1c: shot list ---------------------------------------------
 
-    def _build_controls_row(self):
-        # Mirrors the normal Electroglas Run tab's own control bar shape
-        # (instrument_panel._tab_execution2 / eg_pma_run_panel) - Sync ?P,
-        # Back/Next single-step, Run/Pause/Stop - just walking wafer-plan
-        # touchdowns via goto_die() instead of PMA touchdowns via MD.
-        lf = ttk.LabelFrame(self, text="Run", padding=6)
-        lf.grid(row=2, column=0, sticky="ew", padx=6, pady=2)
-        ttk.Button(lf, text="↻ Sync ?P", command=self._sync_position).pack(side="left")
-        ttk.Button(lf, text="⏮ Back", command=self._step_back).pack(side="left", padx=(6, 0))
-        ttk.Button(lf, text="⏭ Next", command=self._step_next).pack(side="left", padx=(2, 0))
-        ttk.Separator(lf, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(lf, text="▶ Run All", command=self._start_run).pack(side="left")
-        ttk.Button(lf, text="⏸ Pause", command=self._pause).pack(side="left", padx=(6, 0))
-        ttk.Button(lf, text="⏹ Stop", command=self._stop).pack(side="left", padx=(6, 0))
-        ttk.Button(lf, text="⏭ Run Selected Touchdown", command=self._run_selected
-                  ).pack(side="left", padx=(6, 0))
-        self._status_var = tk.StringVar(value="idle")
-        ttk.Label(lf, textvariable=self._status_var).pack(side="left", padx=(10, 0))
-        self._pos_var = tk.StringVar(value="—")
-        ttk.Label(lf, textvariable=self._pos_var, foreground="#0077cc").pack(
-            side="left", padx=(10, 0))
-
-    def _build_table(self):
-        # Horizontal split: a pickable wafer map (click a die to mark it as
-        # a touchdown's TOP die - see get_picked()/Recipe tab's "Take from
-        # map selection") alongside the Recipe tab's own computed shot
-        # list. This map is its OWN WaferMapPanel instance, populated by
-        # copying rows out of the wafer plan (load_die_list) - it never
-        # touches gui/recipe_gen_panel.py's live Wafer Builder object, so
-        # picking here cannot affect that map, the same guarantee the
-        # normal Electroglas Run/Recipe tabs already give (see
-        # eg_nanoz_recipe_panel.py's own module docstring).
-        split = ttk.PanedWindow(self, orient="horizontal")
-        split.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
-
-        map_lf = ttk.LabelFrame(split, text="Pick touchdowns — click the TOP die of each 1x20 you want", padding=4)
-        split.add(map_lf, weight=1)
-        map_lf.rowconfigure(0, weight=1)
-        map_lf.columnconfigure(0, weight=1)
-        self.wafer_map = WaferMapPanel(map_lf, show_title=False)
-        self.wafer_map.grid(row=0, column=0, sticky="nsew")
-        self.wafer_map.enable_picking()
-
-        lf = ttk.LabelFrame(split, text="Shots (Recipe tab) — top die of each 1x20 column", padding=4)
-        split.add(lf, weight=1)
+    def _build_shot_table(self, parent):
+        lf = ttk.LabelFrame(parent, text="Shots (Recipe tab)", padding=4)
+        lf.grid(row=2, column=0, sticky="nsew", pady=(2, 0))
         lf.rowconfigure(0, weight=1)
         lf.columnconfigure(0, weight=1)
         cols = ("idx", "label", "top_die", "row", "col", "status")
-        self._tree = ttk.Treeview(lf, columns=cols, show="headings", height=12)
-        for col, head, width in (("idx", "#", 40), ("label", "Label", 140),
-                                 ("top_die", "Top die", 120),
-                                 ("row", "row", 60), ("col", "col", 60),
-                                 ("status", "Status", 200)):
+        self._tree = ttk.Treeview(lf, columns=cols, show="headings", height=10)
+        for col, head, width in (("idx", "#", 30), ("label", "Label", 90),
+                                 ("top_die", "Top die", 80),
+                                 ("row", "row", 45), ("col", "col", 45),
+                                 ("status", "Status", 140)):
             self._tree.heading(col, text=head)
             self._tree.column(col, width=width, anchor="w")
         self._tree.grid(row=0, column=0, sticky="nsew")
         sb = ttk.Scrollbar(lf, orient="vertical", command=self._tree.yview)
         sb.grid(row=0, column=1, sticky="ns")
         self._tree.configure(yscrollcommand=sb.set)
-
-    def refresh_wafer_map(self):
-        """Repopulate the pick map from the Recipe tab's current wafer
-        plan - a plain copy (load_die_list), never a shared reference."""
-        plan = self._recipe.get_wafer_plan()
-        if plan is None:
-            self.wafer_map.load_die_list([], label="dies")
-            return
-        dies = [{"row": row, "col": col, "x_um": float(col), "y_um": -float(row),
-                "die_id": d["serial"]}
-               for (row, col), d in plan.dies.items()]
-        self.wafer_map.load_die_list(dies, label="dies")
 
     def refresh_table(self):
         self._tree.delete(*self._tree.get_children())
@@ -298,7 +320,28 @@ class EgNanozRunPanel(ttk.Frame):
         except tk.TclError:
             pass
 
-    # -- single-step / position --------------------------------------------
+    # -- pane 2: Chuck Position -------------------------------------------
+
+    def _build_chuck_position(self, parent):
+        lf = ttk.LabelFrame(parent, text="Chuck Position", padding=6)
+        lf.pack(fill="both", expand=True)
+        lf.columnconfigure(0, weight=1)
+        lf.columnconfigure(1, weight=1)
+
+        self._pos_var = tk.StringVar(value="X: —\nY: —")
+        ttk.Label(lf, textvariable=self._pos_var, font=("Consolas", 13, "bold"),
+                 foreground="#0077cc", justify="center").grid(
+                 row=0, column=0, columnspan=2, pady=(0, 4))
+
+        ttk.Separator(lf, orient="horizontal").grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=3)
+
+        ttk.Button(lf, text="↻ Sync ?P", command=self._sync_position).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=1)
+        ttk.Button(lf, text="⏮ Back", command=self._step_back).grid(
+            row=3, column=0, sticky="ew", padx=(0, 1), pady=1)
+        ttk.Button(lf, text="⏭ Next", command=self._step_next).grid(
+            row=3, column=1, sticky="ew", padx=(1, 0), pady=1)
 
     def _sync_position(self):
         drv = self._drv()
@@ -308,8 +351,8 @@ class EgNanozRunPanel(ttk.Frame):
 
         def _work():
             pos = _read_position(drv)
-            self.after(0, lambda: self._pos_var.set(
-                f"?P = X{pos[0]}Y{pos[1]}" if pos else "?P = unreadable"))
+            text = f"X: {pos[0]}\nY: {pos[1]}" if pos else "X: —\nY: —"
+            self.after(0, lambda: self._pos_var.set(text))
         threading.Thread(target=_work, daemon=True).start()
 
     def _step_back(self):
@@ -326,6 +369,43 @@ class EgNanozRunPanel(ttk.Frame):
             return
         self._run_indices([nxt])
 
+    # -- pane 3: Wafer Map ----------------------------------------------
+
+    def _build_map(self, parent):
+        # Own WaferMapPanel instance, populated by copying rows out of the
+        # wafer plan (load_die_list) - never touches gui/recipe_gen_panel.
+        # py's live Wafer Builder object, so picking here cannot affect
+        # that map, the same guarantee the normal Electroglas Run/Recipe
+        # tabs already give (see eg_nanoz_recipe_panel.py's own module
+        # docstring).
+        bar = ttk.Frame(parent)
+        bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        self._picked_var = tk.StringVar(value="Picked: 0")
+        ttk.Label(bar, textvariable=self._picked_var, foreground="#6b7280",
+                 font=("Segoe UI", 8)).pack(side="left")
+        ttk.Label(bar, text="Click the TOP die of each 1x20 touchdown you want, "
+                           "then use Recipe tab > Take From Map Selection.",
+                 foreground="#6b7280", font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
+
+        self.wafer_map = WaferMapPanel(parent, show_title=False)
+        self.wafer_map.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        self.wafer_map.enable_picking(on_change=self._on_pick_change)
+
+    def _on_pick_change(self):
+        self._picked_var.set(f"Picked: {len(self.wafer_map.get_picked())}")
+
+    def refresh_wafer_map(self):
+        """Repopulate the pick map from the Recipe tab's current wafer
+        plan - a plain copy (load_die_list), never a shared reference."""
+        plan = self._recipe.get_wafer_plan()
+        if plan is None:
+            self.wafer_map.load_die_list([], label="dies")
+            return
+        dies = [{"row": row, "col": col, "x_um": float(col), "y_um": -float(row),
+                "die_id": d["serial"]}
+               for (row, col), d in plan.dies.items()]
+        self.wafer_map.load_die_list(dies, label="dies")
+
     # -- run loop -----------------------------------------------------------
 
     def _run_selected(self):
@@ -337,7 +417,8 @@ class EgNanozRunPanel(ttk.Frame):
     def _start_run(self):
         shots = self._recipe.get_shots()
         if not shots:
-            messagebox.showwarning("Run", "Compute shots on the Recipe tab first.")
+            messagebox.showwarning("Run", "Take shots from the map selection on the "
+                                          "Recipe tab first.")
             return
         if self._origin_offset is None:
             messagebox.showwarning("Run", "Set the anchor (Chuck Is Set) first.")
@@ -356,7 +437,7 @@ class EgNanozRunPanel(ttk.Frame):
             messagebox.showwarning("Run", "Set the anchor (Chuck Is Set) first.")
             return
         self._running, self._abort, self._paused = True, False, False
-        self._status_var.set("running")
+        self._status_var.set("RUNNING")
         self._thread = threading.Thread(target=self._run_thread, args=(drv, indices), daemon=True)
         self._thread.start()
 
@@ -394,11 +475,11 @@ class EgNanozRunPanel(ttk.Frame):
             self.after(0, lambda i=idx, s=status: self._set_row_status(i, s))
             self._index = idx
         self._running = False
-        self.after(0, lambda: self._status_var.set("idle"))
+        self.after(0, lambda: self._status_var.set("IDLE"))
 
     def _pause(self):
         self._paused = not self._paused
-        self._status_var.set("paused" if self._paused else "running")
+        self._status_var.set("PAUSED" if self._paused else "RUNNING")
 
     def _stop(self):
         self._abort = True
