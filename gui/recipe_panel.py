@@ -1182,10 +1182,15 @@ class RecipePanel(ttk.Frame):
         bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
         bar.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
 
+        self._shortcut_chk = ttk.Checkbutton(
+            bar, text="Don't resend configs (may not work if enabled)",
+            variable=self._shortcut_var, command=self._on_shortcut_toggle)
+        self._shortcut_chk.pack(side="left", padx=(8, 8), pady=4)
+
         self._minor_moves_chk = ttk.Checkbutton(
             bar, text="Minor moves (multi-die shot)",
             variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
-        self._minor_moves_chk.pack(side="left", padx=(8, 8), pady=4)
+        self._minor_moves_chk.pack(side="left", padx=(0, 8), pady=4)
 
         self._shortcut_chk = ttk.Checkbutton(
             bar, text="Don't resend configs (may not work if enabled)",

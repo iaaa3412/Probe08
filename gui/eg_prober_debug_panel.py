@@ -99,12 +99,20 @@ _MOTION_PREFIXES = ("ZU", "ZD", "ZM", "ZR", "MT", "MM", "MO", "MA", "MD",
 
 # Jog direction -> (dX, dY) in die coordinates.
 #
-# Die 0,0 sits at the BOTTOM-RIGHT of travel, so the only reachable quadrant is
-# up and to the LEFT. Increasing X therefore moves the chuck LEFT and
-# increasing Y moves it UP - the X axis reads inverted against screen
-# intuition, which is exactly the trap these constants exist to remove. Flip
-# the pair here if the physical behaviour ever disagrees; nothing else needs
-# touching.
+# MEASURED ONLY FOR THE BOTTOM-RIGHT (LOAD-POSITION) DATUM. With 0,0 there,
+# the only reachable quadrant is up and to the LEFT, so increasing X moves
+# the chuck LEFT and increasing Y moves it UP - the X axis reads inverted
+# against screen intuition, which is exactly the trap these constants exist
+# to remove.
+#
+# THAT REASONING DOES NOT HOLD ONCE FIRST (FD) HAS BEEN PRESSED WITH A
+# CENTRE DATUM - see electroglas_2001x.py's module docstring ("THE DIE GRID
+# DEPENDS ENTIRELY ON WHERE THE DATUM WAS SET"). Which physical direction is
+# +X was never directly confirmed against a centre datum, only inferred from
+# the load-position case. Do not trust the arrow labels blindly once the
+# operator has re-zeroed at wafer centre - verify by eye (or against ?P)
+# before jogging for real. Flip the pair here only once the centre-datum
+# direction has actually been confirmed on the bench; do not guess.
 _JOG_LEFT = (1, 0)      # +X
 _JOG_RIGHT = (-1, 0)    # -X  (refused at the 0 edge)
 _JOG_UP = (0, 1)        # +Y
@@ -353,12 +361,12 @@ class EgProberDebugPanel(ttk.Frame):
             self._jog_buttons.append(b)
             return b
 
-        # Die coordinate 0,0 is at the BOTTOM-RIGHT of travel, so the reachable
-        # quadrant is up and to the LEFT: increasing X moves the chuck LEFT,
-        # increasing Y moves it UP. Arrows are labelled by what the chuck
-        # physically does, with the die-coordinate sign in brackets - pressing
+        # Labelled for the BOTTOM-RIGHT (load-position) datum: die 0,0 there
+        # puts the reachable quadrant up and to the LEFT, so increasing X
+        # moves the chuck LEFT and increasing Y moves it UP - pressing
         # "right" when 0,0 is already the right-hand edge is what the prober
-        # refuses with MF.
+        # refuses with MF. See the _JOG_* comment above: this labelling is
+        # NOT confirmed once FIRST has been pressed against a centre datum.
         mk("↑ up (+Y)", 0, 1, lambda: self._jog_xy(*_JOG_UP))
         mk("← left (+X)", 1, 0, lambda: self._jog_xy(*_JOG_LEFT))
         mk("⌂ 0,0", 1, 1, self._jog_goto_origin)
@@ -373,6 +381,14 @@ class EgProberDebugPanel(ttk.Frame):
         self._jog_pos = tk.StringVar(value="press a direction to read position")
         ttk.Label(lf, textvariable=self._jog_pos, font=("Consolas", 9),
                   wraplength=380, justify="left").pack(anchor="w", pady=(4, 0))
+
+        ttk.Label(lf, text="Arrow labels above were measured against a "
+                           "BOTTOM-RIGHT (load-position) datum. After Set First "
+                           "Die (FD) at a centre datum, which physical "
+                           "direction is +X/+Y is NOT confirmed - verify by eye "
+                           "before trusting these labels.",
+                  foreground="#aa5500", font=("Arial", 8), wraplength=380,
+                  justify="left").pack(anchor="w", pady=(4, 0))
 
         ttk.Label(lf, text="MD is bounded by the driver's step cap and, once set, "
                            "its die envelope — the prober itself does NOT stop "

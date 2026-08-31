@@ -101,6 +101,11 @@ ACCRETECH_INSTRUMENT_NAMES = [
 ]
 
 ACCRETECH_REQUIRED_DRIVERS = ("prober", "smu", "dmm", "switch", "wave_gen")
+# Fallback only - used when the active bench's own profile can't be read
+# (see _accretech_required_drv_keys). Now that a bench can freely drop
+# smu/dmm/wave_gen or carry several of one kind (drivers/flexible-setup
+# work), the REAL required set is computed per bench from whichever slots
+# it actually has fitted right now, not this fixed five.
 # No "smu"/"power_supply" for the same reason - requiring them would hold the
 # Electroglas tab at PENDING forever.
 ELECTROGLAS_REQUIRED_DRIVERS = ("prober", "dmm", "relay1", "relay2", "relay3")
@@ -186,12 +191,27 @@ class AtomicaDashboard(tk.Tk):
             init_hardware_fn=self.init_hardware, system="accretech")
         self._by_system["accretech"]["ui"] = self.instrument_panel
         self._main_pane.add(self.instrument_panel, weight=1)
+        # Whichever top-level widget is actually attached to _main_pane
+        # right now - self.ui always points at the active SYSTEM's
+        # MainLayout regardless of display (NanoZ mode still needs it as a
+        # data holder, see nanoz_mode.py), so this tracks the DISPLAYED
+        # widget separately. cmd_set_active_system/cmd_set_gui_mode both
+        # forget/add against this, not self.ui, so a mode swap and a
+        # system swap never fight over which widget is actually attached.
+        self._displayed_widget = self.instrument_panel
 
         self.instrument_panel_eg = MainLayout(
             parent=self._main_pane, controller=self,
             instrument_names=ELECTROGLAS_INSTRUMENT_NAMES,
             init_hardware_fn=self.init_hardware_eg, system="electroglas")
         self._by_system["electroglas"]["ui"] = self.instrument_panel_eg
+
+        # "normal" (the regular tabbed workspace) or "nanoz" (see
+        # gui/nanoz_mode.py) - built lazily by cmd_set_gui_mode the first
+        # time it's actually needed, not here, since most stations never
+        # use it.
+        self.gui_mode = "normal"
+        self._nanoz_mode_ui = None
 
         self._build_bottom_routing()
         if getattr(self, "_pending_setup_log", None):
@@ -202,6 +222,7 @@ class AtomicaDashboard(tk.Tk):
         # loaded; before init_hardware, so the first connect sweep runs
         # against the bench that was actually chosen.
         self._apply_default_prober()
+        self._apply_default_gui_mode()
         # Only the active system (Accretech unless a default prober says
         # otherwise, applied just above) sweeps at startup - pinging the
         # other rig's instruments when nobody selected it just produces
@@ -218,7 +239,9 @@ class AtomicaDashboard(tk.Tk):
         """First thing on startup: does this machine actually have a GUI
         System folder, and does it have all four setup files in it? A fresh
         machine (or one where GUI System was declined/deleted) has neither -
-        warn about it up front and offer to scaffold blank versions, rather
+        warn about it up front and offer to either browse to a working
+        directory that already has one (e.g. a network share or a cloned
+        ProberFolders-style checkout), or scaffold blank versions, rather
         than let the app silently run with nothing connected and no obvious
         reason why, or crash reaching for a config file that was never
         written."""
@@ -227,35 +250,98 @@ class AtomicaDashboard(tk.Tk):
                   if name != "folder" and not present]
         if not missing:
             return
-        if not status["folder"]:
-            prompt = (f"This machine has no GUI System folder at "
-                      f"{workdir.gui_system_dir()} - that's where the "
-                      "GUI keeps this machine's real setup (instrument "
-                      "addresses, Electroglas bench profiles, switch "
-                      "wiring, default ATA folder/prober). None of that "
-                      "exists yet.")
-        else:
-            prompt = ("This machine's GUI System folder is missing some "
-                      "setup files: " + ", ".join(missing) + ".")
-        create = messagebox.askyesno(
-            "GUI System Folder", prompt +
-            "\n\nCreate the missing file(s) now with a blank starter "
-            "setup? Nothing is guessed - every address/bench starts "
-            "empty and gets filled in on the Setup tab afterward.",
-            parent=self)
-        if not create:
-            messagebox.showwarning(
-                "No Machine Setup",
-                "Continuing without it - instrument connections and "
-                "per-bench profiles won't work until GUI System exists. "
-                "Nothing will crash, but nothing will connect either.",
-                parent=self)
-            return
-        created = app_settings.create_basic_machine_config()
-        self._pending_setup_log = (
-            f"[SYSTEM] GUI System folder: created {', '.join(created)} "
-            "with a blank starter setup - fill in real addresses/benches "
-            "on the Setup tab.") if created else None
+        while True:
+            if not status["folder"]:
+                prompt = (f"This machine has no GUI System folder at "
+                          f"{workdir.gui_system_dir()} - that's where the "
+                          "GUI keeps this machine's real setup (instrument "
+                          "addresses, Electroglas bench profiles, switch "
+                          "wiring, default ATA folder/prober). None of that "
+                          "exists yet.")
+            else:
+                prompt = ("This machine's GUI System folder is missing some "
+                          "setup files: " + ", ".join(missing) + ".")
+            choice = self._ask_missing_config_action(prompt)
+            if choice == "browse":
+                selected = filedialog.askdirectory(
+                    title="Select Working Directory (contains GUI System)",
+                    initialdir=workdir.get_current_working_dir(), parent=self)
+                if not selected:
+                    continue
+                workdir.set_current_working_dir(selected)
+                status = app_settings.machine_config_status()
+                missing = [name for name, present in status.items()
+                          if name != "folder" and not present]
+                if not missing:
+                    self._pending_setup_log = (
+                        f"[SYSTEM] Working directory set to '{selected}' - "
+                        "GUI System found, all setup files present.")
+                    return
+                # Still missing something at the newly-picked location -
+                # loop back and show the (now updated) prompt again rather
+                # than silently falling through to blank-scaffold it.
+                continue
+            elif choice == "create":
+                created = app_settings.create_basic_machine_config()
+                self._pending_setup_log = (
+                    f"[SYSTEM] GUI System folder: created {', '.join(created)} "
+                    "with a blank starter setup - fill in real "
+                    "addresses/benches on the Setup tab.") if created else None
+                return
+            else:
+                messagebox.showwarning(
+                    "No Machine Setup",
+                    "Continuing without it - instrument connections and "
+                    "per-bench profiles won't work until GUI System exists. "
+                    "Nothing will crash, but nothing will connect either.",
+                    parent=self)
+                return
+
+    def _ask_missing_config_action(self, prompt: str) -> str:
+        """Modal choice for _check_machine_config_folder: "browse" (point at
+        an existing working directory that already has a GUI System folder),
+        "create" (scaffold a blank one here), or "skip" (continue without).
+        A plain custom dialog rather than messagebox.askyesno since there
+        are three distinct outcomes, not two."""
+        dlg = tk.Toplevel(self)
+        dlg.title("GUI System Folder")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        result = {"choice": "skip"}
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=prompt, wraplength=420, justify="left").pack(
+            anchor="w", pady=(0, 12))
+        ttk.Label(
+            frm, wraplength=420, justify="left", foreground="#555555",
+            text=("Browse to a working directory that already has a GUI "
+                  "System folder (e.g. a shared network location or a "
+                  "cloned project folder), or create a blank starter setup "
+                  "here instead. Nothing is guessed either way.")
+        ).pack(anchor="w", pady=(0, 12))
+
+        def pick(choice):
+            result["choice"] = choice
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(4, 0))
+        ttk.Button(btns, text="Browse for Working Directory...",
+                  command=lambda: pick("browse")).pack(side="left")
+        ttk.Button(btns, text="Create Blank Setup Here",
+                  command=lambda: pick("create")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Continue Without",
+                  command=lambda: pick("skip")).pack(side="right")
+
+        dlg.protocol("WM_DELETE_WINDOW", lambda: pick("skip"))
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x,0)}+{max(y,0)}")
+        dlg.wait_window()
+        return result["choice"]
 
     def _autoload_default_ata_folders(self):
         """One default ATA folder for the whole project, set via the ⭐ Set
@@ -360,15 +446,23 @@ class AtomicaDashboard(tk.Tk):
     def cmd_set_active_system(self, system):
         if system == self.active_system or system not in self._by_system:
             return
-        old_ui = self.ui
-        carry_over_folder = old_ui._ata_folder
+        carry_over_folder = self.ui._ata_folder
+        old_widget = self._displayed_widget
         self.active_system = system
         self.title("Electrical Prober")
-        self._main_pane.forget(old_ui)
-        if self._main_pane.panes():
-            self._main_pane.insert(0, self.ui, weight=1)
+        if self.gui_mode == "nanoz" and self._nanoz_mode_ui is not None:
+            # Same widget object stays attached to _main_pane - NanoZ mode
+            # is one container that shows whichever system is active
+            # internally (see nanoz_mode.NanozModeLayout.refresh_for_system),
+            # so there is nothing to forget/re-add here.
+            self._nanoz_mode_ui.refresh_for_system()
         else:
-            self._main_pane.add(self.ui, weight=1)
+            self._main_pane.forget(old_widget)
+            if self._main_pane.panes():
+                self._main_pane.insert(0, self.ui, weight=1)
+            else:
+                self._main_pane.add(self.ui, weight=1)
+            self._displayed_widget = self.ui
         self._style_system_toggle()
         default_folder = app_settings.get_default_ata_folder()
         if default_folder and os.path.isdir(default_folder):
@@ -418,6 +512,89 @@ class AtomicaDashboard(tk.Tk):
 
             self.after(100, _run_and_dismiss)
 
+    def cmd_set_gui_mode(self, mode: str):
+        """Swap the WHOLE window's main section between "normal" (the
+        regular MainLayout tab set) and "nanoz" (gui/nanoz_mode.py's
+        NanozModeLayout) - same forget/add-on-_main_pane technique
+        cmd_set_active_system already uses to swap MainLayout instances,
+        just one level up: here the two things being swapped are entire
+        modes rather than the two systems within one mode.
+        """
+        if mode not in ("normal", "nanoz") or mode == self.gui_mode:
+            return
+        old_widget = self._displayed_widget
+        self.gui_mode = mode
+        if mode == "nanoz":
+            if self._nanoz_mode_ui is None:
+                from nanoz_mode import NanozModeLayout
+                self._nanoz_mode_ui = NanozModeLayout(self._main_pane, controller=self)
+            else:
+                self._nanoz_mode_ui.refresh_for_system()
+            new_widget = self._nanoz_mode_ui
+            # Same "about to look at NanoZ" moment the removed NanoZ tab's
+            # click handler used to catch - load NAUTATA if it isn't
+            # already the active ATA folder. Targets self.active_system's
+            # own MainLayout, NOT hardcoded to Accretech: load_nautata_
+            # folder's own early-return guard checks THAT instance's
+            # _ata_folder, and the actual load
+            # (controller._do_load_ata_folder) always lands on self.ui
+            # (the active system) regardless of which MainLayout this is
+            # called on - calling it on Accretech while Electroglas was
+            # the active system used to check Accretech's folder state
+            # (often already "nautata" from earlier use) and skip loading
+            # anything, leaving Electroglas showing whatever unrelated ATA
+            # folder it last had rather than the Nautilus wafer builder
+            # map.
+            try:
+                self._by_system[self.active_system]["ui"].load_nautata_folder()
+            except Exception:
+                pass
+        else:
+            new_widget = self.ui
+
+        self._main_pane.forget(old_widget)
+        if self._main_pane.panes():
+            self._main_pane.insert(0, new_widget, weight=1)
+        else:
+            self._main_pane.add(new_widget, weight=1)
+        self._displayed_widget = new_widget
+        self.log(f"[SYSTEM] GUI mode switched to {mode}.")
+        for ui in (self._by_system["accretech"]["ui"], self._by_system["electroglas"]["ui"]):
+            try:
+                ui._refresh_nanoz_switch_state()
+            except Exception:
+                pass
+
+    def cmd_set_default_gui_mode(self, mode: str):
+        if mode not in ("normal", "nanoz"):
+            return
+        app_settings.set_default_gui_mode(mode)
+        self.log(f"[SYSTEM] Default GUI mode set to {mode} for this machine.")
+        for ui in (self._by_system["accretech"]["ui"], self._by_system["electroglas"]["ui"]):
+            try:
+                ui._refresh_nanoz_switch_state()
+            except Exception:
+                pass
+
+    def _apply_default_gui_mode(self):
+        """Startup only, mirrors _apply_default_prober. Silent when nothing
+        is set - "normal" stays the fallback."""
+        mode = app_settings.get_default_gui_mode()
+        if mode and mode != self.gui_mode:
+            self.cmd_set_gui_mode(mode)
+
+    def notify_nanoz_ata_folder_loaded(self, folder_path: str):
+        """Called by MainLayout.load_ata_folder (whichever system's) after
+        a folder finishes loading, so NanoZPanel - no longer nested inside
+        MainLayout, see gui/nanoz_mode.py - still hears about it. A no-op
+        until NanoZ mode has actually been entered at least once (nothing
+        to forward to before then)."""
+        if self._nanoz_mode_ui is not None:
+            try:
+                self._nanoz_mode_ui.on_ata_folder_loaded(folder_path)
+            except Exception:
+                pass
+
     def _system_ready_loop(self):
         self.check_system_ready()
         self.after(2000, self._system_ready_loop)
@@ -452,8 +629,16 @@ class AtomicaDashboard(tk.Tk):
         accr = getattr(ui, "accr_wafer", None)
         if accr is not None and getattr(accr, "_running", False):
             return True
-        nanoz = getattr(ui, "nanoz_panel", None)
-        if nanoz is not None and getattr(nanoz, "_running", False):
+        # NanoZ is no longer a MainLayout tab (see gui/nanoz_mode.py) - its
+        # panel, when one exists, hangs off the NanoZ-mode container
+        # instead, and a run there can still be in progress even if the
+        # operator has switched back to normal mode mid-run, OR toggled
+        # the Accretech/Electroglas switch while still in NanoZ mode (both
+        # systems have their own real, run-capable NanoZPanel now - see
+        # NanozModeLayout.any_running, which checks every built holder,
+        # not just whichever one is currently on screen).
+        nanoz_mode_ui = getattr(self, "_nanoz_mode_ui", None)
+        if nanoz_mode_ui is not None and nanoz_mode_ui.any_running():
             return True
         return False
 
@@ -1178,13 +1363,16 @@ class AtomicaDashboard(tk.Tk):
 
     def accretech_required_drivers(self, bench: str = None) -> tuple:
         """Which controller.drivers keys a RUN on `bench` (default: the
-        active one) actually needs right now - every one of the five
-        ACCR_KEYS this bench has FITTED, mapped to its drv_key
-        (_ACCRETECH_SLOT_INFO), not the fixed ACCRETECH_REQUIRED_DRIVERS
-        five unconditionally. A bench with wave_gen marked not-fitted
-        (Setup tab's Fitted checkbox - e.g. probe08new, which has no wave
-        gen wired at all) must not need it connected to be READY or to
-        start a run - see check_system_ready and
+        active one) actually needs right now - the drv_key
+        (_ACCRETECH_SLOT_INFO, see init_hardware's connections.append)
+        for every slot accretech_profiles.fitted_keys(bench) says this
+        bench has fitted, not the fixed ACCRETECH_REQUIRED_DRIVERS five
+        unconditionally. A bench with wave_gen marked not-fitted (Setup
+        tab's Fitted checkbox - e.g. probe08new, which has no wave gen
+        wired at all) or with it removed entirely (this "drivers" branch's
+        flexible Setup tab - a bench can drop a slot, or carry more than
+        one of a kind, e.g. a second DMM) must not need it connected to be
+        READY or to start a run - see check_system_ready and
         instrument_panel._exec2_can_start, which both call this instead
         of hardcoding the five. Falls back to the fixed list if the
         profile can't be read at all."""
@@ -1422,9 +1610,22 @@ class AtomicaDashboard(tk.Tk):
         self._do_load_ata_folder(folder)
 
     def update_statistics_visuals(self):
-        untested = self.total_dies - self.dies_tested
+        # total_dies is the wafer-map SQUARE count (set from the loaded map/
+        # recipe's touchdown list at run start) - on a Minor Moves recipe
+        # each square is a SHOT, and dies_tested counts individual die
+        # measurements, several per shot, so it can legitimately end up
+        # bigger than total_dies well before the run is actually done.
+        # Displaying total_dies - dies_tested there gives a negative
+        # "Untested" count and a >100% progress fraction - not a real
+        # problem with the run/count data itself, just this display doing
+        # arithmetic against the wrong-shaped total. Grow the displayed
+        # total to whatever's actually bigger so neither ever goes
+        # negative/over 100%, without touching total_dies or how tested/
+        # passed/failed are actually counted.
+        display_total = max(self.total_dies, self.dies_tested)
+        untested = display_total - self.dies_tested
         self.ui.lbl_stats_text.config(text=f"Pass: {self.dies_passed}  |  Fail: {self.dies_failed}\nUntested: {untested}")
-        self.ui.lbl_progress.config(text=f"Progress: {self.dies_tested} / {self.total_dies} tested")
+        self.ui.lbl_progress.config(text=f"Progress: {self.dies_tested} / {display_total} tested")
         self.ui.lbl_results_large.config(text=f"Total Passed: {self.dies_passed}     |     Total Failed: {self.dies_failed}     |     Untested: {untested}")
         self.ui.draw_donut(self.ui.sidebar_canvas, 120, self.dies_passed, self.dies_failed, untested)
         if hasattr(self.ui, "results_canvas"):
