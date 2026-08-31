@@ -100,12 +100,26 @@ class NanozModeLayout(ttk.Frame):
 
     @property
     def nanoz_panel(self):
-        """Whichever system's NanoZPanel is currently displayed, or None on
-        the Electroglas side (no panel exists yet) - mirrors the attribute
-        MainLayout.nanoz_panel used to expose, for the same external
-        callers (see app.py's run-in-progress check)."""
+        """Whichever system's NanoZPanel is currently displayed - mirrors
+        the attribute MainLayout.nanoz_panel used to expose, for external
+        callers that only care about what's on screen right now."""
         holder = self._holders.get(self._current_system)
         return getattr(holder, "nanoz_panel", None) if holder is not None else None
+
+    def any_running(self) -> bool:
+        """True if ANY built holder's NanoZPanel has a run active, not just
+        the currently-displayed one. Both Accretech and Electroglas now
+        have a real, run-capable NanoZPanel (see nanoz_panel.py's __init__
+        docstring), so a run started on one system keeps going on its own
+        background thread even after the operator toggles the system
+        switch or leaves NanoZ mode entirely - app.py._any_run_in_progress
+        needs this, not the single-system `nanoz_panel` property above, or
+        it misses a run left active on whichever system isn't on screen."""
+        for holder in self._holders.values():
+            panel = getattr(holder, "nanoz_panel", None)
+            if panel is not None and getattr(panel, "_running", False):
+                return True
+        return False
 
     def on_ata_folder_loaded(self, folder_path):
         """Forwarded from MainLayout.load_ata_folder (via app.py) so a

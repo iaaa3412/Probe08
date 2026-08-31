@@ -941,7 +941,7 @@ class NanoZPanel(ttk.Frame):
             self.refresh_eg_anchor_choices()
         self.after(0, _finish)
 
-    def _eg_refresh_wafer_plan_from_wafer_builder(self):
+    def _eg_refresh_wafer_plan_from_wafer_builder(self, silent: bool = False):
         """Electroglas only - builds self._wafer_plan directly from the
         Wafer Builder tab's Die Map (main_layout.recipe_gen), the same
         data _wafer_builder_dies() below already reads for the (removed)
@@ -949,19 +949,36 @@ class NanoZPanel(ttk.Frame):
         windows are computed by grouping each column's dies into
         probe-height-tall chunks top-down - the touchdown's reference
         point is always the TOP die of the column, per the physical probe
-        card's own convention."""
+        card's own convention.
+
+        silent=True (used by on_ata_folder_loaded, an automatic callback
+        that can fire for an ATA folder load on a totally unrelated tab/
+        system - see nanoz_mode.NanozModeLayout.on_ata_folder_loaded,
+        which forwards to every built NanoZPanel holder regardless of
+        which one is actually on screen) logs a failure instead of
+        popping a modal messagebox - a blocking dialog appearing out of
+        nowhere while the operator is doing something else entirely (e.g.
+        working the normal Accretech tabs) is its own bug, not a fair
+        price for "no Wafer Builder die map yet" being a completely
+        routine, expected state. The interactive button (no silent=)
+        keeps the popup - there the operator just clicked it and wants an
+        answer immediately."""
+        def _warn(msg):
+            if silent:
+                self._log_main(f"Wafer Builder auto-refresh: {msg}")
+            else:
+                messagebox.showwarning("Wafer Builder", msg)
         gen = getattr(self._main_layout, "recipe_gen", None)
         if gen is None:
-            messagebox.showwarning("Wafer Builder", "Wafer Builder tab not available.")
+            _warn("Wafer Builder tab not available.")
             return
         try:
             dpx, dpy = gen._die_pitch()
         except Exception:
             dpx = dpy = None
         if not dpx or not dpy:
-            messagebox.showwarning(
-                "Wafer Builder", "No Wafer Builder die map yet - set die IDs on the "
-                                 "normal Electroglas side's Wafer Builder tab first.")
+            _warn("No Wafer Builder die map yet - set die IDs on the "
+                  "normal Electroglas side's Wafer Builder tab first.")
             return
         dies, serial_to_rc = {}, {}
         for d in gen._die_positions():
@@ -972,9 +989,8 @@ class NanoZPanel(ttk.Frame):
             dies[(row, col)] = {"serial": serial, "status": "product"}
             serial_to_rc[serial.upper()] = (row, col)
         if not dies:
-            messagebox.showwarning(
-                "Wafer Builder", "No Wafer Builder die map yet - set die IDs on the "
-                                 "normal Electroglas side's Wafer Builder tab first.")
+            _warn("No Wafer Builder die map yet - set die IDs on the "
+                  "normal Electroglas side's Wafer Builder tab first.")
             return
         probe_height = nzb.DEFAULT_PROBE_HEIGHT
         by_col: dict = {}
@@ -3749,7 +3765,11 @@ class NanoZPanel(ttk.Frame):
             # Builder map is the wafer data here (see
             # _eg_refresh_wafer_plan_from_wafer_builder), so both the
             # pickable wafer_map AND self._wafer_plan come from it.
-            self._eg_refresh_wafer_plan_from_wafer_builder()
+            # silent=True: this callback can fire for a folder load on a
+            # totally unrelated tab/system (see NanozModeLayout.
+            # on_ata_folder_loaded) - "no Wafer Builder map yet" is routine
+            # here, not something that should pop a blocking dialog.
+            self._eg_refresh_wafer_plan_from_wafer_builder(silent=True)
             plan = self._wafer_plan
             dies = ([{"row": r, "col": c, "x_um": float(c), "y_um": -float(r),
                      "die_id": d["serial"]} for (r, c), d in plan.dies.items()]
@@ -4407,17 +4427,37 @@ class NanoZPanel(ttk.Frame):
             if self._system == "electroglas":
                 # get_die_position() already returns a parsed (x, y) tuple
                 # of die counts - no ASCII response to parse, unlike
-                # Accretech's Q reply.
-                x, y = prober.get_die_position()
+                # Accretech's Q reply. That (x, y) is the prober's own raw
+                # die-count position, NOT a wafer-plan (row, col) - it only
+                # equals one once translated through the anchor offset
+                # (_eg_set_anchor_thread's inverse), the same way Move to
+                # Selected/Next Die already compute a target FROM (row, col)
+                # + offset. Every other place in this class that sets
+                # _current_rc (the anchor itself, Move to Selected, Next
+                # Die) sets it in wafer-plan terms - this path used to be
+                # the one exception, silently storing raw die counts
+                # instead, which fed _wafer_plan-keyed lookups (e.g.
+                # _active_boards_for_window) the wrong (row, col) as soon as
+                # the operator pressed Sync ?P (or a cycle auto-refreshed)
+                # after anchoring.
+                real_x, real_y = prober.get_die_position()
                 cmd_label = "?P"
+                if self._eg_origin_offset is not None:
+                    ox, oy = self._eg_origin_offset
+                    x, y = real_x - ox, real_y - oy
+                else:
+                    x, y = real_x, real_y
+                log_line = (f"{cmd_label} -> real X={real_x:.0f} Y={real_y:.0f}  "
+                           f"(die col={x:.0f} row={y:.0f})")
             else:
                 raw = prober.get_xy_position()
                 x, y = _parse_q_response(raw)
                 cmd_label = "Q"
-            self._current_rc = (int(y), int(x))
+                log_line = f"{cmd_label} -> die X={x:.0f} Y={y:.0f}"
+            self._current_rc = (int(round(y)), int(round(x)))
             self.after(0, lambda: self.manual_xy_var.set(f"X: {x:.0f}  Y: {y:.0f}"))
-            self.after(0, lambda: self._log(f"{cmd_label} -> die X={x:.0f} Y={y:.0f}"))
-            self.after(0, lambda: self.wafer_map.update_die(int(y), int(x), "CURRENT"))
+            self.after(0, lambda: self._log(log_line))
+            self.after(0, lambda: self.wafer_map.update_die(int(round(y)), int(round(x)), "CURRENT"))
             self.after(0, self._update_position_window)
             return True
         except Exception as e:

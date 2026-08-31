@@ -623,10 +623,13 @@ class AtomicaDashboard(tk.Tk):
         # NanoZ is no longer a MainLayout tab (see gui/nanoz_mode.py) - its
         # panel, when one exists, hangs off the NanoZ-mode container
         # instead, and a run there can still be in progress even if the
-        # operator has switched back to normal mode mid-run.
+        # operator has switched back to normal mode mid-run, OR toggled
+        # the Accretech/Electroglas switch while still in NanoZ mode (both
+        # systems have their own real, run-capable NanoZPanel now - see
+        # NanozModeLayout.any_running, which checks every built holder,
+        # not just whichever one is currently on screen).
         nanoz_mode_ui = getattr(self, "_nanoz_mode_ui", None)
-        nanoz = getattr(nanoz_mode_ui, "nanoz_panel", None) if nanoz_mode_ui is not None else None
-        if nanoz is not None and getattr(nanoz, "_running", False):
+        if nanoz_mode_ui is not None and nanoz_mode_ui.any_running():
             return True
         return False
 
