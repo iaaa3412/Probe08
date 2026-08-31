@@ -11,7 +11,8 @@ import time
 from wafer_map_view import (WaferMapPanel, PadLayoutPanel, ProbeCardWiringFrame,
                             ATA_KEY_FILES, WAFER_MAP_SOURCES, _pz_bind,
                             recipe_file_path, copy_recipe, copy_probe_card, copy_wafer_map,
-                            delete_recipe, delete_probe_card, delete_wafer_map)
+                            delete_recipe, delete_probe_card, delete_wafer_map,
+                            rebuild_wafer_map_panel)
 from execution_panel import ExecutionDashboard
 from gds_parser_panel import GdsParserPanel
 from switch_debug_panel import SwitchDebugPanel
@@ -3190,6 +3191,11 @@ class MainLayout(ttk.Frame):
         # redrawn, and when the data itself changes, is unchanged.
         self._exec2_wafer_map.on_zoom = self._exec2_debounced(
             "_exec2_zoom_debounce_id", self._exec2_redraw_overlay_on_run_map)
+        # Double-click "reset view" would otherwise redraw a second time on
+        # this same long-lived canvas - the exact "packed with no gaps"
+        # corruption _new_results_wafer_map's own comment documents. Route
+        # it through a fresh-widget rebuild instead, same fix, same reason.
+        self._exec2_wafer_map.on_reset_request = self._exec2_rebuild_run_map
         # Bound with add="+" so the map's own pan/zoom/reset bindings (set up
         # inside WaferMapPanel.__init__) still run first.
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<Double-Button-1>"):
@@ -3281,6 +3287,23 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech":
             self._exec2_load_selected_map(quiet_if_missing=True)
 
+    def _exec2_rebuild_run_map(self):
+        """Replace the Run tab wafer map with a fresh widget instead of
+        redrawing on its existing canvas - wired as on_reset_request so a
+        double-click "reset view" (which used to redraw straight on the
+        same long-lived canvas) can no longer reproduce the "packed with
+        no gaps" corruption. rebuild_wafer_map_panel already carries over
+        pick selection and PASS/FAIL/CURRENT status; this just re-attaches
+        the extra bindings that live outside WaferMapPanel itself."""
+        old = self._exec2_wafer_map
+        new = rebuild_wafer_map_panel(old)
+        self._exec2_wafer_map = new
+        new.on_reset_request = self._exec2_rebuild_run_map
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<Double-Button-1>"):
+            new.canvas.bind(
+                seq, lambda _e: self._exec2_update_overlay_visibility(), add="+")
+        self._exec2_redraw_overlay_on_run_map()
+
     def _exec2_adopt_map_die_ids(self):
         """Use the die IDs the loaded map file carries as the overlay.
 
@@ -3326,6 +3349,12 @@ class MainLayout(ttk.Frame):
         wm.on_redraw = self._exec2_redraw_overlay_on_results_map
         wm.on_zoom = self._exec2_debounced(
             "_exec2_results_zoom_debounce_id", self._exec2_redraw_overlay_on_results_map)
+        # A double-click "reset view" on THIS widget, later, must not redraw
+        # a second time on this same canvas - see this method's own comment.
+        # Route it through the lighter rebuild below instead, which keeps
+        # PASS/FAIL/CURRENT status and the pick selection instead of
+        # dropping them the way a brand new dataset load correctly does.
+        wm.on_reset_request = self._exec2_rebuild_results_map_view
         self._results_wafer_map = wm
         if old is not None:
             try:
@@ -3333,6 +3362,19 @@ class MainLayout(ttk.Frame):
             except tk.TclError:
                 pass
         return wm
+
+    def _exec2_rebuild_results_map_view(self):
+        """Same fresh-widget fix as _new_results_wafer_map, but for a plain
+        view reset (double-click) rather than a genuinely new dataset - so
+        this one preserves PASS/FAIL/CURRENT status and the pick selection
+        via rebuild_wafer_map_panel instead of dropping them."""
+        old = self._results_wafer_map
+        if old is None:
+            return
+        new = rebuild_wafer_map_panel(old)
+        self._results_wafer_map = new
+        new.on_reset_request = self._exec2_rebuild_results_map_view
+        new.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
 
     def _sync_results_wafer_map(self):
         rwm = getattr(self, "_results_wafer_map", None)

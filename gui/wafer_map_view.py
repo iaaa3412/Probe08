@@ -136,6 +136,14 @@ class WaferMapPanel(ttk.LabelFrame):
         self.last_draw_debug = None
         self.on_redraw = None  # optional callback() run after any full redraw
         self.on_zoom = None    # optional callback() run after any zoom
+        # Optional callback() a caller sets to take over the double-click
+        # "reset view" gesture entirely instead of letting _reset_view draw
+        # again on THIS SAME canvas - see _reset_view's own comment for why
+        # a second draw on a long-lived canvas is unsafe for a real (Run/
+        # Results tab) map. Left None for every other WaferMapPanel use
+        # (small editor/preview canvases that have never shown this bug)
+        # so their behaviour is unchanged.
+        self.on_reset_request = None
         self.canvas.create_text(150, 100, text="Waiting for Wafer Map...", fill="gray")
         _pz_bind(self.canvas, self._reset_view, self._fire_zoom)
 
@@ -222,6 +230,22 @@ class WaferMapPanel(ttk.LabelFrame):
             self._on_pick_change(self.get_picked())
 
     def _reset_view(self):
+        # Redrawing a second time on THIS canvas (_draw_from_die_list called
+        # again on the same long-lived Canvas widget) is the exact scenario
+        # that produced every "dies packed with no gaps" report - the first
+        # draw on a canvas is always correct, every later one on that same
+        # canvas is not, for a Tk-geometry reason that was never pinned
+        # down (see instrument_panel.py's _new_results_wafer_map). A real
+        # Run/Results tab map registers on_reset_request to route double-
+        # click-reset through a fresh-widget rebuild instead of drawing
+        # again here; anything that hasn't (editor/preview canvases, which
+        # have never shown this bug) keeps the old direct-redraw behaviour.
+        if self.on_reset_request is not None:
+            try:
+                self.on_reset_request()
+                return
+            except Exception:
+                pass
         if self._last_dies is not None:
             self._draw_from_die_list(self._last_dies)
         else:
@@ -886,6 +910,52 @@ def _clone_bench_recipes_in_file(path: str, old_bench: str, new_bench: str) -> l
         with open(path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerows(rows + new_rows)
     return cloned
+
+
+def rebuild_wafer_map_panel(old_wm: "WaferMapPanel") -> "WaferMapPanel":
+    """Replace old_wm with a brand-new WaferMapPanel on a fresh Canvas, in
+    the same grid slot - the only known fix for the "packed with no gaps"
+    corruption a second _draw_from_die_list on the same long-lived canvas
+    produces (see instrument_panel.py's _new_results_wafer_map, which first
+    established this pattern for the Results tab). Generalized here so any
+    caller - Run tab map, Results tab map, any future one, any Accretech
+    project - can get the same protection, e.g. by wiring it into
+    on_reset_request, instead of the fix living only wherever the last bug
+    report happened to point.
+
+    Carries over everything a fresh redraw can't recompute on its own
+    (per-die PASS/FAIL/CURRENT status, the current pick selection, and the
+    caller's own callbacks) so this is safe to call mid-run, not just at
+    load time.
+    """
+    parent = old_wm.master
+    new_wm = WaferMapPanel(parent, show_title=old_wm._show_title,
+                            show_axis_grid=old_wm._show_axis_grid)
+    grid_info = old_wm.grid_info()
+    if grid_info:
+        new_wm.grid(**{k: v for k, v in grid_info.items() if k != "in"})
+    new_wm.on_redraw = old_wm.on_redraw
+    new_wm.on_zoom = old_wm.on_zoom
+    new_wm.on_reset_request = old_wm.on_reset_request
+    new_wm._click_handler = old_wm._click_handler
+    new_wm._picking_enabled = old_wm._picking_enabled
+    new_wm._pick_max = old_wm._pick_max
+    new_wm._on_pick_change = old_wm._on_pick_change
+    new_wm._die_status = dict(old_wm._die_status)
+    picked = set(old_wm._picked)
+    dies = old_wm._last_dies
+    if dies is not None:
+        new_wm._last_dies = dies
+        new_wm._draw_from_die_list(dies)
+    else:
+        new_wm.draw_map()
+    new_wm._picked = picked
+    new_wm._recolor_picks()
+    try:
+        old_wm.destroy()
+    except tk.TclError:
+        pass
+    return new_wm
 
 
 def recipe_file_path(cards_dir: str, base: str, system: str) -> str:
