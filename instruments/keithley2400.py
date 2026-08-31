@@ -138,6 +138,18 @@ class Keithley2400(GPIBInstrument):
         self.write(f":SENS:VOLT:NPLC {nplc}")
         self.write(f":SENS:RES:NPLC {nplc}")
 
+    def set_auto_zero(self, enabled: bool):
+        """ON re-measures the instrument's own internal zero reference before
+        every reading (cancels thermal/amplifier offset drift); OFF skips
+        that and reads straight through. Confirmed on the bench: cuts a
+        combined current+voltage read from ~1644ms to ~931ms at NPLC=1/
+        avg=20 - the single biggest remaining cost after the combined-read
+        fix. Real tradeoff, not a free one: without periodic re-zeroing,
+        slow drift can creep into readings over a long run. Left as an
+        explicit opt-in call, not part of _FIXED_SETUP, since Maddy and
+        Cenfire share this driver and haven't been evaluated with it off."""
+        self.write(f"syst:azer {'on' if enabled else 'off'}")
+
     def measure_current(self, channel):
         self.write(":SENS:FUNC 'CURR'")
         self.write(":FORM:ELEM CURR")

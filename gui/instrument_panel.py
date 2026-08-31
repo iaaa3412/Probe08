@@ -6072,6 +6072,18 @@ class MainLayout(ttk.Frame):
                             if do_cfg:
                                 if nplc is not None:
                                     smu.set_nplc(smu_ch, nplc)
+                                # Confirmed on the bench: the single biggest
+                                # remaining per-touchdown cost after the
+                                # combined-read fix (~1644ms -> ~931ms at
+                                # NPLC=1/avg=20). LaMP-only opt-in - see
+                                # Keithley2400.set_auto_zero's own docstring
+                                # for the drift tradeoff this accepts; Maddy
+                                # and Cenfire share this driver and have not
+                                # been evaluated with auto-zero off, and a
+                                # 2636B-backed recipe has no such method at
+                                # all.
+                                if hasattr(smu, "set_auto_zero"):
+                                    smu.set_auto_zero(False)
                                 # LaMP's MeterRange, carried from the .PMA. Pinned
                                 # rather than autoranged, so a different PMA
                                 # reconfigures the meter on LOAD ALL instead of
