@@ -1610,9 +1610,22 @@ class AtomicaDashboard(tk.Tk):
         self._do_load_ata_folder(folder)
 
     def update_statistics_visuals(self):
-        untested = self.total_dies - self.dies_tested
+        # total_dies is the wafer-map SQUARE count (set from the loaded map/
+        # recipe's touchdown list at run start) - on a Minor Moves recipe
+        # each square is a SHOT, and dies_tested counts individual die
+        # measurements, several per shot, so it can legitimately end up
+        # bigger than total_dies well before the run is actually done.
+        # Displaying total_dies - dies_tested there gives a negative
+        # "Untested" count and a >100% progress fraction - not a real
+        # problem with the run/count data itself, just this display doing
+        # arithmetic against the wrong-shaped total. Grow the displayed
+        # total to whatever's actually bigger so neither ever goes
+        # negative/over 100%, without touching total_dies or how tested/
+        # passed/failed are actually counted.
+        display_total = max(self.total_dies, self.dies_tested)
+        untested = display_total - self.dies_tested
         self.ui.lbl_stats_text.config(text=f"Pass: {self.dies_passed}  |  Fail: {self.dies_failed}\nUntested: {untested}")
-        self.ui.lbl_progress.config(text=f"Progress: {self.dies_tested} / {self.total_dies} tested")
+        self.ui.lbl_progress.config(text=f"Progress: {self.dies_tested} / {display_total} tested")
         self.ui.lbl_results_large.config(text=f"Total Passed: {self.dies_passed}     |     Total Failed: {self.dies_failed}     |     Untested: {untested}")
         self.ui.draw_donut(self.ui.sidebar_canvas, 120, self.dies_passed, self.dies_failed, untested)
         if hasattr(self.ui, "results_canvas"):
