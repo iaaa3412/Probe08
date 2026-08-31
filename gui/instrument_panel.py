@@ -4480,9 +4480,21 @@ class MainLayout(ttk.Frame):
         # IDs - a recipe (especially one whose touchdown resolution isn't
         # trusted yet, e.g. a PMA-based recipe) must only ever select/
         # highlight squares here, never relabel them.
+        #
+        # MERGED into the existing overlay, not _exec2_clear_overlay()+
+        # replaced - a recipe selects touchdowns, it does not get to
+        # redefine what the wafer map itself already knows about every
+        # OTHER die. This used to wipe _exec2_overlay_die_ids down to just
+        # this recipe's own (often smaller) touchdown list on every recipe
+        # switch, so a die ID shown under one recipe would visibly vanish
+        # the moment a different recipe on the same folder - with fewer or
+        # different touchdowns - was picked (confirmed: CENFIRE-INLINE_
+        # probe08 vs. TEST on the same physical wafer). The redraw calls
+        # below already clear and repaint their own canvas label items
+        # every time regardless, so nothing here depends on the dict
+        # itself having been emptied first.
         if ids and self._system == "accretech":
-            self._exec2_clear_overlay()
-            self._exec2_overlay_die_ids = ids
+            self._exec2_overlay_die_ids = {**(self._exec2_overlay_die_ids or {}), **ids}
             self._exec2_redraw_overlay_on_run_map()
             self._exec2_redraw_overlay_on_results_map()
         self._exec2_log(f"[RUN] Loaded {len(picks)} touchdown(s) from "
@@ -5269,8 +5281,18 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech" and self.recipe_panel.is_minor_moves():
             ids = {(s["row"], s["col"]): s["die_id"] for s in records if s.get("die_id")}
             if ids:
-                self._exec2_clear_overlay()
-                self._exec2_overlay_die_ids = ids
+                # MERGED into the existing overlay, not cleared+replaced -
+                # same fix and same reasoning as _exec2_load_selected_map's
+                # own version of this. Two Minor Moves recipes on the same
+                # physical wafer can carry different-sized touchdown lists
+                # (e.g. Cenfire's CENFIRE-INLINE_probe08, a filtered subset,
+                # vs. TEST, the full original) - wiping the overlay down to
+                # only the just-loaded recipe's own IDs made every OTHER
+                # die's label vanish the moment a smaller-touchdown recipe
+                # was picked, even though the two recipes describe the same
+                # real wafer and a recipe is only supposed to select
+                # touchdowns, never redefine what the map itself knows.
+                self._exec2_overlay_die_ids = {**(self._exec2_overlay_die_ids or {}), **ids}
                 self._exec2_redraw_overlay_on_run_map()
                 self._exec2_redraw_overlay_on_results_map()
 
