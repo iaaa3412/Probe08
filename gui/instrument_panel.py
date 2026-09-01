@@ -3303,6 +3303,13 @@ class MainLayout(ttk.Frame):
             new.canvas.bind(
                 seq, lambda _e: self._exec2_update_overlay_visibility(), add="+")
         self._exec2_redraw_overlay_on_run_map()
+        dbg = new.last_draw_debug or {}
+        self._exec2_log(
+            f"[RUN] Run map view reset — W={dbg.get('W')} H={dbg.get('H')} "
+            f"pitch=({dbg.get('pitch_x')},{dbg.get('pitch_y')}) scale={dbg.get('scale')} "
+            f"dw={dbg.get('dw')} dh={dbg.get('dh')}")
+        if dbg.get("warning"):
+            self._exec2_log(f"[ERROR] Run wafer map (reset): {dbg['warning']}")
 
     def _exec2_adopt_map_die_ids(self):
         """Use the die IDs the loaded map file carries as the overlay.
@@ -3375,6 +3382,13 @@ class MainLayout(ttk.Frame):
         self._results_wafer_map = new
         new.on_reset_request = self._exec2_rebuild_results_map_view
         new.canvas.bind("<Button-1>", self._on_results_map_click, add="+")
+        dbg = new.last_draw_debug or {}
+        self._exec2_log(
+            f"[RUN] Results map view reset — W={dbg.get('W')} H={dbg.get('H')} "
+            f"pitch=({dbg.get('pitch_x')},{dbg.get('pitch_y')}) scale={dbg.get('scale')} "
+            f"dw={dbg.get('dw')} dh={dbg.get('dh')}")
+        if dbg.get("warning"):
+            self._exec2_log(f"[ERROR] Results wafer map (reset): {dbg['warning']}")
 
     def _sync_results_wafer_map(self):
         rwm = getattr(self, "_results_wafer_map", None)
