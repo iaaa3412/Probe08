@@ -664,6 +664,21 @@ class WaferMapPanel(ttk.LabelFrame):
             self.dies[(d["row"], d["col"])] = rect
         if self._show_axis_grid:
             self._draw_axis_ticks(dies, to_cx, to_cy, W, H, ccx, ccy, cr)
+        # Below ~1.5px a die's own rectangle can't be told apart from its
+        # neighbours - whether that renders as a solid blob or a stripe
+        # pattern is then down to exactly where each sub-pixel edge lands
+        # on the real pixel grid, not anything meaningful about the data.
+        # Left unlabelled, that reads as "sometimes broken, sometimes not"
+        # (a real report: the same wafer looking fine, then "bad", with no
+        # code change in between). Said outright instead, so it reads as
+        # "too dense for this view" rather than looking like corruption -
+        # Zoom In (die_box_px() re-evaluates on every zoom already) is the
+        # actual way to see individual dies at this density.
+        if dw < 1.5 or dh < 1.5:
+            self.canvas.create_text(
+                ccx, min(ccy + cr + 14, H - 8),
+                text="Dies are sub-pixel at this zoom — use 🔍+ / scroll-zoom to tell them apart",
+                fill="#94a3b8", font=("Segoe UI", 8))
         self._recolor_statuses()
         self._recolor_picks()
         self._center_view()

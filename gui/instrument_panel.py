@@ -6982,6 +6982,32 @@ class MainLayout(ttk.Frame):
         results_lf.rowconfigure(0, weight=1)
         results_lf.columnconfigure(0, weight=1)
 
+        # ttk.PanedWindow's add(..., weight=) only steers how EXTRA space
+        # beyond every pane's own natural/requested size gets divided - it
+        # is not a percentage split, so the wafer map pane's actual height
+        # is really just whatever its content's natural size happens to be
+        # (observed on a real Cenfire folder: ~170-210px for 14631 dies,
+        # which makes every individual die sub-pixel - not a redraw bug,
+        # the canvas is just too short to show them distinctly, and the
+        # exact pixel-alignment then decides whether that looks like a
+        # solid blob or a stripe pattern, i.e. "looks different" is really
+        # just aliasing luck at the same too-small size). Same fix already
+        # used for the Electroglas Run tab's own PanedWindow (map_lf above)
+        # - explicit sashpos(), set once the pane has a real height via a
+        # one-shot <Configure> bind, never fighting a later manual drag.
+        def _apply_initial_results_sashes():
+            h = split.winfo_height()
+            if h <= 1:
+                return
+            split.sashpos(0, int(h * 0.55))
+            split.sashpos(1, int(h * 0.80))
+        def _set_initial_results_sashes(_event=None):
+            if split.winfo_height() <= 1:
+                return
+            split.unbind("<Configure>", results_sash_bind_id[0])
+            split.after_idle(_apply_initial_results_sashes)
+        results_sash_bind_id = [split.bind("<Configure>", _set_initial_results_sashes)]
+
         cols = ("timestamp", "recipe", "die", "step", "type", "value", "unit")
         self._results_tree = ttk.Treeview(
             results_lf, columns=cols, show="headings", height=8, selectmode="browse")
