@@ -464,12 +464,26 @@ class AtomicaDashboard(tk.Tk):
                 self._main_pane.add(self.ui, weight=1)
             self._displayed_widget = self.ui
         self._style_system_toggle()
-        default_folder = app_settings.get_default_ata_folder()
-        if default_folder and os.path.isdir(default_folder):
-            if self.ui._ata_folder != default_folder:
+        # Only auto-load anything here when this system has NEVER had a
+        # folder loaded (self.ui._ata_folder is still empty) - each
+        # system's MainLayout already remembers its own _ata_folder
+        # independently, so a system that already has one loaded (whatever
+        # it is) must be left exactly as it is on every later toggle. This
+        # used to re-check the global default folder (or the OTHER
+        # system's folder) on EVERY switch and force-reload it whenever it
+        # differed from what was currently showing - so switching
+        # Accretech (folder A) -> Electroglas (folder B, picked by hand) ->
+        # back to Accretech silently reloaded Electroglas back onto
+        # whatever the default/other-system's folder was, wiping the
+        # operator's own pick and resetting that system's results/stats -
+        # same "switching X should only SELECT, never silently change
+        # state" class of bug already fixed for recipe-vs-wafer-map.
+        if not self.ui._ata_folder:
+            default_folder = app_settings.get_default_ata_folder()
+            if default_folder and os.path.isdir(default_folder):
                 self._do_load_ata_folder(default_folder)
-        elif carry_over_folder and self.ui._ata_folder != carry_over_folder:
-            self._do_load_ata_folder(carry_over_folder)
+            elif carry_over_folder:
+                self._do_load_ata_folder(carry_over_folder)
         # _do_load_ata_folder (above) already syncs the label/picker when it
         # runs - but if this system's folder was already correctly loaded
         # (e.g. pre-loaded at startup), neither branch above fires, so do it
