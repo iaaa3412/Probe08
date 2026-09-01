@@ -469,6 +469,17 @@ class NanoZPanel(ttk.Frame):
 
         bar = ttk.Frame(tab)
         bar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
+        # Same role as the normal (non-NanoZ) Recipe tab's own "Take from
+        # map selection": select dies on the Run tab's map, then build this
+        # recipe's touchdowns from them - here that also needs a wafer plan
+        # to classify dies and compute each board's probe-height window
+        # (_compute_recipe's own docstring/log covers why), so it keeps its
+        # own name and Import Wafer Plan button above rather than claiming
+        # the identical label for a materially different computation.
+        self._btn_compute_recipe = ttk.Button(bar, text="🧮 Compute Recipe",
+                                              command=self._compute_recipe)
+        self._btn_compute_recipe.pack(side="left", padx=(0, 4))
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
         self._btn_recipe_add = ttk.Button(bar, text="＋ Add Shot", command=self._add_shot)
         self._btn_recipe_add.pack(side="left", padx=(0, 4))
         self._btn_recipe_dup = ttk.Button(bar, text="⎘ Duplicate", command=self._duplicate_shot)
@@ -879,17 +890,23 @@ class NanoZPanel(ttk.Frame):
         shots = nzb.build_shots_from_windows(self._wafer_plan, sites, ports, slots_by_port,
                                              row_off, col_off)
         self._shots = shots
-        # Computed, not saved - unlike Import Wafer Plan this never calls
-        # _persist_recipe(), and clearing the active recipe name makes the
-        # Recipe tab show "(unsaved - Save As... to keep this recipe)" so
-        # nothing on disk changes until the user explicitly saves it.
-        self._current_recipe_name = None
+        # If a recipe is already active (loaded/previously saved), save the
+        # recomputed touchdowns straight back into it - same "picking a map
+        # selection sets and saves this recipe's touchdowns immediately"
+        # behavior the normal (non-NanoZ) Recipe tab's own Take from map
+        # selection button already has. Only a brand new, never-yet-named
+        # recipe is left unsaved, since there is no name to write to until
+        # the operator picks one via Save As...
+        active_name = self._current_recipe_name
+        if active_name:
+            self._persist_recipe()
         self._redraw_recipe_tree()
         self._refresh_recipe_name_cb()
         self._sub_nb.select(self._recipe_tab)
         self._log_main(
-            f"Compute Recipe: built {len(shots)} shot(s) from {len(sites)} selected die(s) "
-            f"— not saved yet, use Save As… on the Recipe tab to keep this.")
+            f"Compute Recipe: built {len(shots)} shot(s) from {len(sites)} selected die(s)"
+            + (f" and saved to '{active_name}'." if active_name
+               else " — not saved yet, use Save As… on the Recipe tab to keep this."))
 
     def _import_wafer_plan(self):
         folder = self._nanoz_ata_folder
@@ -1596,9 +1613,10 @@ class NanoZPanel(ttk.Frame):
         # state alongside start_btn/stop_btn.
         self.test_btn = ttk.Button(ctrl, text="▶  Test Die", command=self._start_test_die)
         self.recipe_btn = ttk.Button(ctrl, text="▶  Run Recipe", command=self._start_recipe_run)
-        self._btn_compute_recipe = ttk.Button(ctrl, text="🧮 Compute Recipe",
-                                              command=self._compute_recipe)
-        self._btn_compute_recipe.pack(side="left", padx=2, pady=5)
+        # Compute Recipe itself now lives on the Recipe tab (see
+        # _build_recipe_tab) - same relocation as the normal Recipe tab's
+        # own "Take from map selection" button, which also acts on the Run
+        # tab's map from the Recipe tab rather than living next to the map.
 
         ttk.Separator(ctrl, orient="vertical").pack(side="left", fill="y", padx=10, pady=4)
 
