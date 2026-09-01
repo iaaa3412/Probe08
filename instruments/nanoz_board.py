@@ -628,6 +628,30 @@ def load_known_boards(folder) -> list[BoardIdentity]:
     ]
 
 
+PROBE_HEIGHT_FILENAME = "ata_nanoz_probe_height.json"
+
+
+def save_probe_height(folder, n: int) -> None:
+    """Persist the operator's configured probe-head slot count for THIS ATA
+    folder - a probe card's physical property (Setup tab's Probe Head Slots
+    control), not a hardware constant fixed at 20 (see DEFAULT_PROBE_HEIGHT's
+    own comment) - some probe cards are 1x2, 1x3, or single-die."""
+    path = Path(folder) / PROBE_HEIGHT_FILENAME
+    path.write_text(json.dumps({"probe_height": int(n)}), encoding="utf-8")
+
+
+def load_probe_height(folder) -> int:
+    path = Path(folder) / PROBE_HEIGHT_FILENAME
+    if not path.is_file():
+        return DEFAULT_PROBE_HEIGHT
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        n = int(data.get("probe_height", DEFAULT_PROBE_HEIGHT))
+        return n if n > 0 else DEFAULT_PROBE_HEIGHT
+    except (OSError, ValueError, TypeError):
+        return DEFAULT_PROBE_HEIGHT
+
+
 WAFER_PLAN_XLSX_FILENAME = "ata_nanoz_wafer_plan.xlsx"
 
 
@@ -811,8 +835,12 @@ except ImportError:
 # else with a die serial in it is a normal product die.
 _REFERENCE_FILL_RGBS = frozenset({"FFC00000"})
 
-# The probe head's physical slot count (1-20, top to bottom) - a hardware
-# constant of the probe card, not something the wafer-plan workbook carries.
+# The probe head's physical slot count (top to bottom) - varies BY PROBE
+# CARD (some are 1x2, 1x3, or single-die, not every probe card is a full
+# 1x20), so it's not a fixed hardware constant - it's the fallback before
+# the operator has set anything on the Setup tab's Probe Head Slots control
+# (see save_probe_height/load_probe_height), and never carried by the
+# wafer-plan workbook itself either way.
 DEFAULT_PROBE_HEIGHT = 20
 
 
@@ -824,7 +852,7 @@ class WaferPlan:
     probe_height: int = DEFAULT_PROBE_HEIGHT
 
 
-def load_wafer_plan(path) -> WaferPlan:
+def load_wafer_plan(path, probe_height: int = DEFAULT_PROBE_HEIGHT) -> WaferPlan:
     if not _OPENPYXL_AVAILABLE:
         raise NanoZError("openpyxl is required to import a wafer plan .xlsx (pip install openpyxl)")
 
@@ -872,7 +900,8 @@ def load_wafer_plan(path) -> WaferPlan:
             f"Touchdown List references {len(missing)} die ID(s) not found on Die Map: "
             + ", ".join(missing[:5]) + (", ..." if len(missing) > 5 else ""))
 
-    return WaferPlan(dies=dies, serial_to_rc=serial_to_rc, touchdowns=touchdowns)
+    return WaferPlan(dies=dies, serial_to_rc=serial_to_rc, touchdowns=touchdowns,
+                     probe_height=probe_height)
 
 
 def classify_die(plan: "WaferPlan", row: int, col: int,

@@ -293,6 +293,21 @@ class NanoZPanel(ttk.Frame):
         ttk.Label(brow, text="ENV interval (s):").pack(side="left")
         self.env_interval_var = tk.StringVar(value="1.0")
         ttk.Entry(brow, textvariable=self.env_interval_var, width=6).pack(side="left", padx=(4, 0))
+        ttk.Separator(brow, orient="vertical").pack(side="left", fill="y", padx=8)
+        # Probe head slot count - a PROBE CARD property, not a fixed
+        # hardware constant: some cards are a full 1x20, others 1x2, 1x3,
+        # or single-die. Drives everything sized off it - the wafer-plan
+        # window height (Compute Recipe's touchdown windows), the Run tab's
+        # position-window box on the map, and the valid range for manually
+        # assigning a board's slot (Setup tab's Slot columns, below).
+        ttk.Label(brow, text="Probe head slots:").pack(side="left")
+        self._probe_height_var = tk.IntVar(value=nzb.DEFAULT_PROBE_HEIGHT)
+        self._probe_height_spin = ttk.Spinbox(
+            brow, from_=1, to=20, width=4, textvariable=self._probe_height_var,
+            command=self._on_probe_height_change)
+        self._probe_height_spin.pack(side="left", padx=(4, 0))
+        self._probe_height_spin.bind("<Return>", lambda _e: self._on_probe_height_change())
+        self._probe_height_spin.bind("<FocusOut>", lambda _e: self._on_probe_height_change())
 
         cols = ("port", "sn", "fw", "sig", "slot0", "slot1", "status", "spl", "env")
         # height=11 - all 10 boards visible at once with no internal scroll needed.
@@ -772,12 +787,18 @@ class NanoZPanel(ttk.Frame):
             self._log_main(f"{note}'{path}' but that file is no longer there — "
                            "Wafer Map tab left as-is.")
             return
-        threading.Thread(target=self._autoload_wafer_plan_thread, args=(path,),
+        # Resolved on the MAIN thread, before spawning - self._probe_height()
+        # reads a Tk IntVar, and calling that from the background thread
+        # below would risk the same "main thread is not in main loop" class
+        # of bug this codebase already guards against elsewhere (see
+        # pma_wafer_panel.py's workbook loader).
+        probe_height = self._probe_height()
+        threading.Thread(target=self._autoload_wafer_plan_thread, args=(path, probe_height),
                          daemon=True).start()
 
-    def _autoload_wafer_plan_thread(self, path: str):
+    def _autoload_wafer_plan_thread(self, path: str, probe_height: int):
         try:
-            plan = nzb.load_wafer_plan(path)
+            plan = nzb.load_wafer_plan(path, probe_height=probe_height)
         except Exception as e:
             self.after(0, lambda e=e: self._log_main(
                 f"Could not auto-reload wafer plan '{path}': {e}"))
@@ -1100,10 +1121,11 @@ class NanoZPanel(ttk.Frame):
             filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")])
         if not path:
             return
-        threading.Thread(target=self._import_wafer_plan_thread, args=(folder, path),
-                         daemon=True).start()
+        probe_height = self._probe_height()  # main thread - see _autoload_wafer_plan's own note
+        threading.Thread(target=self._import_wafer_plan_thread,
+                         args=(folder, path, probe_height), daemon=True).start()
 
-    def _import_wafer_plan_thread(self, folder: str, path: str):
+    def _import_wafer_plan_thread(self, folder: str, path: str, probe_height: int):
         # Copies the picked .xlsx into the ATA folder at a fixed name first,
         # then parses/uses THAT copy - the source the user picked (e.g.
         # references/nautilusprobeplan.xlsx) is only ever a template/example,
@@ -1113,7 +1135,7 @@ class NanoZPanel(ttk.Frame):
         # turns a wafer plan into a recipe now.
         try:
             dest = nzb.import_wafer_plan_into_folder(folder, path)
-            plan = nzb.load_wafer_plan(dest)
+            plan = nzb.load_wafer_plan(dest, probe_height=probe_height)
         except Exception as e:
             self.after(0, lambda e=e: messagebox.showerror("Import Failed", str(e)))
             return
@@ -1198,7 +1220,7 @@ class NanoZPanel(ttk.Frame):
             _warn("No Wafer Builder die map yet - set die IDs on the "
                   "normal Electroglas side's Wafer Builder tab first.")
             return
-        probe_height = nzb.DEFAULT_PROBE_HEIGHT
+        probe_height = self._probe_height()
         by_col: dict = {}
         for (row, col) in dies:
             by_col.setdefault(col, []).append(row)
@@ -1532,8 +1554,6 @@ class NanoZPanel(ttk.Frame):
             except tk.TclError:
                 pass
 
-    _POSITION_WINDOW_SIZE = 20  # matches the probe head's 20 physical slots (top to bottom)
-
     def _clear_position_window(self):
         wm = self.wafer_map
         for item in self._position_window_items:
@@ -1572,14 +1592,15 @@ class NanoZPanel(ttk.Frame):
         return best_rc, best_item
 
     def _update_position_window(self):
-        """Draw a single rectangle spanning a 1-wide x 20-tall window on the
-        Run tab wafer map, anchored at the current die (X/Y) and extending
-        down - the same footprint as one physical touchdown on the 20-slot
-        probe head. One outline instead of 20 individual cell outlines is
-        much easier to read at a glance. Also records, per cell, whether a
-        die actually exists there (self._position_window_dies) so the
-        recipe/board logic can see what is (or isn't) under the head right
-        now, even though only the overall box is drawn."""
+        """Draw a single rectangle spanning a 1-wide x N-tall window (N = the
+        Setup tab's Probe head slots) on the Run tab wafer map, anchored at
+        the current die (X/Y) and extending down - the same footprint as
+        one physical touchdown on the probe head. One outline instead of N
+        individual cell outlines is much easier to read at a glance. Also
+        records, per cell, whether a die actually exists there
+        (self._position_window_dies) so the recipe/board logic can see what
+        is (or isn't) under the head right now, even though only the
+        overall box is drawn."""
         self._clear_position_window()
         self._position_window_dies = []
         row, col = self._current_rc
@@ -1591,7 +1612,8 @@ class NanoZPanel(ttk.Frame):
         pitch = self._die_pitch()
         present_n = 0
         all_coords = []
-        for i in range(self._POSITION_WINDOW_SIZE):
+        window_size = self._probe_height()
+        for i in range(window_size):
             r, c = row + i, col
             item = wm.dies.get((r, c))
             coords = wm.canvas.coords(item) if item is not None else None
@@ -1623,8 +1645,8 @@ class NanoZPanel(ttk.Frame):
             self._position_window_items.append(rect)
 
         self._position_window_var.set(
-            f"Position window R{row}C{col} ↓{self._POSITION_WINDOW_SIZE}: "
-            f"{present_n}/{self._POSITION_WINDOW_SIZE} dies present")
+            f"Position window R{row}C{col} ↓{window_size}: "
+            f"{present_n}/{window_size} dies present")
 
     def _wafer_plan_offset(self) -> tuple:
         """(row_offset, col_offset) translating the wafer plan's own Die Map
@@ -3536,6 +3558,45 @@ class NanoZPanel(ttk.Frame):
         if hasattr(self.controller, "log"):
             self.controller.log(f"[NANOZ] {msg}")
 
+    def _probe_height(self) -> int:
+        """Current probe head slot count - always read through here, never
+        nzb.DEFAULT_PROBE_HEIGHT directly, so every consumer (wafer-plan
+        window height, position window on the map, slot-assignment range)
+        stays in sync with the Setup tab control and with each other."""
+        try:
+            n = int(self._probe_height_var.get())
+        except (tk.TclError, ValueError):
+            return nzb.DEFAULT_PROBE_HEIGHT
+        return n if n > 0 else nzb.DEFAULT_PROBE_HEIGHT
+
+    def _on_probe_height_change(self):
+        n = self._probe_height()
+        if int(self._probe_height_var.get() or 0) != n:
+            self._probe_height_var.set(n)
+        folder = self._nanoz_ata_folder
+        if folder:
+            try:
+                nzb.save_probe_height(folder, n)
+            except OSError as e:
+                self._log_main(f"Could not save probe head slot count: {e}")
+        # A currently-loaded wafer plan (if any) was built with the OLD
+        # slot count - re-derive it against the new one immediately rather
+        # than leaving Compute Recipe silently working from a stale window
+        # height until the next Import/Refresh. Electroglas: rebuilds from
+        # the Wafer Builder die map (its actual source of truth); Accretech:
+        # only refreshable by re-importing the .xlsx, so just warn instead
+        # of guessing at a path.
+        if self._wafer_plan is not None:
+            if self._system == "electroglas":
+                self._eg_refresh_wafer_plan_from_wafer_builder(silent=True)
+            else:
+                self._wafer_plan.probe_height = n
+                self._log_main(
+                    f"Probe head slots set to {n} - re-import the wafer plan "
+                    "(.xlsx) to rebuild it against the new slot count.")
+        self._update_position_window()
+        self._log_main(f"Probe head slots set to {n}.")
+
     def _discover_boards(self):
         threading.Thread(target=self._discover_boards_thread, daemon=True).start()
 
@@ -3784,10 +3845,13 @@ class NanoZPanel(ttk.Frame):
             return
         label = board.identity.port or f"SN {board.identity.serial_number}"
         current = board.identity.slot0 if chip == "0" else board.identity.slot1
+        max_slot = self._probe_height()
         new_slot = simpledialog.askinteger(
             "Assign Probe-Card Slot",
-            f"Physical slot for {label}'s chip {chip} (1-20, top to bottom of the probe head):",
-            initialvalue=current or 1, minvalue=1, maxvalue=99, parent=self)
+            f"Physical slot for {label}'s chip {chip} (1-{max_slot}, top to bottom "
+            "of the probe head — see the Setup tab's Probe head slots):",
+            initialvalue=min(current, max_slot) if current else 1,
+            minvalue=1, maxvalue=max_slot, parent=self)
         if new_slot is None:
             return
         if chip == "0":
@@ -3831,6 +3895,10 @@ class NanoZPanel(ttk.Frame):
                        f"{idle} not connected ({len(self._boards)} known).")
 
     def on_ata_folder_loaded(self, folder_path: str):
+        # Probe head slot count is a per-ATA-folder (effectively per-probe-
+        # card) setting - loaded before anything below that depends on it
+        # (_eg_refresh_wafer_plan_from_wafer_builder's window height).
+        self._probe_height_var.set(nzb.load_probe_height(folder_path))
         if self._system == "electroglas":
             # No ata_wafer_map_accretech.csv on this side - the Wafer
             # Builder map is the wafer data here (see
