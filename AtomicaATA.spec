@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller build spec for the Atomica Tester GUI - a single, portable
-AtomicaATA.exe with nothing else that has to travel alongside it (see
+AtomicaProber.exe with nothing else that has to travel alongside it (see
 gui/workdir.py's own _PREF_PATH/_exe_dir comments, and gui/gds_parser_
 panel.py's _GDS_DIR comment, for why that deployment shape is safe: the
 one file that must persist across runs self-creates next to the exe on
@@ -9,7 +9,7 @@ first use, and everything else is read-only and bundled in here).
 Build with:
     pyinstaller AtomicaATA.spec
 
-Output: dist/AtomicaATA.exe
+Output: dist/AtomicaProber.exe
 
 Entry point is gui/app.py, NOT main.py. main.py launches app.py via
 runpy.run_path() on a path computed at runtime - invisible to
@@ -98,7 +98,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="AtomicaATA",
+    name="AtomicaProber",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
