@@ -707,18 +707,34 @@ def get_active_recipe_name(folder):
     return _load_recipes_file(folder).get("active")
 
 
-def save_named_recipe(folder, name: str, shots: list, wafer_plan_path: str | None = None) -> None:
+def save_named_recipe(folder, name: str, shots: list, wafer_plan_path: str | None = None,
+                      touchdowns: "list | None" = None) -> None:
     data = _load_recipes_file(folder)
     data["recipes"][name] = _shots_to_rows(shots)
     data["active"] = name
     if wafer_plan_path:
         data.setdefault("wafer_plan_paths", {})[name] = wafer_plan_path
+    # The touchdown LIST (which dies - see nanoz_panel._touchdowns) is the
+    # source Compute Recipe built these shots from, saved alongside them so
+    # re-opening a recipe restores what to hand back to Compute Recipe, not
+    # just its already-computed result - same as the normal (non-NanoZ)
+    # Recipe tab's own touchdown table, which is part of the saved recipe.
+    # None (the default) leaves whatever was there before untouched, so
+    # code that saves shots without knowing about the touchdown list (the
+    # legacy-migration path) can't silently wipe it.
+    if touchdowns is not None:
+        data.setdefault("touchdowns", {})[name] = touchdowns
     _write_recipes_file(folder, data)
 
 
 def load_named_recipe(folder, name: str) -> list[dict]:
     rows = _load_recipes_file(folder)["recipes"].get(name)
     return _rows_to_shots(rows) if rows is not None else []
+
+
+def load_named_touchdowns(folder, name: str) -> list[dict]:
+    rows = _load_recipes_file(folder).get("touchdowns", {}).get(name)
+    return list(rows) if isinstance(rows, list) else []
 
 
 def get_recipe_wafer_plan_path(folder, name: str) -> str | None:
@@ -738,6 +754,7 @@ def delete_named_recipe(folder, name: str) -> None:
     data = _load_recipes_file(folder)
     data["recipes"].pop(name, None)
     data.get("wafer_plan_paths", {}).pop(name, None)
+    data.get("touchdowns", {}).pop(name, None)
     if data.get("active") == name:
         data["active"] = None
     _write_recipes_file(folder, data)
@@ -911,7 +928,8 @@ def wafer_plan_stats(plan: "WaferPlan") -> dict:
 
 def _build_shot(plan: "WaferPlan", die_col: int, start: int, end: int, ports: list,
                 slots_by_port: dict, label: str,
-                row_offset: int = 0, col_offset: int = 0) -> dict:
+                row_offset: int = 0, col_offset: int = 0,
+                already_covered: "set | None" = None) -> dict:
     """Each NanoZ board has two independent chips (0 and 1), each wired to its
     own physical probe-head slot — `slots_by_port[port]` is a {"0": slot_or_None,
     "1": slot_or_None} dict (see BoardIdentity.chip_slots()). A `run <nn>`
@@ -928,11 +946,22 @@ def _build_shot(plan: "WaferPlan", die_col: int, start: int, end: int, ports: li
     and are stored as-is in the returned shot - only the classify_die lookups
     are translated into the plan's own space via row_offset/col_offset, so
     the shot's die_column/td_start_row/td_end_row stay usable for driving
-    the physical prober."""
+    the physical prober.
+
+    already_covered, when given, is a {(row, col), ...} set of dies (in the
+    same caller coordinate space as die_col/start/end) already probed by an
+    earlier touchdown THIS call is part of a sequence with - a chip landing
+    on one of those is excluded too (reason "already probed by an earlier
+    touchdown in this recipe"), same as landing off-wafer, and every chip
+    this call does NOT exclude is added to the set before returning, so the
+    next call in the sequence sees it. None (the default) skips this
+    entirely - used by callers that only care about a single touchdown in
+    isolation (active_ports_for_window), not a sequence."""
     exclusions = touchdown_slot_exclusions(die_col, start, end, plan, row_offset, col_offset)
     excluded_boards = set()
     board_reasons = {}
     chip_reasons = {}
+    newly_covered = set()
     for port in ports:
         chip_slots = slots_by_port.get(port) or {}
         per_chip = {}
@@ -940,8 +969,15 @@ def _build_shot(plan: "WaferPlan", die_col: int, start: int, end: int, ports: li
             slot = chip_slots.get(chip)
             if slot is None:
                 per_chip[chip] = "no slot assigned"
-            else:
-                per_chip[chip] = exclusions.get(slot, "slot beyond probe head height")
+                continue
+            reason = exclusions.get(slot, "slot beyond probe head height")
+            if reason is None and already_covered is not None:
+                rc = (start + slot - 1, die_col)
+                if rc in already_covered:
+                    reason = "already probed by an earlier touchdown in this recipe"
+                else:
+                    newly_covered.add(rc)
+            per_chip[chip] = reason
         chip_reasons[port] = per_chip
         if all(r is not None for r in per_chip.values()):
             excluded_boards.add(port)
@@ -949,6 +985,8 @@ def _build_shot(plan: "WaferPlan", die_col: int, start: int, end: int, ports: li
                 f"chip{c}: {r}" for c, r in per_chip.items())
         else:
             board_reasons[port] = None
+    if already_covered is not None:
+        already_covered |= newly_covered
     return {
         "label": label,
         "excluded_boards": excluded_boards,
@@ -965,13 +1003,23 @@ def build_shots_from_windows(plan: "WaferPlan", windows: list, ports: list,
     probe_height-tall touchdown footprint (e.g. dies the user highlighted on
     the Run tab's wafer map, each imagined as a touchdown's top die), rather
     than the wafer plan's own pre-computed touchdown list. windows are in the
-    caller's coordinate space; see _build_shot."""
+    caller's coordinate space; see _build_shot.
+
+    windows is expected top-to-bottom, left-to-right (the caller sorts by
+    (row, col) - see nanoz_panel._compute_recipe) - a running "already
+    probed" set is threaded through _build_shot call to call in that order,
+    so a board whose chip would re-probe a die an EARLIER touchdown in this
+    same list already covered gets excluded from the later one instead of
+    running it twice. Windows only partially overlapping (the normal case -
+    see _build_shot's own docstring) still run, just with the
+    already-covered chip(s) skipped rather than the whole touchdown."""
     shots = []
+    covered: set = set()
     for start_row, die_col in windows:
         end = start_row + plan.probe_height - 1
         label = f"Col {die_col} · rows {start_row}-{end} (from selection)"
         shots.append(_build_shot(plan, die_col, start_row, end, ports, slots_by_port, label,
-                                 row_offset, col_offset))
+                                 row_offset, col_offset, already_covered=covered))
     return shots
 
 

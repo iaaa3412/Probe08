@@ -140,6 +140,14 @@ class NanoZPanel(ttk.Frame):
         self._chart_t0_by_port: dict[str, "dt.datetime"] = {}
         self._mark_cycle_start()
         self._shots: list[dict] = []
+        # The touchdown LIST - which dies this recipe should probe, built up
+        # by hand (map selection/die-ID search/etc, same tools the normal
+        # Recipe tab's own touchdown table has) BEFORE Compute Recipe turns
+        # each one into an actual board-window shot. Deliberately separate
+        # from self._shots: this is "which dies", editable and re-orderable
+        # without touching board assignments; _shots is "what Compute Recipe
+        # decided to do about it", rebuilt from this list every time it runs.
+        self._touchdowns: list[dict] = []
         self._recipe_name_var = tk.StringVar(value="")
         self._current_recipe_name: str | None = None
         self._wafer_plan: "nzb.WaferPlan | None" = None
@@ -467,19 +475,71 @@ class NanoZPanel(ttk.Frame):
                                                  foreground="#6b7280")
         self._recipe_plan_status_lbl.pack(side="left", padx=(10, 0))
 
-        bar = ttk.Frame(tab)
-        bar.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
+        # -- touchdown list -----------------------------------------------
+        # Same shape as the normal (non-NanoZ) Recipe tab's own "Touchdowns"
+        # table: build up WHICH dies this recipe probes by hand (map
+        # selection, die-ID search, ...), independent of board assignments.
+        # 🧮 Compute Recipe then turns this list into actual shots - each
+        # touchdown becomes a probe-height-tall window at that die's column,
+        # top-to-bottom/left-to-right, with a board excluded from a later
+        # touchdown if every die it would land on was already probed by an
+        # earlier one in this same list (see nanoz_board.build_shots_from_
+        # windows) - so touchdowns can overlap without re-running the same
+        # die twice, without needing to be perfectly non-overlapping by hand.
+        td_lf = ttk.LabelFrame(tab, text="Touchdowns (which dies this recipe probes)", padding=6)
+        td_lf.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
+        td_lf.columnconfigure(0, weight=1)
+
+        self._nz_td_var = tk.StringVar(value="No touchdowns yet — pick dies on the "
+                                             "Run tab's map, then ⬅ Take from map selection.")
+        ttk.Label(td_lf, textvariable=self._nz_td_var, font=("Arial", 8),
+                 foreground="#555", justify="left", wraplength=760).grid(
+                 row=0, column=0, sticky="w")
+
+        td_bar = ttk.Frame(td_lf)
+        td_bar.grid(row=1, column=0, sticky="ew", pady=(4, 4))
+        ttk.Button(td_bar, text="⬅ Take from map selection",
+                  command=self._nz_td_from_map).pack(side="left")
+        ttk.Button(td_bar, text="🏷 Take die IDs",
+                  command=self._nz_td_from_die_ids).pack(side="left", padx=(6, 0))
+        ttk.Button(td_bar, text="➡ Push to map",
+                  command=self._nz_td_to_map).pack(side="left", padx=(6, 0))
+        ttk.Button(td_bar, text="✕ Remove selected",
+                  command=self._nz_td_remove).pack(side="left", padx=(16, 0))
+        ttk.Button(td_bar, text="🗑 Clear all",
+                  command=self._nz_td_clear).pack(side="left", padx=(6, 0))
+        ttk.Button(td_bar, text="🔎 Find all",
+                  command=self._nz_td_find_all).pack(side="left", padx=(16, 0))
+        self._nz_td_find_var = tk.StringVar(value="")
+        ttk.Entry(td_bar, textvariable=self._nz_td_find_var, width=14).pack(
+            side="left", padx=(4, 0))
+        ttk.Separator(td_bar, orient="vertical").pack(side="left", fill="y", padx=12)
         # Same role as the normal (non-NanoZ) Recipe tab's own "Take from
         # map selection": select dies on the Run tab's map, then build this
         # recipe's touchdowns from them - here that also needs a wafer plan
         # to classify dies and compute each board's probe-height window
         # (_compute_recipe's own docstring/log covers why), so it keeps its
-        # own name and Import Wafer Plan button above rather than claiming
-        # the identical label for a materially different computation.
-        self._btn_compute_recipe = ttk.Button(bar, text="🧮 Compute Recipe",
+        # own name rather than claiming the identical label for a
+        # materially different computation.
+        self._btn_compute_recipe = ttk.Button(td_bar, text="🧮 Compute Recipe",
                                               command=self._compute_recipe)
-        self._btn_compute_recipe.pack(side="left", padx=(0, 4))
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        self._btn_compute_recipe.pack(side="left")
+
+        td_cols = ("n", "die_id", "row", "col")
+        self._nz_td_tree = ttk.Treeview(td_lf, columns=td_cols, show="headings", height=6)
+        for cid, text, width, anchor in (("n", "#", 40, "center"),
+                                         ("die_id", "Die ID", 220, "w"),
+                                         ("row", "Row", 60, "center"),
+                                         ("col", "Col", 60, "center")):
+            self._nz_td_tree.heading(cid, text=text)
+            self._nz_td_tree.column(cid, width=width, anchor=anchor, stretch=(cid == "die_id"))
+        self._nz_td_tree.grid(row=2, column=0, sticky="ew")
+        td_sb = ttk.Scrollbar(td_lf, orient="vertical", command=self._nz_td_tree.yview)
+        td_sb.grid(row=2, column=1, sticky="ns")
+        self._nz_td_tree.configure(yscrollcommand=td_sb.set)
+
+        bar = ttk.Frame(tab)
+        bar.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 4))
         self._btn_recipe_add = ttk.Button(bar, text="＋ Add Shot", command=self._add_shot)
         self._btn_recipe_add.pack(side="left", padx=(0, 4))
         self._btn_recipe_dup = ttk.Button(bar, text="⎘ Duplicate", command=self._duplicate_shot)
@@ -504,7 +564,7 @@ class NanoZPanel(ttk.Frame):
         self._recipe_boards_lbl.pack(side="left", padx=(12, 0))
 
         tree_frame = ttk.Frame(tab)
-        tree_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        tree_frame.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
         tree_frame.columnconfigure(0, weight=1)
         # Shrunk from 16 to make room for Pass/Fail Limits below - the tab
         # scrolls now, and the tree has its own scrollbar for longer recipes.
@@ -520,7 +580,7 @@ class NanoZPanel(ttk.Frame):
         self._recipe_tree.bind("<Double-1>", self._on_recipe_double_click)
 
         pf_lf = ttk.LabelFrame(tab, text="Pass/Fail Limits")
-        pf_lf.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
+        pf_lf.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
         pf_row = ttk.Frame(pf_lf)
         pf_row.pack(fill="x", padx=6, pady=6)
         ttk.Label(pf_row, text="Metric:").pack(side="left")
@@ -630,7 +690,8 @@ class NanoZPanel(ttk.Frame):
             return
         try:
             nzb.save_named_recipe(folder, self._current_recipe_name, self._shots,
-                                  wafer_plan_path=self._wafer_plan_path)
+                                  wafer_plan_path=self._wafer_plan_path,
+                                  touchdowns=self._touchdowns)
         except OSError as e:
             self._log(f"Could not save NanoZ recipe: {e}")
 
@@ -665,7 +726,8 @@ class NanoZPanel(ttk.Frame):
         if name in nzb.list_recipe_names(folder) and not messagebox.askyesno(
             "Overwrite Recipe", f"A recipe named '{name}' already exists — overwrite it?"):
             return
-        nzb.save_named_recipe(folder, name, self._shots, wafer_plan_path=self._wafer_plan_path)
+        nzb.save_named_recipe(folder, name, self._shots, wafer_plan_path=self._wafer_plan_path,
+                              touchdowns=self._touchdowns)
         self._current_recipe_name = name
         self._refresh_recipe_name_cb()
         self._log_main(f"Recipe saved as '{name}' — {len(self._shots)} shot(s). "
@@ -682,11 +744,14 @@ class NanoZPanel(ttk.Frame):
             messagebox.showinfo("No Recipe Selected", "Pick a recipe from the dropdown first.")
             return
         self._shots = nzb.load_named_recipe(folder, name)
+        self._touchdowns = nzb.load_named_touchdowns(folder, name)
         self._current_recipe_name = name
         nzb.set_active_recipe(folder, name)
         self._redraw_recipe_tree()
+        self._nz_refresh_td()
         self._refresh_recipe_name_cb()
-        self._log_main(f"Recipe '{name}' loaded — {len(self._shots)} shot(s).")
+        self._log_main(f"Recipe '{name}' loaded — {len(self._shots)} shot(s), "
+                       f"{len(self._touchdowns)} touchdown(s).")
         self._autoload_wafer_plan_for_recipe(folder, name)
 
     def _autoload_wafer_plan_for_recipe(self, folder: str, name: str):
@@ -871,13 +936,17 @@ class NanoZPanel(ttk.Frame):
                 "Recipe tab -> Import Wafer Plan (.xlsx).")
             return
         # Left to right, then top to bottom across the wafer map - i.e. row
-        # order first (top to bottom), columns within a row left to right.
-        sites = sorted(self.wafer_map.get_picked(), key=lambda rc: (rc[0], rc[1]))
+        # order first (top to bottom), columns within a row left to right -
+        # build_shots_from_windows relies on exactly this order for its own
+        # "don't re-probe a die an earlier touchdown already covered" logic.
+        sites = sorted(((t["row"], t["col"]) for t in self._touchdowns),
+                       key=lambda rc: (rc[0], rc[1]))
         if not sites:
             messagebox.showerror(
-                "No Dies Selected",
-                "Click one or more dies on the Run tab's wafer map to mark each as the "
-                "first die of a 1x20 touchdown window, then Compute Recipe.")
+                "No Touchdowns",
+                "The touchdown list above is empty. Pick dies on the Run tab's map, "
+                "then ⬅ Take from map selection (or 🏷 Take die IDs / 🔎 Find all), "
+                "then Compute Recipe.")
             return
         if self._shots and not messagebox.askyesno(
             "Replace Recipe",
@@ -907,6 +976,116 @@ class NanoZPanel(ttk.Frame):
             f"Compute Recipe: built {len(shots)} shot(s) from {len(sites)} selected die(s)"
             + (f" and saved to '{active_name}'." if active_name
                else " — not saved yet, use Save As… on the Recipe tab to keep this."))
+
+    # -- touchdown list -----------------------------------------------------
+    #
+    # Same tools/shape as the normal (non-NanoZ) Recipe tab's own touchdown
+    # table (recipe_panel.py's _build_sites) - build up WHICH dies this
+    # recipe probes independent of board assignments, which Compute Recipe
+    # then turns into actual shots. 🎯 Pull Shots has no NanoZ equivalent
+    # (it depends on Wafer Builder's shot-template/die-numbering concept,
+    # which NanoZ's wafer-plan-driven model doesn't have) - left out rather
+    # than faked.
+
+    def _nz_refresh_td(self):
+        tree = self._nz_td_tree
+        for iid in tree.get_children():
+            tree.delete(iid)
+        for i, t in enumerate(self._touchdowns, 1):
+            tree.insert("", "end", values=(
+                i, t.get("die_id", "") or "—", t.get("row", ""), t.get("col", "")))
+        n = len(self._touchdowns)
+        if not n:
+            self._nz_td_var.set(
+                "No touchdowns yet — pick dies on the Run tab's map, then "
+                "⬅ Take from map selection.")
+        else:
+            named = sum(1 for t in self._touchdowns if t.get("die_id"))
+            self._nz_td_var.set(
+                f"{n} touchdown{'' if n == 1 else 's'} — press 🧮 Compute Recipe to build "
+                f"the recipe from these. {named} carry a die ID.")
+
+    def _nz_td_set(self, touchdowns: list, verb: str):
+        self._touchdowns[:] = touchdowns
+        self._nz_refresh_td()
+        if self._current_recipe_name:
+            self._persist_recipe()
+        self._log_main(
+            f"Touchdown list {verb} {len(touchdowns)} die(s)"
+            + (f" — saved to '{self._current_recipe_name}'." if self._current_recipe_name
+               else " — not saved yet, use Save As… to keep this."))
+
+    def _nz_td_from_map(self):
+        picks = list(self.wafer_map.get_picked())
+        if not picks:
+            messagebox.showinfo(
+                "Touchdowns",
+                "No dies are selected on the Run tab's map.\n\n"
+                "Click dies there, then come back and press this again.")
+            return
+        picks.sort()
+        touchdowns = [{"die_id": self.wafer_map.die_ids.get(rc, ""),
+                       "row": rc[0], "col": rc[1]} for rc in picks]
+        self._nz_td_set(touchdowns, "set to")
+
+    def _nz_td_from_die_ids(self):
+        ided = {rc: did for rc, did in self.wafer_map.die_ids.items() if did}
+        if not ided:
+            messagebox.showinfo(
+                "Touchdowns",
+                "No dies on the loaded map carry a die ID.")
+            return
+        picks = sorted(ided.keys())
+        touchdowns = [{"die_id": ided[rc], "row": rc[0], "col": rc[1]} for rc in picks]
+        self._nz_td_set(touchdowns, "set to")
+
+    def _nz_td_find_all(self):
+        target = (self._nz_td_find_var.get() or "").strip()
+        if not target:
+            messagebox.showinfo("Touchdowns", "Type a die ID to search for first.")
+            return
+        picks = sorted(rc for rc, did in self.wafer_map.die_ids.items() if did == target)
+        if not picks:
+            messagebox.showinfo("Touchdowns",
+                                f"No dies on the loaded map are labeled '{target}'.")
+            return
+        touchdowns = [{"die_id": target, "row": rc[0], "col": rc[1]} for rc in picks]
+        self._nz_td_set(touchdowns, "set to")
+
+    def _nz_td_to_map(self):
+        if not self._touchdowns:
+            messagebox.showinfo("Touchdowns", "This recipe has no touchdowns yet.")
+            return
+        picks = [(t["row"], t["col"]) for t in self._touchdowns]
+        missing = [rc for rc in picks if rc not in self.wafer_map.dies]
+        self.wafer_map.set_picked(picks)
+        self._on_sites_changed(picks)
+        note = (f" ({len(missing)} not on the loaded map — wrong wafer map for "
+               "this recipe?)" if missing else "")
+        self._log_main(f"Highlighted {len(picks)} touchdown(s) on the Run map.{note}")
+
+    def _nz_td_remove(self):
+        sel = self._nz_td_tree.selection()
+        if not sel:
+            return
+        for idx in sorted((self._nz_td_tree.index(i) for i in sel), reverse=True):
+            if 0 <= idx < len(self._touchdowns):
+                del self._touchdowns[idx]
+        self._nz_refresh_td()
+        if self._current_recipe_name:
+            self._persist_recipe()
+
+    def _nz_td_clear(self):
+        if not self._touchdowns:
+            return
+        if not messagebox.askokcancel(
+                "Clear touchdowns",
+                f"Remove all {len(self._touchdowns)} touchdown(s)?"):
+            return
+        self._touchdowns.clear()
+        self._nz_refresh_td()
+        if self._current_recipe_name:
+            self._persist_recipe()
 
     def _import_wafer_plan(self):
         folder = self._nanoz_ata_folder
@@ -3690,6 +3869,7 @@ class NanoZPanel(ttk.Frame):
             self._log_main(f"Migrated the old unnamed NanoZ recipe into '{migrated}'.")
         name, shots, wafer_plan_path = nzb.load_active_recipe(folder_path)
         self._shots = shots
+        self._touchdowns = nzb.load_named_touchdowns(folder_path, name) if name else []
         self._current_recipe_name = name
         self._wafer_plan_path = wafer_plan_path
         if shots:
@@ -3697,6 +3877,7 @@ class NanoZPanel(ttk.Frame):
                            f"'{os.path.basename(folder_path)}' — {len(shots)} shot(s).")
         self._refresh_recipe_name_cb()
         self._rebuild_recipe_columns()
+        self._nz_refresh_td()
 
         plan_path = nzb.wafer_plan_path_in_folder(folder_path)
         if not os.path.isfile(plan_path) and name:
