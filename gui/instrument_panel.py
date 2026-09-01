@@ -4014,7 +4014,23 @@ class MainLayout(ttk.Frame):
         self._exec2_running  = True
         self._exec2_set_running_buttons(True)
         self._exec2_aborted  = False
-        self._exec2_run_mode = "full" if mode_label == "Full Die" else "test"
+        # Used to be a binary "Full Die" vs. everything-else-is-"test" check,
+        # from when this function's only two callers were the Minor Moves
+        # variants of Full Die and Test Die. ▶ Run (_exec2_start_run) is the
+        # real, only caller now, passing mode_label="Run" - which that old
+        # check silently mislabeled as "test" too, since it wasn't "Full
+        # Die". cassette_panel._start_next_run trusts this label to decide
+        # how to replay the next wafer, and "test" means "look for a
+        # remembered Test Selected pick list" - one that a Minor Moves ▶ Run
+        # never populates (see _exec2_start_site_list's own "test"-only
+        # bookkeeping). That silently broke cassette automation for every
+        # Minor Moves recipe run via ▶ Run - confirmed live on Cenfire,
+        # which is Minor Moves' whole reason for existing, while LaMP (no
+        # Minor Moves, ▶ Run takes the plain _exec2_start_site_list path
+        # instead of this function entirely) never touched this bug at all -
+        # not a Cenfire-specific gap, a real generalization one.
+        self._exec2_run_mode = {"Full Die": "full", "Test Die": "test",
+                                "Run": "run"}.get(mode_label, "run")
         self._exec2_run_token += 1
         my_token = self._exec2_run_token
         self._exec2_wafer_map.enable_picking(0)
