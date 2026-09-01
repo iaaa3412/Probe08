@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
-from pma_wafer_panel import pma_shots_to_grid, merge_with_accretech, centroid_offset
+from pma_wafer_panel import centroid_offset
 from prober_debug_panel import ProberDebugPanel
 from eg_prober_debug_panel import EgProberDebugPanel
 import instruments.nanoz_board as nzb
@@ -151,10 +151,7 @@ class NanoZPanel(ttk.Frame):
         self._nzmap_label_artists: list = []
         self._nzmap_view_debounce_id = None
         self._nzmap_current_labels: list = []
-        self._overlay_die_ids: dict[tuple[int, int], str] = {}
         self._overlay_items: list = []
-        self._overlay_row_offset = 0
-        self._overlay_col_offset = 0
 
         self._build_ui()
         self.after(50, self._check_queue)
@@ -1301,29 +1298,24 @@ class NanoZPanel(ttk.Frame):
                 pass
         items.clear()
 
-    def _clear_overlay(self):
-        self._clear_overlay_labels(self.wafer_map, self._overlay_items)
-        self._overlay_die_ids = {}
-
     def _redraw_overlay_on_run_map(self):
-        if not self._overlay_die_ids:
+        # Labels come straight from self.wafer_map.die_ids now - the loader
+        # (on_ata_folder_loaded, both systems) already populates that with
+        # every die's real ID for free, the same way the map file itself
+        # gets read. The old Overlay dialog (matching a separate PMA/XLS/
+        # CSV source onto the Accretech map by hand, with an offset to
+        # nudge) and Save/Load Selected Map (persisting that match to a
+        # CSV so it didn't have to be redone) were both working around not
+        # having that - removed as legacy now that the real IDs are just
+        # already there, every load, on both systems.
+        self._clear_overlay_labels(self.wafer_map, self._overlay_items)
+        die_ids = self.wafer_map.die_ids
+        if not die_ids:
             self._overlay_items = []
         else:
-            self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, self._overlay_die_ids)
+            self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, die_ids)
             self._update_overlay_visibility()
         self._update_position_window()
-
-    def _draw_overlay(self, matched: list):
-        # Matches instrument_panel.py's _exec2_draw_overlay exactly: label
-        # the matched dies AND select them as test sites (not just draw
-        # labels) - Overlay is meant to both identify dies and pick them.
-        self._clear_overlay()
-        self._overlay_die_ids = {(d["row"], d["col"]): "/".join(d["die_ids"]) for d in matched}
-        self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, self._overlay_die_ids)
-        picks = [(d["row"], d["col"]) for d in matched]
-        self.wafer_map.set_picked(picks)
-        self._on_sites_changed(picks)
-        self._update_overlay_visibility()
 
     _OVERLAY_MIN_DIE_PX = 22  # below this on-screen die width, overlay text is unreadable clutter
 
@@ -1331,7 +1323,7 @@ class NanoZPanel(ttk.Frame):
         if not self._overlay_items:
             return
         wm = self.wafer_map
-        sample_rc = next(iter(self._overlay_die_ids), None)
+        sample_rc = next(iter(wm.die_ids), None)
         item = wm.dies.get(sample_rc) if sample_rc else None
         bbox = wm.canvas.bbox(item) if item is not None else None
         if not bbox:
@@ -1437,131 +1429,6 @@ class NanoZPanel(ttk.Frame):
         self._position_window_var.set(
             f"Position window R{row}C{col} ↓{self._POSITION_WINDOW_SIZE}: "
             f"{present_n}/{self._POSITION_WINDOW_SIZE} dies present")
-
-    _OVERLAY_SOURCE_LABELS = {"pma": "PMA touchdown", "xls": "Recipe Generator",
-                             "csv": "CSV wafer map"}
-
-    def _overlay_source_data(self, source: str):
-        # Same three sources, same underlying data, as Accretech's Run tab
-        # overlay (_exec2_overlay_source_data in instrument_panel.py) - both
-        # read the identical PmaWaferPanel instance, so an overlay set up on
-        # either Run tab is working from the same PMA/XLS/CSV data.
-        pma_wafer = self._nzmap_pma_wafer()
-        if pma_wafer is None:
-            return None
-        return {"pma": pma_wafer._pma_shot_data, "xls": pma_wafer._xls_shot_data,
-               "csv": pma_wafer._csv_shot_data}.get(source)
-
-    def _open_overlay_dialog(self):
-        pma_wafer = self._nzmap_pma_wafer()
-        if pma_wafer is None:
-            self._log_main("Overlay: main Wafer Map tab is not available.")
-            return
-        accretech_rc = set(self.wafer_map.dies.keys())
-        if not accretech_rc:
-            self._log_main("Overlay: no Accretech wafer map loaded yet — "
-                           "load an ATA folder first.")
-            return
-
-        dlg = tk.Toplevel(self)
-        dlg.title("Overlay Wafer Map")
-        dlg.transient(self.winfo_toplevel())
-        dlg.resizable(False, False)
-
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill="both", expand=True)
-
-        ttk.Label(frm, text="Source:").grid(row=0, column=0, sticky="w")
-        source_var = tk.StringVar(value="pma")
-        src_row = ttk.Frame(frm)
-        src_row.grid(row=0, column=1, columnspan=4, sticky="w")
-        for value, text in (("pma", "PMA Touchdowns"), ("xls", "Recipe Generator"),
-                           ("csv", "CSV Wafer Map")):
-            ttk.Radiobutton(src_row, text=text, variable=source_var, value=value,
-                           command=lambda: center_overlay()).pack(side="left")
-
-        summary_var = tk.StringVar()
-        ttk.Label(frm, textvariable=summary_var, font=("Consolas", 9),
-                 justify="left").grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 4))
-        ttk.Label(frm, text="Centered by matching the two maps' centers (🎯 Center Overlay) "
-                 "— a die counts as \"on the map\" when its (row, col), shifted by the "
-                 "offset below, lands on a die the Accretech prober actually walked. Nudge "
-                 "the offset if dies land on the wrong physical die, then Overlay on Map.",
-                 font=("Segoe UI", 8), foreground="#6b7280", wraplength=340,
-                 justify="left").grid(row=2, column=0, columnspan=5, sticky="w", pady=(0, 10))
-
-        ttk.Label(frm, text="Row offset:").grid(row=3, column=0, sticky="e")
-        row_var = tk.IntVar(value=self._overlay_row_offset)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=row_var).grid(
-            row=3, column=1, sticky="w", padx=(4, 16))
-        ttk.Label(frm, text="Col offset:").grid(row=3, column=2, sticky="e")
-        col_var = tk.IntVar(value=self._overlay_col_offset)
-        ttk.Spinbox(frm, from_=-50, to=50, width=6, textvariable=col_var).grid(
-            row=3, column=3, sticky="w", padx=(4, 0))
-
-        state = {"grid": [], "matched": []}
-
-        def recompute(*_a):
-            data = self._overlay_source_data(source_var.get())
-            if not data:
-                state["grid"], state["matched"] = [], []
-                summary_var.set(
-                    f"No {self._OVERLAY_SOURCE_LABELS[source_var.get()]} data loaded — "
-                    "load it on the main Wafer Map tab first.")
-                return
-            try:
-                ro, co = row_var.get(), col_var.get()
-            except tk.TclError:
-                return
-            grid = pma_shots_to_grid(data)
-            state["grid"] = grid
-            state["matched"] = merge_with_accretech(grid, accretech_rc, ro, co)
-            summary_var.set(
-                f"Accretech dies on map:   {len(accretech_rc)}\n"
-                f"{self._OVERLAY_SOURCE_LABELS[source_var.get()]} dies (real ID): "
-                f"{len(grid)}\n"
-                f"Overlaid (on both maps): {len(state['matched'])}"
-            )
-
-        row_var.trace_add("write", recompute)
-        col_var.trace_add("write", recompute)
-
-        def center_overlay():
-            data = self._overlay_source_data(source_var.get())
-            if not data:
-                recompute()
-                return
-            ro, co = centroid_offset(pma_shots_to_grid(data), accretech_rc)
-            row_var.set(ro)
-            col_var.set(co)
-
-        center_overlay()
-
-        def do_overlay():
-            self._overlay_row_offset = row_var.get()
-            self._overlay_col_offset = col_var.get()
-            self._draw_overlay(state["matched"])
-            self._log_main(f"NanoZ Run: overlaid {len(state['matched'])} die(s) from the "
-                           f"{self._OVERLAY_SOURCE_LABELS[source_var.get()]} source onto "
-                           "the wafer map and selected them as test sites.")
-
-        def do_clear():
-            self._clear_overlay()
-            self.wafer_map.clear_picks()
-            self._on_sites_changed([])
-            self._log_main("NanoZ Run: overlay cleared.")
-
-        ttk.Button(frm, text="🎯 Center Overlay", command=center_overlay).grid(
-            row=3, column=4, sticky="w", padx=(10, 0))
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=4, column=0, columnspan=5, sticky="ew", pady=(12, 0))
-        ttk.Button(btns, text="🖌 Overlay on Map", command=do_overlay).pack(side="left")
-        ttk.Button(btns, text="✕ Clear Overlay", command=do_clear).pack(side="left", padx=6)
-        ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
-
-        dlg.update_idletasks()
-        dlg.grab_set()
 
     def _wafer_plan_offset(self) -> tuple:
         """(row_offset, col_offset) translating the wafer plan's own Die Map
@@ -1888,12 +1755,6 @@ class NanoZPanel(ttk.Frame):
         ttk.Label(map_bar, textvariable=self.sites_var, foreground="#6b7280",
                  font=("Segoe UI", 8)).pack(side="left", padx=8)
         ttk.Separator(map_bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(map_bar, text="Overlay…", command=self._open_overlay_dialog).pack(side="left")
-        ttk.Button(map_bar, text="💾 Save Selected Map",
-                  command=self._save_selected_map).pack(side="left", padx=(6, 0))
-        ttk.Button(map_bar, text="📥 Load Selected Map",
-                  command=lambda: self._load_selected_map(quiet_if_missing=False)).pack(
-                  side="left", padx=(6, 0))
         self._select_all_btn = ttk.Button(
             map_bar, text="☑ Select All", command=self._toggle_select_all)
         self._select_all_btn.pack(side="left", padx=(6, 0))
@@ -3793,13 +3654,11 @@ class NanoZPanel(ttk.Frame):
         if n:
             self._log_main(f"Wafer map auto-loaded from "
                            f"'{os.path.basename(folder_path)}' — {n} die(s).")
-        # Same sequence as the Accretech Run tab's auto-load: clear any
-        # picks left over from whatever was drawn before, then restore this
-        # folder's own saved Selected Map (picks + overlay die IDs) if one
-        # exists - _load_selected_map already re-applies the zoom-based
-        # label show/hide state to whatever it draws.
+        # Clear any picks left over from whatever was drawn before - die-ID
+        # labels themselves are already drawn as part of the load above,
+        # via wafer_map.on_redraw (see _redraw_overlay_on_run_map), so
+        # there's nothing separate to restore here any more.
         self.wafer_map.clear_picks()
-        self._load_selected_map(quiet_if_missing=True)
 
         remembered = nzb.load_known_boards(folder_path)
         added = sum(1 for ident in remembered if self._add_board(ident))
@@ -4618,68 +4477,6 @@ class NanoZPanel(ttk.Frame):
             self._log_main(f"Selected all {len(all_rc)} die(s) — click any die to deselect "
                            "it, or press again to deselect all.")
 
-    _SELECTED_MAP_FILENAME = "ata_wafer_map_selected.csv"
-
-    def _selected_map_path(self):
-        folder = self._nanoz_ata_folder
-        return os.path.join(folder, self._SELECTED_MAP_FILENAME) if folder else None
-
-    def _save_selected_map(self):
-        if not self._nanoz_ata_folder:
-            messagebox.showerror(
-                "No ATA Folder",
-                "No ATA folder is loaded — use 📁 Load ATA Folder on the top toolbar first.")
-            return
-        picks = self.wafer_map.get_picked()
-        if not picks:
-            messagebox.showinfo("No Dies Selected",
-                                "Click dies on the map to select them first.")
-            return
-        path = self._selected_map_path()
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            wr = csv.writer(f)
-            wr.writerow(["row", "col", "label"])
-            for r, c in picks:
-                wr.writerow([r, c, self._overlay_die_ids.get((r, c), "")])
-        n_labeled = sum(1 for rc in picks if rc in self._overlay_die_ids)
-        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
-        self._log_main(f"Saved {len(picks)} selected die(s){note} → {path}")
-
-    def _load_selected_map(self, quiet_if_missing: bool = False):
-        path = self._selected_map_path()
-        if not path or not os.path.exists(path):
-            if not quiet_if_missing:
-                self._log_main("No saved Selected Map for this ATA folder yet — "
-                               "click dies on the map, then 💾 Save Selected Map.")
-            return []
-        picks = []
-        die_ids_by_rc = {}
-        with open(path, newline="", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    rc = (int(row["row"]), int(row["col"]))
-                except (KeyError, ValueError, TypeError):
-                    continue
-                picks.append(rc)
-                label = (row.get("label") or "").strip()
-                if label:
-                    die_ids_by_rc[rc] = label
-        self.wafer_map.set_picked(picks)
-        self._on_sites_changed(picks)
-        self._clear_overlay()
-        if die_ids_by_rc:
-            self._overlay_die_ids = die_ids_by_rc
-            self._overlay_items = self._draw_overlay_labels_on(self.wafer_map, die_ids_by_rc)
-            self._update_overlay_visibility()
-        n_labeled = len(die_ids_by_rc)
-        note = f" ({n_labeled} with overlay die ID)" if n_labeled else ""
-        if picks:
-            self._log_main(f"Loaded {len(picks)} selected die(s){note} from {path}")
-        elif not quiet_if_missing:
-            self._log_main(f"{path} has no valid rows.")
-        return picks
-
     def _randomize_sites(self):
         if self._run_guard("Randomize"):
             return
@@ -4865,7 +4662,7 @@ class NanoZPanel(ttk.Frame):
         Accretech's own die-ID resolution uses. None if nothing knows an
         ID for this die; row/col are still recorded either way, this only
         ever adds an ID on top."""
-        die_id = self._overlay_die_ids.get((row, col))
+        die_id = self.wafer_map.die_ids.get((row, col))
         if die_id:
             return die_id
         die_id = self.wafer_map.die_ids.get((row, col))
