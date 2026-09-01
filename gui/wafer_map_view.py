@@ -522,7 +522,7 @@ class WaferMapPanel(ttk.LabelFrame):
 
         return [d for d in dies if d["row"] is not None and d["x_um"] is not None]
 
-    def _draw_from_die_list(self, dies):
+    def _draw_from_die_list(self, dies, size_hint=None):
         self.canvas.delete("all")
         self.dies.clear()
         self.die_ids.clear()
@@ -538,6 +538,19 @@ class WaferMapPanel(ttk.LabelFrame):
         self.update_idletasks()
         W = self.canvas.winfo_width()
         H = self.canvas.winfo_height()
+        # A widget just (re)gridded into an already-mapped parent (a rebuild
+        # after a view reset, see rebuild_wafer_map_panel) can report its
+        # OWN small pre-layout size here even after update_idletasks() - the
+        # geometry manager hasn't finished the negotiation pass yet. On a
+        # dense wafer that shrinks pitch*scale enough to make every die
+        # sub-pixel, which looks exactly like the historical "packed with
+        # no gaps" corruption, but is really just 1000s of dies drawn into
+        # a canvas a fraction of its real size. size_hint (the caller's own
+        # last KNOWN-GOOD measurement, e.g. from the widget being replaced)
+        # is trusted over a just-measured value that looks smaller than it.
+        if size_hint and size_hint[0] > 50 and size_hint[1] > 50:
+            if W < size_hint[0] or H < size_hint[1]:
+                W, H = size_hint
         if W < 50:
             W, H = 400, 400
 
@@ -928,6 +941,11 @@ def rebuild_wafer_map_panel(old_wm: "WaferMapPanel") -> "WaferMapPanel":
     caller's own callbacks) so this is safe to call mid-run, not just at
     load time.
     """
+    # Measured BEFORE the old widget is touched further - this is the last
+    # known-good, fully-settled size or a real Cenfire-density wafer (see
+    # _draw_from_die_list's own comment on size_hint), since old_wm was
+    # already on screen and correctly laid out before this rebuild started.
+    old_w, old_h = old_wm.canvas.winfo_width(), old_wm.canvas.winfo_height()
     parent = old_wm.master
     new_wm = WaferMapPanel(parent, show_title=old_wm._show_title,
                             show_axis_grid=old_wm._show_axis_grid)
@@ -946,7 +964,7 @@ def rebuild_wafer_map_panel(old_wm: "WaferMapPanel") -> "WaferMapPanel":
     dies = old_wm._last_dies
     if dies is not None:
         new_wm._last_dies = dies
-        new_wm._draw_from_die_list(dies)
+        new_wm._draw_from_die_list(dies, size_hint=(old_w, old_h))
     else:
         new_wm.draw_map()
     new_wm._picked = picked
