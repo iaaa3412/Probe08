@@ -1204,22 +1204,10 @@ class RecipePanel(ttk.Frame):
         bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
         bar.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
 
-        self._shortcut_chk = ttk.Checkbutton(
-            bar, text="Don't resend configs (may not work if enabled)",
-            variable=self._shortcut_var, command=self._on_shortcut_toggle)
-        self._shortcut_chk.pack(side="left", padx=(8, 8), pady=4)
-
-        self._minor_moves_chk = ttk.Checkbutton(
-            bar, text="Minor moves (multi-die shot)",
-            variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
-        self._minor_moves_chk.pack(side="left", padx=(0, 8), pady=4)
-
-        self._fast_current_settle_chk = ttk.Checkbutton(
-            bar, text="Skip auto-clear on Force Current (Keithley 2400 only)",
-            variable=self._fast_current_settle_var,
-            command=self._on_fast_current_settle_toggle)
-        self._fast_current_settle_chk.pack(side="left", padx=(0, 8), pady=4)
-
+        # The Shortcut/Minor Moves/Skip-auto-clear checkboxes used to live
+        # here - moved down next to Direct Wiring in the step editor (see
+        # _build_steps) so every per-recipe toggle lives in one place at
+        # the bottom of the tab instead of split between here and there.
         # Accretech gets its origin from Wafer Builder's own Overlay sub-tab
         # (its confirmed row/col offset IS the translation between Wafer
         # Builder's logical die grid and real absolute die coordinates -
@@ -1896,8 +1884,31 @@ class RecipePanel(ttk.Frame):
         self._direct_chk = ttk.Checkbutton(
             editor, text="Direct wiring (no switchbox)",
             variable=self._direct_var, command=self._on_route_toggle)
-        self._direct_chk.grid(row=6, column=0, columnspan=4, sticky="w",
+        self._direct_chk.grid(row=6, column=0, columnspan=3, sticky="w",
                               padx=(6, 2), pady=(2, 0))
+        # Per-RECIPE toggles (not per-step, unlike everything else in this
+        # editor) - moved down here next to Direct Wiring, on the same row,
+        # so every checkbox on the tab lives in one place at the bottom
+        # instead of split between here and a separate bar above the step
+        # list. Columns run past the 8 the rest of the editor uses (fine -
+        # an ungoverned grid column just takes its natural width from
+        # whatever's in it, same as any other).
+        self._shortcut_chk = ttk.Checkbutton(
+            editor, text="Don't resend configs (may not work if enabled)",
+            variable=self._shortcut_var, command=self._on_shortcut_toggle)
+        self._shortcut_chk.grid(row=6, column=3, columnspan=4, sticky="w",
+                                padx=(6, 2), pady=(2, 0))
+        self._minor_moves_chk = ttk.Checkbutton(
+            editor, text="Minor moves (multi-die shot)",
+            variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
+        self._minor_moves_chk.grid(row=6, column=7, columnspan=3, sticky="w",
+                                   padx=(6, 2), pady=(2, 0))
+        self._fast_current_settle_chk = ttk.Checkbutton(
+            editor, text="Skip auto-clear on Force Current (Keithley 2400 only)",
+            variable=self._fast_current_settle_var,
+            command=self._on_fast_current_settle_toggle)
+        self._fast_current_settle_chk.grid(row=6, column=10, columnspan=4, sticky="w",
+                                           padx=(6, 2), pady=(2, 0))
         _lbl(4, 6, "Die #:")
         # Which die of the shot this measurement belongs to (Wafer Builder
         # Shot tab's die order, 1-based) - what the Results tab uses to
