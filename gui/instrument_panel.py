@@ -6047,17 +6047,28 @@ class MainLayout(ttk.Frame):
                         # delivered current/voltage. Confirmed on the bench
                         # (Cenfire, a marginal contact) that transient alone
                         # was enough to collapse a dependent sense step's
-                        # reading a moment later. Only ever WRITTEN when the
-                        # checkbox is on - _FIXED_SETUP already leaves the
-                        # instrument at clear:auto ON by default, so the
-                        # unchecked (default) case sends nothing extra at
-                        # all, not even a redundant "on". hasattr-gated - the
-                        # 2636B has no such method and doesn't need one,
-                        # this is a 2400-only transient.
-                        if (hasattr(smu, "set_source_clear_auto")
-                                and getattr(self, "recipe_panel", None)
-                                and self.recipe_panel.is_fast_current_settle()):
-                            smu.set_source_clear_auto(False)
+                        # reading a moment later.
+                        #
+                        # Actively asserted BOTH ways, not just written when
+                        # the checkbox is on - the SMU driver instance is
+                        # built once at Connect Instruments and reused for
+                        # every recipe run after that (gui/app.py), and
+                        # _FIXED_SETUP only runs from __init__/reset(), never
+                        # again between runs. Only ever writing "off" left
+                        # clear:auto silently off for whatever ran NEXT in
+                        # the same session (e.g. Cenfire with this box
+                        # checked, then LaMP without reconnecting) - exactly
+                        # the cross-project leak this checkbox exists to
+                        # prevent. Asserting it every Force Current step,
+                        # either direction, makes it self-correcting instead
+                        # of dependent on what the previous recipe left
+                        # behind. hasattr-gated - the 2636B has no such
+                        # method and doesn't need one, this is a 2400-only
+                        # transient.
+                        if hasattr(smu, "set_source_clear_auto"):
+                            fast_settle = bool(getattr(self, "recipe_panel", None)
+                                              and self.recipe_panel.is_fast_current_settle())
+                            smu.set_source_clear_auto(not fast_settle)
                         # One combined acquisition instead of two separate
                         # ones where the driver supports it (confirmed on
                         # the bench for the Keithley 2400: identical values,
