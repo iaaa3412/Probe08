@@ -1914,6 +1914,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                        "bench": rec.get("bench", ""),
                        "minor_moves": bool(rec.get("minor_moves")),
                        "shortcut": bool(rec.get("shortcut")),
+                       "fast_current_settle": bool(rec.get("fast_current_settle")),
                        "shot_origin": rec.get("shot_origin")}
                 for name, rec in self._card_recipes.get(self._current, {}).items()}
 
@@ -1934,6 +1935,17 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                    "bench": rec.get("bench", ""),
                    "minor_moves": bool(rec.get("minor_moves")),
                    "shortcut": bool(rec.get("shortcut")),
+                   # Same "hand-picked field list silently drops anything
+                   # not on it" bug already found in RecipePanel.
+                   # load_recipes - this is the actual SAVE path, so
+                   # missing a field here is worse: it never even reaches
+                   # disk. fast_current_settle was being stripped out of
+                   # every save, so the checkbox looked checked for the
+                   # rest of THIS session (its own tk.BooleanVar was never
+                   # touched) but the written CSV never had it - any
+                   # reload (a restart, a different PC opening the same
+                   # ATA folder, ...) came back unchecked.
+                   "fast_current_settle": bool(rec.get("fast_current_settle")),
                    "shot_origin": rec.get("shot_origin")}
             for name, rec in recipes.items()}
         path = self._card_src.get(card)
