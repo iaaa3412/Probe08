@@ -6038,6 +6038,26 @@ class MainLayout(ttk.Frame):
                         # Not gated - same "must stay/become ON regardless"
                         # reasoning as the plain "voltage" apply step above.
                         smu.turn_output_on(smu_ch)
+                        # Skip auto-clear on Force Current (Recipe tab
+                        # checkbox, off by default - see recipe_panel.
+                        # is_fast_current_settle): the Keithley 2400's
+                        # sour:clear:auto drops the output and re-applies the
+                        # bias fresh on every :READ?, including the readback
+                        # just below that exists purely to log the actual
+                        # delivered current/voltage. Confirmed on the bench
+                        # (Cenfire, a marginal contact) that transient alone
+                        # was enough to collapse a dependent sense step's
+                        # reading a moment later. Only ever WRITTEN when the
+                        # checkbox is on - _FIXED_SETUP already leaves the
+                        # instrument at clear:auto ON by default, so the
+                        # unchecked (default) case sends nothing extra at
+                        # all, not even a redundant "on". hasattr-gated - the
+                        # 2636B has no such method and doesn't need one,
+                        # this is a 2400-only transient.
+                        if (hasattr(smu, "set_source_clear_auto")
+                                and getattr(self, "recipe_panel", None)
+                                and self.recipe_panel.is_fast_current_settle()):
+                            smu.set_source_clear_auto(False)
                         # One combined acquisition instead of two separate
                         # ones where the driver supports it (confirmed on
                         # the bench for the Keithley 2400: identical values,

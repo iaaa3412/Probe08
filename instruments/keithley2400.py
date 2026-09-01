@@ -150,6 +150,29 @@ class Keithley2400(GPIBInstrument):
         Cenfire share this driver and haven't been evaluated with it off."""
         self.write(f"syst:azer {'on' if enabled else 'off'}")
 
+    def set_source_clear_auto(self, enabled: bool):
+        """ON (the _FIXED_SETUP default, sent on every reset/connect) drops
+        the output and re-applies the bias fresh before every :READ? -
+        exactly what LaMP's own averaging relies on (see
+        instrument_panel._exec2_measure_averaged's own comment: one :READ?
+        with N internal averages instead of N separate ones, each a fresh
+        source cycle). But a :READ? sent purely to log/record the actual
+        delivered current/voltage - Maddy/Cenfire's Force Current step -
+        produces that same drop-and-reapply transient as a side effect of
+        just reading it back, with no averaging benefit to show for it.
+        Confirmed on the bench (Cenfire, a marginal contact): reading a
+        dependent sense step BEFORE that transient gave a clean, correct
+        value every time; reading it AFTER (today's step order) gave
+        near-zero every time - the transient was enough to collapse a weak
+        contact's signal by the time the sense step got to it.
+
+        Left ON by _FIXED_SETUP's default (unchanged) and only ever turned
+        off here, explicitly, per recipe (see recipe_panel's Skip
+        auto-clear on Force Current checkbox / is_fast_current_settle) -
+        never a global driver change, since LaMP's own current-measure
+        step genuinely needs it ON and shares this same driver."""
+        self.write(f"sour:clear:auto {'on' if enabled else 'off'}")
+
     def measure_current(self, channel):
         self.write(":SENS:FUNC 'CURR'")
         self.write(":FORM:ELEM CURR")

@@ -793,6 +793,11 @@ def recipes_to_rows(recipes: dict) -> list:
                      # back with shortcut=False, same as a fresh one) -
                      # opt IN per recipe, never assumed safe.
                      "shortcut": "1" if rec.get("shortcut") else "",
+                     # Skip auto-clear on Force Current: see
+                     # RecipePanel._on_fast_current_settle_toggle /
+                     # instruments.keithley2400.set_source_clear_auto. Off by
+                     # default, opt IN per recipe, same as shortcut above.
+                     "fast_current_settle": "1" if rec.get("fast_current_settle") else "",
                      "shot_origin_x": "" if origin is None else str(origin[0]),
                      "shot_origin_y": "" if origin is None else str(origin[1])})
         for i, step in enumerate(rec.get("steps", []), 1):
@@ -826,6 +831,7 @@ def rows_to_recipes(rows: list) -> dict:
             continue
         recipes.setdefault(name, {"steps": [], "sites": [], "bench": "",
                                   "minor_moves": False, "shortcut": False,
+                                  "fast_current_settle": False,
                                   "shot_origin": None})
         if kind == "RECIPE":
             bench = (row.get("bench") or "").strip()
@@ -833,6 +839,8 @@ def rows_to_recipes(rows: list) -> dict:
                 recipes[name]["bench"] = bench
             recipes[name]["minor_moves"] = (row.get("minor_moves") or "").strip() == "1"
             recipes[name]["shortcut"] = (row.get("shortcut") or "").strip() == "1"
+            recipes[name]["fast_current_settle"] = (
+                row.get("fast_current_settle") or "").strip() == "1"
             ox = (row.get("shot_origin_x") or "").strip()
             oy = (row.get("shot_origin_y") or "").strip()
             if ox and oy:
@@ -934,6 +942,20 @@ class RecipePanel(ttk.Frame):
         # every recipe/instrument combination without being verified on
         # the bench first.
         self._shortcut_var = tk.BooleanVar(value=False)
+
+        # Skip auto-clear on Force Current: the Keithley 2400's
+        # sour:clear:auto (on by default, _FIXED_SETUP) drops the output
+        # and re-applies the bias fresh on every :READ? - fine for a
+        # reading that's actually used, disruptive when a Force Current
+        # step's own readback is purely for logging and a dependent sense
+        # step reads the pad a moment later (confirmed on the bench,
+        # Cenfire: a marginal contact's sense reading collapsed to
+        # near-zero specifically because of this transient). Off by
+        # default and opt-in PER RECIPE, same reasoning as Shortcut above -
+        # not assumed safe for every recipe/instrument combination (LaMP's
+        # own current-measure step genuinely needs auto-clear ON) without
+        # being verified on the bench first.
+        self._fast_current_settle_var = tk.BooleanVar(value=False)
 
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -1192,6 +1214,12 @@ class RecipePanel(ttk.Frame):
             variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
         self._minor_moves_chk.pack(side="left", padx=(0, 8), pady=4)
 
+        self._fast_current_settle_chk = ttk.Checkbutton(
+            bar, text="Skip auto-clear on Force Current (Keithley 2400 only)",
+            variable=self._fast_current_settle_var,
+            command=self._on_fast_current_settle_toggle)
+        self._fast_current_settle_chk.pack(side="left", padx=(0, 8), pady=4)
+
         # Accretech gets its origin from Wafer Builder's own Overlay sub-tab
         # (its confirmed row/col offset IS the translation between Wafer
         # Builder's logical die grid and real absolute die coordinates -
@@ -1237,6 +1265,23 @@ class RecipePanel(ttk.Frame):
         whether a repeat-config send can be skipped at all. False (the
         safe default) for any recipe that has never had this box checked."""
         return self._shortcut_var.get()
+
+    def _on_fast_current_settle_toggle(self):
+        rec = self._recipes.get(self._current)
+        if rec is not None:
+            rec["fast_current_settle"] = self._fast_current_settle_var.get()
+            card = self._get_active_card()
+            if card:
+                self._save_recipes(card, self._recipes)
+
+    def is_fast_current_settle(self) -> bool:
+        """Whether the CURRENTLY LOADED recipe has Skip auto-clear on Force
+        Current checked - read by instrument_panel's Force Current ("current"
+        + apply) step handler to decide whether to turn the Keithley 2400's
+        sour:clear:auto off before its own readback. False (the safe,
+        unchanged-behavior default) for any recipe that has never had this
+        box checked."""
+        return self._fast_current_settle_var.get()
 
     def _refresh_shot_origin_label(self):
         if not self._minor_moves_var.get():
@@ -3010,6 +3055,7 @@ class RecipePanel(ttk.Frame):
         self._update_validity_label()
         self._minor_moves_var.set(bool(rec.get("minor_moves")))
         self._shortcut_var.set(bool(rec.get("shortcut")))
+        self._fast_current_settle_var.set(bool(rec.get("fast_current_settle")))
         self._shot_origin_btn.config(
             state="normal" if self._minor_moves_var.get() else "disabled")
         self._refresh_shot_origin_label()
@@ -3045,6 +3091,7 @@ class RecipePanel(ttk.Frame):
             self._update_validity_label()
             self._minor_moves_var.set(False)
             self._shortcut_var.set(False)
+            self._fast_current_settle_var.set(False)
             self._shot_origin_btn.config(state="disabled")
             self._shot_origin_status_var.set("")
         self._update_default_label()
@@ -3496,6 +3543,14 @@ class RecipePanel(ttk.Frame):
                                     "sites": [dict(s) for s in rec.get("sites", [])],
                                     "bench": rec.get("bench", ""),
                                     "minor_moves": bool(rec.get("minor_moves")),
+                                    # shortcut/fast_current_settle used to be
+                                    # dropped here - this dict only copied a
+                                    # hand-picked list of fields, so either
+                                    # checkbox silently reset to unchecked on
+                                    # every probe-card (re)load regardless of
+                                    # what was actually saved.
+                                    "shortcut": bool(rec.get("shortcut")),
+                                    "fast_current_settle": bool(rec.get("fast_current_settle")),
                                     "shot_origin": rec.get("shot_origin")}
                               for name, rec in recipes.items()}
             visible = self._visible_recipe_names()
