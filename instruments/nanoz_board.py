@@ -1046,7 +1046,13 @@ def build_shots_from_windows(plan: "WaferPlan", windows: list, ports: list,
     covered: set = set()
     for start_row, die_col in windows:
         end = start_row + plan.probe_height - 1
-        label = f"Col {die_col} · rows {start_row}-{end} (from selection)"
+        # The die ID of the selected (top/anchor) die, in the plan's own
+        # coordinate space - what an operator can actually recognize this
+        # touchdown by, rather than a raw grid position. Falls back to a
+        # plain row/col if that die isn't on the plan (an off-map pick,
+        # or plan/map coordinates that don't line up) - never blank.
+        d = plan.dies.get((start_row - row_offset, die_col - col_offset))
+        label = d["serial"] if d else f"Col {die_col}, Row {start_row}"
         shots.append(_build_shot(plan, die_col, start_row, end, ports, slots_by_port, label,
                                  row_offset, col_offset, already_covered=covered))
     return shots
