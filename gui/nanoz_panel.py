@@ -310,13 +310,12 @@ class NanoZPanel(ttk.Frame):
         self._probe_height_spin.bind("<Return>", lambda _e: self._on_probe_height_change())
         self._probe_height_spin.bind("<FocusOut>", lambda _e: self._on_probe_height_change())
 
-        cols = ("port", "sn", "fw", "sig", "slot0", "slot1", "status", "spl", "env")
+        cols = ("port", "sn", "sig", "slot0", "slot1", "status")
         # height=11 - all 10 boards visible at once with no internal scroll needed.
         self._board_tree = ttk.Treeview(boards_lf, columns=cols, show="headings", height=11)
-        heads = [("port", "Port", 70), ("sn", "S/N", 100), ("fw", "Firmware", 80),
+        heads = [("port", "Port", 70), ("sn", "S/N", 130),
                  ("sig", "Signature", 70), ("slot0", "Slot (chip 0)", 90),
-                 ("slot1", "Slot (chip 1)", 90), ("status", "Status", 280),
-                 ("spl", "SPL#", 55), ("env", "ENV#", 55)]
+                 ("slot1", "Slot (chip 1)", 90), ("status", "Status", 280)]
         for cid, text, width in heads:
             self._board_tree.heading(cid, text=text)
             self._board_tree.column(cid, width=width, anchor="center" if cid != "sn" else "w")
@@ -3636,6 +3635,23 @@ class NanoZPanel(ttk.Frame):
             return f"{ident.last_port} (last known)"
         return "—"
 
+    @staticmethod
+    def _sn_display(serial_number: str) -> str:
+        """The S/N as saved (e.g. "0002-0008"), with the decimal value of
+        its last 4 hex digits appended (e.g. "0002-0008 (8)") - the hex
+        string is still what's actually matched/saved on everywhere else,
+        this is purely a read-at-a-glance convenience since board S/Ns are
+        otherwise only distinguishable by scanning hex digits."""
+        sn = serial_number or ""
+        hex_digits = "".join(ch for ch in sn if ch in "0123456789abcdefABCDEF")
+        last4 = hex_digits[-4:]
+        if not last4:
+            return sn
+        try:
+            return f"{sn} ({int(last4, 16)})"
+        except ValueError:
+            return sn
+
     def _add_board(self, ident: "nzb.BoardIdentity"):
         # Match by serial number first, not port - Windows can (and does)
         # reassign a board to a different COM port across replugs/reboots,
@@ -3673,11 +3689,12 @@ class NanoZPanel(ttk.Frame):
             self._boards[new_key] = board
             if old_iid is not None:
                 self._board_tree.item(old_iid, values=(
-                    self._board_port_display(board.identity), board.identity.serial_number,
-                    board.identity.firmware, board.identity.signature,
+                    self._board_port_display(board.identity),
+                    self._sn_display(board.identity.serial_number),
+                    board.identity.signature,
                     board.identity.slot0 if board.identity.slot0 else "—",
                     board.identity.slot1 if board.identity.slot1 else "—",
-                    self._board_status_text(board), 0, 0))
+                    self._board_status_text(board)))
                 self._board_rows[new_key] = old_iid
             return board
 
@@ -3694,10 +3711,11 @@ class NanoZPanel(ttk.Frame):
         board._die_provider = lambda chip: self._die_provider(board.port, chip)
         self._boards[new_key] = board
         iid = self._board_tree.insert("", "end", values=(
-            self._board_port_display(ident), ident.serial_number, ident.firmware, ident.signature,
+            self._board_port_display(ident), self._sn_display(ident.serial_number),
+            ident.signature,
             ident.slot0 if ident.slot0 else "—",
             ident.slot1 if ident.slot1 else "—",
-            self._board_status_text(board), 0, 0))
+            self._board_status_text(board)))
         self._board_rows[new_key] = iid
         return board
 
@@ -3826,15 +3844,7 @@ class NanoZPanel(ttk.Frame):
         if not iid:
             return
         vals = list(self._board_tree.item(iid, "values"))
-        vals[6] = status
-        self._board_tree.item(iid, values=vals)
-
-    def _set_board_counts(self, port: str, spl: int, env: int):
-        iid = self._board_rows.get(port)
-        if not iid:
-            return
-        vals = list(self._board_tree.item(iid, "values"))
-        vals[7], vals[8] = spl, env
+        vals[5] = status
         self._board_tree.item(iid, values=vals)
 
     def _on_board_tree_double_click(self, event):
@@ -3849,7 +3859,7 @@ class NanoZPanel(ttk.Frame):
         if not (0 <= col_idx < len(cols)) or cols[col_idx] not in ("slot0", "slot1"):
             return
         chip = "0" if cols[col_idx] == "slot0" else "1"
-        vals_idx = 4 if chip == "0" else 5
+        vals_idx = col_idx  # values tuple is built in the same order as cols
         # Look up by the internal dict key (via the iid), not the displayed
         # port text - a not-yet-discovered known board shows "—" in the
         # port column (its real port isn't known yet), which wouldn't
@@ -4210,8 +4220,6 @@ class NanoZPanel(ttk.Frame):
                     nzb.append_csv_row(self._spl_path, row)
                 except OSError as e:
                     self._log(f"SPL CSV write error: {e}")
-            if board:
-                self._set_board_counts(port, board.spl_count, board.env_count)
             if port == self.console_board_var.get() and chip == self.console_chip_var.get():
                 self._refresh_console_reading()
         elif kind == "env":
@@ -4228,8 +4236,6 @@ class NanoZPanel(ttk.Frame):
                     nzb.append_csv_row(self._env_path, row)
                 except OSError as e:
                     self._log(f"ENV CSV write error: {e}")
-            if board:
-                self._set_board_counts(port, board.spl_count, board.env_count)
             if port == self.console_board_var.get():
                 self._refresh_console_reading()
         elif kind == "text":

@@ -1,0 +1,10 @@
+die,type,value,kind,system,ata_folder,map_source,probe_card,recipe,lot_id,wafer_id,total_dies,dies_tested,dies_passed,dies_failed,timestamp,step,mode,unit,die_id,switch,set_voltage,voltage,connection,instrument,row,col,status
+,,,META,accretech,//prober/M/ETL/proberautomation\MADDYATA,Accretech,MADDY_TL_REV_D,Maddy test,temp,03F7,2,2,2,0,,,,,,,,,,,,,
+R5C3  (X3 Y5),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy test,,,,,,,2026-09-02 16:09:02,Force Current,apply,A,05C,,,0.1749527,4A11_2B02,SMU,5,3,
+R5C3  (X3 Y5),resistance,17.4953,RESULT,,,,MADDY_TL_REV_D,Maddy test,,,,,,,2026-09-02 16:09:02,Kelvin Resistance,measure,ohm,05C,,,,4A11_2B02,SMU,5,3,
+R5C3  (X3 Y5),voltage,-2.92617e-05,RESULT,,,,MADDY_TL_REV_D,Maddy test,,,,,,,2026-09-02 16:09:02,Kelvin Voltage (DMM),measure,V,05C,,,,2F01_4E12,DMM,5,3,
+R5C16  (X16 Y5),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy test,,,,,,,2026-09-02 16:09:05,Force Current,apply,A,05P,,,0.1840227,4A11_2B02,SMU,5,16,
+R5C16  (X16 Y5),resistance,18.4025,RESULT,,,,MADDY_TL_REV_D,Maddy test,,,,,,,2026-09-02 16:09:05,Kelvin Resistance,measure,ohm,05P,,,,4A11_2B02,SMU,5,16,
+R5C16  (X16 Y5),voltage,-3.19121e-05,RESULT,,,,MADDY_TL_REV_D,Maddy test,,,,,,,2026-09-02 16:09:05,Kelvin Voltage (DMM),measure,V,05P,,,,2F01_4E12,DMM,5,16,
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,16,PASS

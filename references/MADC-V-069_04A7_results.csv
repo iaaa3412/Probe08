@@ -1,0 +1,1258 @@
+die,type,value,kind,system,ata_folder,map_source,probe_card,recipe,lot_id,wafer_id,total_dies,dies_tested,dies_passed,dies_failed,timestamp,step,mode,unit,die_id,switch,set_voltage,voltage,connection,instrument,row,col,status
+,,,META,accretech,\\prober\M\ETL\proberautomation\MADDYATA,Accretech,MADDY_TL_REV_D,Maddy TL,MADC-V-069,04A7,314,314,306,8,,,,,,,,,,,,,
+R1C7  (X7 Y1),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:01,Force Current,apply,A,01G,,,0.2108864,4A11_2B02,SMU,1,7,
+R1C7  (X7 Y1),resistance,21.0887,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:01,Kelvin Resistance,measure,ohm,01G,,,,4A11_2B02,SMU,1,7,
+R1C7  (X7 Y1),voltage,-5.31569e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:01,Kelvin Voltage (DMM),measure,V,01G,,,,2F01_4E12,DMM,1,7,
+R1C8  (X8 Y1),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:04,Force Current,apply,A,01H,,,0.1909333,4A11_2B02,SMU,1,8,
+R1C8  (X8 Y1),resistance,19.0934,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:04,Kelvin Resistance,measure,ohm,01H,,,,4A11_2B02,SMU,1,8,
+R1C8  (X8 Y1),voltage,-2.50238e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:04,Kelvin Voltage (DMM),measure,V,01H,,,,2F01_4E12,DMM,1,8,
+R1C9  (X9 Y1),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:06,Force Current,apply,A,01I,,,0.2016702,4A11_2B02,SMU,1,9,
+R1C9  (X9 Y1),resistance,20.1671,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:06,Kelvin Resistance,measure,ohm,01I,,,,4A11_2B02,SMU,1,9,
+R1C9  (X9 Y1),voltage,-5.06462e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:06,Kelvin Voltage (DMM),measure,V,01I,,,,2F01_4E12,DMM,1,9,
+R1C10  (X10 Y1),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:08,Force Current,apply,A,01J,,,0.2003327,4A11_2B02,SMU,1,10,
+R1C10  (X10 Y1),resistance,20.0329,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:08,Kelvin Resistance,measure,ohm,01J,,,,4A11_2B02,SMU,1,10,
+R1C10  (X10 Y1),voltage,-5.03426e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:08,Kelvin Voltage (DMM),measure,V,01J,,,,2F01_4E12,DMM,1,10,
+R1C11  (X11 Y1),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:10,Force Current,apply,A,01K,,,0.2002222,4A11_2B02,SMU,1,11,
+R1C11  (X11 Y1),resistance,20.0222,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:10,Kelvin Resistance,measure,ohm,01K,,,,4A11_2B02,SMU,1,11,
+R1C11  (X11 Y1),voltage,-5.06221e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:10,Kelvin Voltage (DMM),measure,V,01K,,,,2F01_4E12,DMM,1,11,
+R1C12  (X12 Y1),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:13,Force Current,apply,A,01L,,,0.1985172,4A11_2B02,SMU,1,12,
+R1C12  (X12 Y1),resistance,19.8513,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:13,Kelvin Resistance,measure,ohm,01L,,,,4A11_2B02,SMU,1,12,
+R1C12  (X12 Y1),voltage,-2.80549e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:13,Kelvin Voltage (DMM),measure,V,01L,,,,2F01_4E12,DMM,1,12,
+R2C6  (X6 Y2),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:15,Force Current,apply,A,02F,,,0.2200945,4A11_2B02,SMU,2,6,
+R2C6  (X6 Y2),resistance,22.0097,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:15,Kelvin Resistance,measure,ohm,02F,,,,4A11_2B02,SMU,2,6,
+R2C6  (X6 Y2),voltage,-5.53664e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:15,Kelvin Voltage (DMM),measure,V,02F,,,,2F01_4E12,DMM,2,6,
+R2C7  (X7 Y2),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:17,Force Current,apply,A,02G,,,0.2375017,4A11_2B02,SMU,2,7,
+R2C7  (X7 Y2),resistance,23.7507,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:17,Kelvin Resistance,measure,ohm,02G,,,,4A11_2B02,SMU,2,7,
+R2C7  (X7 Y2),voltage,-6.12932e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:17,Kelvin Voltage (DMM),measure,V,02G,,,,2F01_4E12,DMM,2,7,
+R2C8  (X8 Y2),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:19,Force Current,apply,A,02H,,,0.2444903,4A11_2B02,SMU,2,8,
+R2C8  (X8 Y2),resistance,24.4489,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:19,Kelvin Resistance,measure,ohm,02H,,,,4A11_2B02,SMU,2,8,
+R2C8  (X8 Y2),voltage,-6.3326e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:19,Kelvin Voltage (DMM),measure,V,02H,,,,2F01_4E12,DMM,2,8,
+R2C9  (X9 Y2),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:21,Force Current,apply,A,02I,,,0.2535,4A11_2B02,SMU,2,9,
+R2C9  (X9 Y2),resistance,25.3499,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:21,Kelvin Resistance,measure,ohm,02I,,,,4A11_2B02,SMU,2,9,
+R2C9  (X9 Y2),voltage,-6.57609e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:21,Kelvin Voltage (DMM),measure,V,02I,,,,2F01_4E12,DMM,2,9,
+R2C10  (X10 Y2),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:24,Force Current,apply,A,02J,,,0.2300031,4A11_2B02,SMU,2,10,
+R2C10  (X10 Y2),resistance,22.9992,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:24,Kelvin Resistance,measure,ohm,02J,,,,4A11_2B02,SMU,2,10,
+R2C10  (X10 Y2),voltage,-6.00938e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:24,Kelvin Voltage (DMM),measure,V,02J,,,,2F01_4E12,DMM,2,10,
+R2C11  (X11 Y2),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:26,Force Current,apply,A,02K,,,0.2387045,4A11_2B02,SMU,2,11,
+R2C11  (X11 Y2),resistance,23.8704,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:26,Kelvin Resistance,measure,ohm,02K,,,,4A11_2B02,SMU,2,11,
+R2C11  (X11 Y2),voltage,-6.25159e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:26,Kelvin Voltage (DMM),measure,V,02K,,,,2F01_4E12,DMM,2,11,
+R2C12  (X12 Y2),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:28,Force Current,apply,A,02L,,,0.2192263,4A11_2B02,SMU,2,12,
+R2C12  (X12 Y2),resistance,21.9225,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:28,Kelvin Resistance,measure,ohm,02L,,,,4A11_2B02,SMU,2,12,
+R2C12  (X12 Y2),voltage,-5.69491e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:28,Kelvin Voltage (DMM),measure,V,02L,,,,2F01_4E12,DMM,2,12,
+R2C13  (X13 Y2),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:30,Force Current,apply,A,02M,,,0.2129351,4A11_2B02,SMU,2,13,
+R2C13  (X13 Y2),resistance,21.2932,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:30,Kelvin Resistance,measure,ohm,02M,,,,4A11_2B02,SMU,2,13,
+R2C13  (X13 Y2),voltage,-5.51869e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:30,Kelvin Voltage (DMM),measure,V,02M,,,,2F01_4E12,DMM,2,13,
+R3C5  (X5 Y3),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:33,Force Current,apply,A,03E,,,0.2199474,4A11_2B02,SMU,3,5,
+R3C5  (X5 Y3),resistance,21.9947,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:33,Kelvin Resistance,measure,ohm,03E,,,,4A11_2B02,SMU,3,5,
+R3C5  (X5 Y3),voltage,-5.56614e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:33,Kelvin Voltage (DMM),measure,V,03E,,,,2F01_4E12,DMM,3,5,
+R3C6  (X6 Y3),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:35,Force Current,apply,A,03F,,,0.2111137,4A11_2B02,SMU,3,6,
+R3C6  (X6 Y3),resistance,21.1109,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:35,Kelvin Resistance,measure,ohm,03F,,,,4A11_2B02,SMU,3,6,
+R3C6  (X6 Y3),voltage,-5.36453e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:35,Kelvin Voltage (DMM),measure,V,03F,,,,2F01_4E12,DMM,3,6,
+R3C7  (X7 Y3),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:37,Force Current,apply,A,03G,,,0.2398282,4A11_2B02,SMU,3,7,
+R3C7  (X7 Y3),resistance,23.9828,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:37,Kelvin Resistance,measure,ohm,03G,,,,4A11_2B02,SMU,3,7,
+R3C7  (X7 Y3),voltage,-6.1337e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:37,Kelvin Voltage (DMM),measure,V,03G,,,,2F01_4E12,DMM,3,7,
+R3C8  (X8 Y3),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:39,Force Current,apply,A,03H,,,0.2242943,4A11_2B02,SMU,3,8,
+R3C8  (X8 Y3),resistance,22.4296,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:39,Kelvin Resistance,measure,ohm,03H,,,,4A11_2B02,SMU,3,8,
+R3C8  (X8 Y3),voltage,-5.73586e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:39,Kelvin Voltage (DMM),measure,V,03H,,,,2F01_4E12,DMM,3,8,
+R3C9  (X9 Y3),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:42,Force Current,apply,A,03I,,,0.2464838,4A11_2B02,SMU,3,9,
+R3C9  (X9 Y3),resistance,24.648,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:42,Kelvin Resistance,measure,ohm,03I,,,,4A11_2B02,SMU,3,9,
+R3C9  (X9 Y3),voltage,-6.31013e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:42,Kelvin Voltage (DMM),measure,V,03I,,,,2F01_4E12,DMM,3,9,
+R3C10  (X10 Y3),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:44,Force Current,apply,A,03J,,,0.2430853,4A11_2B02,SMU,3,10,
+R3C10  (X10 Y3),resistance,24.309,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:44,Kelvin Resistance,measure,ohm,03J,,,,4A11_2B02,SMU,3,10,
+R3C10  (X10 Y3),voltage,-6.23027e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:44,Kelvin Voltage (DMM),measure,V,03J,,,,2F01_4E12,DMM,3,10,
+R3C11  (X11 Y3),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:46,Force Current,apply,A,03K,,,0.2417953,4A11_2B02,SMU,3,11,
+R3C11  (X11 Y3),resistance,24.1796,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:46,Kelvin Resistance,measure,ohm,03K,,,,4A11_2B02,SMU,3,11,
+R3C11  (X11 Y3),voltage,-6.24792e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:46,Kelvin Voltage (DMM),measure,V,03K,,,,2F01_4E12,DMM,3,11,
+R3C12  (X12 Y3),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:48,Force Current,apply,A,03L,,,0.2136196,4A11_2B02,SMU,3,12,
+R3C12  (X12 Y3),resistance,21.362,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:48,Kelvin Resistance,measure,ohm,03L,,,,4A11_2B02,SMU,3,12,
+R3C12  (X12 Y3),voltage,-5.51867e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:48,Kelvin Voltage (DMM),measure,V,03L,,,,2F01_4E12,DMM,3,12,
+R3C13  (X13 Y3),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:50,Force Current,apply,A,03M,,,0.2245703,4A11_2B02,SMU,3,13,
+R3C13  (X13 Y3),resistance,22.4572,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:50,Kelvin Resistance,measure,ohm,03M,,,,4A11_2B02,SMU,3,13,
+R3C13  (X13 Y3),voltage,-5.91015e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:50,Kelvin Voltage (DMM),measure,V,03M,,,,2F01_4E12,DMM,3,13,
+R3C14  (X14 Y3),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:52,Force Current,apply,A,03N,,,0.2215517,4A11_2B02,SMU,3,14,
+R3C14  (X14 Y3),resistance,22.1551,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:52,Kelvin Resistance,measure,ohm,03N,,,,4A11_2B02,SMU,3,14,
+R3C14  (X14 Y3),voltage,-5.84454e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:52,Kelvin Voltage (DMM),measure,V,03N,,,,2F01_4E12,DMM,3,14,
+R4C4  (X4 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:55,Force Current,apply,A,04D,,,0.2127925,4A11_2B02,SMU,4,4,
+R4C4  (X4 Y4),resistance,21.2786,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:55,Kelvin Resistance,measure,ohm,04D,,,,4A11_2B02,SMU,4,4,
+R4C4  (X4 Y4),voltage,-5.38283e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:55,Kelvin Voltage (DMM),measure,V,04D,,,,2F01_4E12,DMM,4,4,
+R4C5  (X5 Y4),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:57,Force Current,apply,A,04E,,,0.2156345,4A11_2B02,SMU,4,5,
+R4C5  (X5 Y4),resistance,21.5632,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:57,Kelvin Resistance,measure,ohm,04E,,,,4A11_2B02,SMU,4,5,
+R4C5  (X5 Y4),voltage,-5.56415e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:57,Kelvin Voltage (DMM),measure,V,04E,,,,2F01_4E12,DMM,4,5,
+R4C6  (X6 Y4),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:59,Force Current,apply,A,04F,,,0.2332319,4A11_2B02,SMU,4,6,
+R4C6  (X6 Y4),resistance,23.3226,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:59,Kelvin Resistance,measure,ohm,04F,,,,4A11_2B02,SMU,4,6,
+R4C6  (X6 Y4),voltage,-6.04651e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:19:59,Kelvin Voltage (DMM),measure,V,04F,,,,2F01_4E12,DMM,4,6,
+R4C7  (X7 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:02,Force Current,apply,A,04G,,,0.2301778,4A11_2B02,SMU,4,7,
+R4C7  (X7 Y4),resistance,23.0181,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:02,Kelvin Resistance,measure,ohm,04G,,,,4A11_2B02,SMU,4,7,
+R4C7  (X7 Y4),voltage,-5.95493e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:02,Kelvin Voltage (DMM),measure,V,04G,,,,2F01_4E12,DMM,4,7,
+R4C8  (X8 Y4),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:04,Force Current,apply,A,04H,,,0.2353254,4A11_2B02,SMU,4,8,
+R4C8  (X8 Y4),resistance,23.5329,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:04,Kelvin Resistance,measure,ohm,04H,,,,4A11_2B02,SMU,4,8,
+R4C8  (X8 Y4),voltage,-6.11516e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:04,Kelvin Voltage (DMM),measure,V,04H,,,,2F01_4E12,DMM,4,8,
+R4C9  (X9 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:06,Force Current,apply,A,04I,,,0.2503814,4A11_2B02,SMU,4,9,
+R4C9  (X9 Y4),resistance,25.0388,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:06,Kelvin Resistance,measure,ohm,04I,,,,4A11_2B02,SMU,4,9,
+R4C9  (X9 Y4),voltage,-6.53179e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:06,Kelvin Voltage (DMM),measure,V,04I,,,,2F01_4E12,DMM,4,9,
+R4C10  (X10 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:08,Force Current,apply,A,04J,,,0.2370406,4A11_2B02,SMU,4,10,
+R4C10  (X10 Y4),resistance,23.7041,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:08,Kelvin Resistance,measure,ohm,04J,,,,4A11_2B02,SMU,4,10,
+R4C10  (X10 Y4),voltage,-6.23088e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:08,Kelvin Voltage (DMM),measure,V,04J,,,,2F01_4E12,DMM,4,10,
+R4C11  (X11 Y4),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:10,Force Current,apply,A,04K,,,0.2377581,4A11_2B02,SMU,4,11,
+R4C11  (X11 Y4),resistance,23.7765,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:10,Kelvin Resistance,measure,ohm,04K,,,,4A11_2B02,SMU,4,11,
+R4C11  (X11 Y4),voltage,-6.20473e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:10,Kelvin Voltage (DMM),measure,V,04K,,,,2F01_4E12,DMM,4,11,
+R4C12  (X12 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:13,Force Current,apply,A,04L,,,0.220014,4A11_2B02,SMU,4,12,
+R4C12  (X12 Y4),resistance,22.0013,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:13,Kelvin Resistance,measure,ohm,04L,,,,4A11_2B02,SMU,4,12,
+R4C12  (X12 Y4),voltage,-5.67429e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:13,Kelvin Voltage (DMM),measure,V,04L,,,,2F01_4E12,DMM,4,12,
+R4C13  (X13 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:15,Force Current,apply,A,04M,,,0.2327914,4A11_2B02,SMU,4,13,
+R4C13  (X13 Y4),resistance,23.2787,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:15,Kelvin Resistance,measure,ohm,04M,,,,4A11_2B02,SMU,4,13,
+R4C13  (X13 Y4),voltage,-6.11819e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:15,Kelvin Voltage (DMM),measure,V,04M,,,,2F01_4E12,DMM,4,13,
+R4C14  (X14 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:17,Force Current,apply,A,04N,,,0.2108693,4A11_2B02,SMU,4,14,
+R4C14  (X14 Y4),resistance,21.087,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:17,Kelvin Resistance,measure,ohm,04N,,,,4A11_2B02,SMU,4,14,
+R4C14  (X14 Y4),voltage,-5.4128e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:17,Kelvin Voltage (DMM),measure,V,04N,,,,2F01_4E12,DMM,4,14,
+R4C15  (X15 Y4),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:19,Force Current,apply,A,04O,,,0.222216,4A11_2B02,SMU,4,15,
+R4C15  (X15 Y4),resistance,22.2207,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:19,Kelvin Resistance,measure,ohm,04O,,,,4A11_2B02,SMU,4,15,
+R4C15  (X15 Y4),voltage,-5.8899e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:19,Kelvin Voltage (DMM),measure,V,04O,,,,2F01_4E12,DMM,4,15,
+R5C3  (X3 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-02 16:06:46,Force Current,apply,A,05C,,,0.2142389,4A11_2B02,SMU,5,3,
+R5C3  (X3 Y5),resistance,21.4242,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-02 16:06:46,Kelvin Resistance,measure,ohm,05C,,,,4A11_2B02,SMU,5,3,
+R5C3  (X3 Y5),voltage,-6.16741e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-02 16:06:46,Kelvin Voltage (DMM),measure,V,05C,,,,2F01_4E12,DMM,5,3,
+R5C4  (X4 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:22,Force Current,apply,A,05D,,,0.2157991,4A11_2B02,SMU,5,4,
+R5C4  (X4 Y5),resistance,21.5804,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:22,Kelvin Resistance,measure,ohm,05D,,,,4A11_2B02,SMU,5,4,
+R5C4  (X4 Y5),voltage,-5.37509e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:22,Kelvin Voltage (DMM),measure,V,05D,,,,2F01_4E12,DMM,5,4,
+R5C5  (X5 Y5),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:24,Force Current,apply,A,05E,,,0.2213217,4A11_2B02,SMU,5,5,
+R5C5  (X5 Y5),resistance,22.1333,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:24,Kelvin Resistance,measure,ohm,05E,,,,4A11_2B02,SMU,5,5,
+R5C5  (X5 Y5),voltage,-5.51572e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:24,Kelvin Voltage (DMM),measure,V,05E,,,,2F01_4E12,DMM,5,5,
+R5C6  (X6 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:26,Force Current,apply,A,05F,,,0.2433072,4A11_2B02,SMU,5,6,
+R5C6  (X6 Y5),resistance,24.3307,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:26,Kelvin Resistance,measure,ohm,05F,,,,4A11_2B02,SMU,5,6,
+R5C6  (X6 Y5),voltage,-6.10246e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:26,Kelvin Voltage (DMM),measure,V,05F,,,,2F01_4E12,DMM,5,6,
+R5C7  (X7 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:28,Force Current,apply,A,05G,,,0.2200987,4A11_2B02,SMU,5,7,
+R5C7  (X7 Y5),resistance,22.0098,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:28,Kelvin Resistance,measure,ohm,05G,,,,4A11_2B02,SMU,5,7,
+R5C7  (X7 Y5),voltage,-5.50337e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:28,Kelvin Voltage (DMM),measure,V,05G,,,,2F01_4E12,DMM,5,7,
+R5C8  (X8 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:30,Force Current,apply,A,05H,,,0.2454642,4A11_2B02,SMU,5,8,
+R5C8  (X8 Y5),resistance,24.5466,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:30,Kelvin Resistance,measure,ohm,05H,,,,4A11_2B02,SMU,5,8,
+R5C8  (X8 Y5),voltage,-6.19584e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:30,Kelvin Voltage (DMM),measure,V,05H,,,,2F01_4E12,DMM,5,8,
+R5C9  (X9 Y5),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:33,Force Current,apply,A,05I,,,0.2275097,4A11_2B02,SMU,5,9,
+R5C9  (X9 Y5),resistance,22.7508,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:33,Kelvin Resistance,measure,ohm,05I,,,,4A11_2B02,SMU,5,9,
+R5C9  (X9 Y5),voltage,-5.8593e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:33,Kelvin Voltage (DMM),measure,V,05I,,,,2F01_4E12,DMM,5,9,
+R5C10  (X10 Y5),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:35,Force Current,apply,A,05J,,,0.2749313,4A11_2B02,SMU,5,10,
+R5C10  (X10 Y5),resistance,27.4935,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:35,Kelvin Resistance,measure,ohm,05J,,,,4A11_2B02,SMU,5,10,
+R5C10  (X10 Y5),voltage,-6.9779e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:35,Kelvin Voltage (DMM),measure,V,05J,,,,2F01_4E12,DMM,5,10,
+R5C11  (X11 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:37,Force Current,apply,A,05K,,,0.2746669,4A11_2B02,SMU,5,11,
+R5C11  (X11 Y5),resistance,27.4657,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:37,Kelvin Resistance,measure,ohm,05K,,,,4A11_2B02,SMU,5,11,
+R5C11  (X11 Y5),voltage,-7.00552e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:37,Kelvin Voltage (DMM),measure,V,05K,,,,2F01_4E12,DMM,5,11,
+R5C12  (X12 Y5),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:39,Force Current,apply,A,05L,,,0.2286908,4A11_2B02,SMU,5,12,
+R5C12  (X12 Y5),resistance,22.869,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:39,Kelvin Resistance,measure,ohm,05L,,,,4A11_2B02,SMU,5,12,
+R5C12  (X12 Y5),voltage,-5.90712e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:39,Kelvin Voltage (DMM),measure,V,05L,,,,2F01_4E12,DMM,5,12,
+R5C13  (X13 Y5),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:41,Force Current,apply,A,05M,,,0.2076716,4A11_2B02,SMU,5,13,
+R5C13  (X13 Y5),resistance,20.7674,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:41,Kelvin Resistance,measure,ohm,05M,,,,4A11_2B02,SMU,5,13,
+R5C13  (X13 Y5),voltage,-5.25678e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:41,Kelvin Voltage (DMM),measure,V,05M,,,,2F01_4E12,DMM,5,13,
+R5C14  (X14 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:44,Force Current,apply,A,05N,,,0.2155092,4A11_2B02,SMU,5,14,
+R5C14  (X14 Y5),resistance,21.5512,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:44,Kelvin Resistance,measure,ohm,05N,,,,4A11_2B02,SMU,5,14,
+R5C14  (X14 Y5),voltage,-5.61829e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:44,Kelvin Voltage (DMM),measure,V,05N,,,,2F01_4E12,DMM,5,14,
+R5C15  (X15 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:46,Force Current,apply,A,05O,,,0.2012454,4A11_2B02,SMU,5,15,
+R5C15  (X15 Y5),resistance,20.1245,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:46,Kelvin Resistance,measure,ohm,05O,,,,4A11_2B02,SMU,5,15,
+R5C15  (X15 Y5),voltage,-5.26134e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:46,Kelvin Voltage (DMM),measure,V,05O,,,,2F01_4E12,DMM,5,15,
+R5C16  (X16 Y5),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-02 16:06:49,Force Current,apply,A,05P,,,0.2127895,4A11_2B02,SMU,5,16,
+R5C16  (X16 Y5),resistance,21.2798,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-02 16:06:49,Kelvin Resistance,measure,ohm,05P,,,,4A11_2B02,SMU,5,16,
+R5C16  (X16 Y5),voltage,-6.40046e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-02 16:06:49,Kelvin Voltage (DMM),measure,V,05P,,,,2F01_4E12,DMM,5,16,
+R6C3  (X3 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:48,Force Current,apply,A,06C,,,0.210679,4A11_2B02,SMU,6,3,
+R6C3  (X3 Y6),resistance,21.0677,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:48,Kelvin Resistance,measure,ohm,06C,,,,4A11_2B02,SMU,6,3,
+R6C3  (X3 Y6),voltage,-5.32684e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:48,Kelvin Voltage (DMM),measure,V,06C,,,,2F01_4E12,DMM,6,3,
+R6C4  (X4 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:50,Force Current,apply,A,06D,,,0.2311567,4A11_2B02,SMU,6,4,
+R6C4  (X4 Y6),resistance,23.1153,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:50,Kelvin Resistance,measure,ohm,06D,,,,4A11_2B02,SMU,6,4,
+R6C4  (X4 Y6),voltage,-5.91204e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:50,Kelvin Voltage (DMM),measure,V,06D,,,,2F01_4E12,DMM,6,4,
+R6C5  (X5 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:53,Force Current,apply,A,06E,,,0.2237863,4A11_2B02,SMU,6,5,
+R6C5  (X5 Y6),resistance,22.379,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:53,Kelvin Resistance,measure,ohm,06E,,,,4A11_2B02,SMU,6,5,
+R6C5  (X5 Y6),voltage,-5.68479e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:53,Kelvin Voltage (DMM),measure,V,06E,,,,2F01_4E12,DMM,6,5,
+R6C6  (X6 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:55,Force Current,apply,A,06F,,,0.2106268,4A11_2B02,SMU,6,6,
+R6C6  (X6 Y6),resistance,21.0627,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:55,Kelvin Resistance,measure,ohm,06F,,,,4A11_2B02,SMU,6,6,
+R6C6  (X6 Y6),voltage,-5.34989e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:55,Kelvin Voltage (DMM),measure,V,06F,,,,2F01_4E12,DMM,6,6,
+R6C7  (X7 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:57,Force Current,apply,A,06G,,,0.2217972,4A11_2B02,SMU,6,7,
+R6C7  (X7 Y6),resistance,22.1797,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:57,Kelvin Resistance,measure,ohm,06G,,,,4A11_2B02,SMU,6,7,
+R6C7  (X7 Y6),voltage,-5.75217e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:57,Kelvin Voltage (DMM),measure,V,06G,,,,2F01_4E12,DMM,6,7,
+R6C8  (X8 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:59,Force Current,apply,A,06H,,,0.2296942,4A11_2B02,SMU,6,8,
+R6C8  (X8 Y6),resistance,22.9698,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:59,Kelvin Resistance,measure,ohm,06H,,,,4A11_2B02,SMU,6,8,
+R6C8  (X8 Y6),voltage,-6.04074e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:20:59,Kelvin Voltage (DMM),measure,V,06H,,,,2F01_4E12,DMM,6,8,
+R6C9  (X9 Y6),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:01,Force Current,apply,A,06I,,,0.2109583,4A11_2B02,SMU,6,9,
+R6C9  (X9 Y6),resistance,21.0952,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:01,Kelvin Resistance,measure,ohm,06I,,,,4A11_2B02,SMU,6,9,
+R6C9  (X9 Y6),voltage,-5.5011e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:01,Kelvin Voltage (DMM),measure,V,06I,,,,2F01_4E12,DMM,6,9,
+R6C10  (X10 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:04,Force Current,apply,A,06J,,,0.2342403,4A11_2B02,SMU,6,10,
+R6C10  (X10 Y6),resistance,23.4234,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:04,Kelvin Resistance,measure,ohm,06J,,,,4A11_2B02,SMU,6,10,
+R6C10  (X10 Y6),voltage,-6.20283e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:04,Kelvin Voltage (DMM),measure,V,06J,,,,2F01_4E12,DMM,6,10,
+R6C11  (X11 Y6),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:06,Force Current,apply,A,06K,,,0.2501228,4A11_2B02,SMU,6,11,
+R6C11  (X11 Y6),resistance,25.0123,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:06,Kelvin Resistance,measure,ohm,06K,,,,4A11_2B02,SMU,6,11,
+R6C11  (X11 Y6),voltage,-6.64173e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:06,Kelvin Voltage (DMM),measure,V,06K,,,,2F01_4E12,DMM,6,11,
+R6C12  (X12 Y6),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:08,Force Current,apply,A,06L,,,0.2389763,4A11_2B02,SMU,6,12,
+R6C12  (X12 Y6),resistance,23.8975,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:08,Kelvin Resistance,measure,ohm,06L,,,,4A11_2B02,SMU,6,12,
+R6C12  (X12 Y6),voltage,-6.346e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:08,Kelvin Voltage (DMM),measure,V,06L,,,,2F01_4E12,DMM,6,12,
+R6C13  (X13 Y6),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:10,Force Current,apply,A,06M,,,0.2368509,4A11_2B02,SMU,6,13,
+R6C13  (X13 Y6),resistance,23.6858,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:10,Kelvin Resistance,measure,ohm,06M,,,,4A11_2B02,SMU,6,13,
+R6C13  (X13 Y6),voltage,-6.24001e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:10,Kelvin Voltage (DMM),measure,V,06M,,,,2F01_4E12,DMM,6,13,
+R6C14  (X14 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:12,Force Current,apply,A,06N,,,0.2142345,4A11_2B02,SMU,6,14,
+R6C14  (X14 Y6),resistance,21.4241,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:12,Kelvin Resistance,measure,ohm,06N,,,,4A11_2B02,SMU,6,14,
+R6C14  (X14 Y6),voltage,-5.68147e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:12,Kelvin Voltage (DMM),measure,V,06N,,,,2F01_4E12,DMM,6,14,
+R6C15  (X15 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:15,Force Current,apply,A,06O,,,0.2131112,4A11_2B02,SMU,6,15,
+R6C15  (X15 Y6),resistance,21.3109,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:15,Kelvin Resistance,measure,ohm,06O,,,,4A11_2B02,SMU,6,15,
+R6C15  (X15 Y6),voltage,-5.61411e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:15,Kelvin Voltage (DMM),measure,V,06O,,,,2F01_4E12,DMM,6,15,
+R6C16  (X16 Y6),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:17,Force Current,apply,A,06P,,,0.1987518,4A11_2B02,SMU,6,16,
+R6C16  (X16 Y6),resistance,19.8758,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:17,Kelvin Resistance,measure,ohm,06P,,,,4A11_2B02,SMU,6,16,
+R6C16  (X16 Y6),voltage,-2.85113e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:17,Kelvin Voltage (DMM),measure,V,06P,,,,2F01_4E12,DMM,6,16,
+R7C2  (X2 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:19,Force Current,apply,A,07B,,,0.2040672,4A11_2B02,SMU,7,2,
+R7C2  (X2 Y7),resistance,20.4068,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:19,Kelvin Resistance,measure,ohm,07B,,,,4A11_2B02,SMU,7,2,
+R7C2  (X2 Y7),voltage,-5.0679e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:19,Kelvin Voltage (DMM),measure,V,07B,,,,2F01_4E12,DMM,7,2,
+R7C3  (X3 Y7),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:22,Force Current,apply,A,07C,,,0.2207951,4A11_2B02,SMU,7,3,
+R7C3  (X3 Y7),resistance,22.0798,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:22,Kelvin Resistance,measure,ohm,07C,,,,4A11_2B02,SMU,7,3,
+R7C3  (X3 Y7),voltage,-5.55392e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:22,Kelvin Voltage (DMM),measure,V,07C,,,,2F01_4E12,DMM,7,3,
+R7C4  (X4 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:24,Force Current,apply,A,07D,,,0.2281679,4A11_2B02,SMU,7,4,
+R7C4  (X4 Y7),resistance,22.8172,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:24,Kelvin Resistance,measure,ohm,07D,,,,4A11_2B02,SMU,7,4,
+R7C4  (X4 Y7),voltage,-5.75928e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:24,Kelvin Voltage (DMM),measure,V,07D,,,,2F01_4E12,DMM,7,4,
+R7C5  (X5 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:26,Force Current,apply,A,07E,,,0.2128199,4A11_2B02,SMU,7,5,
+R7C5  (X5 Y7),resistance,21.2825,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:26,Kelvin Resistance,measure,ohm,07E,,,,4A11_2B02,SMU,7,5,
+R7C5  (X5 Y7),voltage,-5.32492e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:26,Kelvin Voltage (DMM),measure,V,07E,,,,2F01_4E12,DMM,7,5,
+R7C6  (X6 Y7),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:28,Force Current,apply,A,07F,,,0.217923,4A11_2B02,SMU,7,6,
+R7C6  (X6 Y7),resistance,21.7929,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:28,Kelvin Resistance,measure,ohm,07F,,,,4A11_2B02,SMU,7,6,
+R7C6  (X6 Y7),voltage,-5.52357e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:28,Kelvin Voltage (DMM),measure,V,07F,,,,2F01_4E12,DMM,7,6,
+R7C7  (X7 Y7),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:30,Force Current,apply,A,07G,,,0.2178642,4A11_2B02,SMU,7,7,
+R7C7  (X7 Y7),resistance,21.7867,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:30,Kelvin Resistance,measure,ohm,07G,,,,4A11_2B02,SMU,7,7,
+R7C7  (X7 Y7),voltage,-5.63527e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:30,Kelvin Voltage (DMM),measure,V,07G,,,,2F01_4E12,DMM,7,7,
+R7C8  (X8 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:33,Force Current,apply,A,07H,,,0.2190514,4A11_2B02,SMU,7,8,
+R7C8  (X8 Y7),resistance,21.9053,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:33,Kelvin Resistance,measure,ohm,07H,,,,4A11_2B02,SMU,7,8,
+R7C8  (X8 Y7),voltage,-5.73632e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:33,Kelvin Voltage (DMM),measure,V,07H,,,,2F01_4E12,DMM,7,8,
+R7C9  (X9 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:35,Force Current,apply,A,07I,,,0.2677896,4A11_2B02,SMU,7,9,
+R7C9  (X9 Y7),resistance,26.7787,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:35,Kelvin Resistance,measure,ohm,07I,,,,4A11_2B02,SMU,7,9,
+R7C9  (X9 Y7),voltage,-6.92475e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:35,Kelvin Voltage (DMM),measure,V,07I,,,,2F01_4E12,DMM,7,9,
+R7C10  (X10 Y7),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:37,Force Current,apply,A,07J,,,0.2513613,4A11_2B02,SMU,7,10,
+R7C10  (X10 Y7),resistance,25.1352,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:37,Kelvin Resistance,measure,ohm,07J,,,,4A11_2B02,SMU,7,10,
+R7C10  (X10 Y7),voltage,-6.61187e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:37,Kelvin Voltage (DMM),measure,V,07J,,,,2F01_4E12,DMM,7,10,
+R7C11  (X11 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:39,Force Current,apply,A,07K,,,0.2554401,4A11_2B02,SMU,7,11,
+R7C11  (X11 Y7),resistance,25.5438,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:39,Kelvin Resistance,measure,ohm,07K,,,,4A11_2B02,SMU,7,11,
+R7C11  (X11 Y7),voltage,-6.71059e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:39,Kelvin Voltage (DMM),measure,V,07K,,,,2F01_4E12,DMM,7,11,
+R7C12  (X12 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:41,Force Current,apply,A,07L,,,0.2612306,4A11_2B02,SMU,7,12,
+R7C12  (X12 Y7),resistance,26.1218,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:41,Kelvin Resistance,measure,ohm,07L,,,,4A11_2B02,SMU,7,12,
+R7C12  (X12 Y7),voltage,-6.86022e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:41,Kelvin Voltage (DMM),measure,V,07L,,,,2F01_4E12,DMM,7,12,
+R7C13  (X13 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:44,Force Current,apply,A,07M,,,0.2146787,4A11_2B02,SMU,7,13,
+R7C13  (X13 Y7),resistance,21.4682,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:44,Kelvin Resistance,measure,ohm,07M,,,,4A11_2B02,SMU,7,13,
+R7C13  (X13 Y7),voltage,-5.71163e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:44,Kelvin Voltage (DMM),measure,V,07M,,,,2F01_4E12,DMM,7,13,
+R7C14  (X14 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:46,Force Current,apply,A,07N,,,0.227888,4A11_2B02,SMU,7,14,
+R7C14  (X14 Y7),resistance,22.7895,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:46,Kelvin Resistance,measure,ohm,07N,,,,4A11_2B02,SMU,7,14,
+R7C14  (X14 Y7),voltage,-6.08681e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:46,Kelvin Voltage (DMM),measure,V,07N,,,,2F01_4E12,DMM,7,14,
+R7C15  (X15 Y7),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:48,Force Current,apply,A,07O,,,0.2090034,4A11_2B02,SMU,7,15,
+R7C15  (X15 Y7),resistance,20.9003,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:48,Kelvin Resistance,measure,ohm,07O,,,,4A11_2B02,SMU,7,15,
+R7C15  (X15 Y7),voltage,-5.50246e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:48,Kelvin Voltage (DMM),measure,V,07O,,,,2F01_4E12,DMM,7,15,
+R7C16  (X16 Y7),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:50,Force Current,apply,A,07P,,,0.1931123,4A11_2B02,SMU,7,16,
+R7C16  (X16 Y7),resistance,19.3116,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:50,Kelvin Resistance,measure,ohm,07P,,,,4A11_2B02,SMU,7,16,
+R7C16  (X16 Y7),voltage,-2.67514e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:50,Kelvin Voltage (DMM),measure,V,07P,,,,2F01_4E12,DMM,7,16,
+R7C17  (X17 Y7),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:52,Force Current,apply,A,07Q,,,0.2310929,4A11_2B02,SMU,7,17,
+R7C17  (X17 Y7),resistance,23.1085,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:52,Kelvin Resistance,measure,ohm,07Q,,,,4A11_2B02,SMU,7,17,
+R7C17  (X17 Y7),voltage,-6.14403e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:52,Kelvin Voltage (DMM),measure,V,07Q,,,,2F01_4E12,DMM,7,17,
+R8C2  (X2 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:55,Force Current,apply,A,08B,,,0.2117705,4A11_2B02,SMU,8,2,
+R8C2  (X2 Y8),resistance,21.1775,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:55,Kelvin Resistance,measure,ohm,08B,,,,4A11_2B02,SMU,8,2,
+R8C2  (X2 Y8),voltage,-5.37202e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:55,Kelvin Voltage (DMM),measure,V,08B,,,,2F01_4E12,DMM,8,2,
+R8C3  (X3 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:57,Force Current,apply,A,08C,,,0.2207233,4A11_2B02,SMU,8,3,
+R8C3  (X3 Y8),resistance,22.0732,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:57,Kelvin Resistance,measure,ohm,08C,,,,4A11_2B02,SMU,8,3,
+R8C3  (X3 Y8),voltage,-5.59241e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:21:57,Kelvin Voltage (DMM),measure,V,08C,,,,2F01_4E12,DMM,8,3,
+R8C4  (X4 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:00,Force Current,apply,A,08D,,,0.220809,4A11_2B02,SMU,8,4,
+R8C4  (X4 Y8),resistance,22.0813,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:00,Kelvin Resistance,measure,ohm,08D,,,,4A11_2B02,SMU,8,4,
+R8C4  (X4 Y8),voltage,-5.48775e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:00,Kelvin Voltage (DMM),measure,V,08D,,,,2F01_4E12,DMM,8,4,
+R8C5  (X5 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:02,Force Current,apply,A,08E,,,0.2117637,4A11_2B02,SMU,8,5,
+R8C5  (X5 Y8),resistance,21.1764,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:02,Kelvin Resistance,measure,ohm,08E,,,,4A11_2B02,SMU,8,5,
+R8C5  (X5 Y8),voltage,-5.36751e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:02,Kelvin Voltage (DMM),measure,V,08E,,,,2F01_4E12,DMM,8,5,
+R8C6  (X6 Y8),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:04,Force Current,apply,A,08F,,,0.2283379,4A11_2B02,SMU,8,6,
+R8C6  (X6 Y8),resistance,22.8342,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:04,Kelvin Resistance,measure,ohm,08F,,,,4A11_2B02,SMU,8,6,
+R8C6  (X6 Y8),voltage,-5.89757e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:04,Kelvin Voltage (DMM),measure,V,08F,,,,2F01_4E12,DMM,8,6,
+R8C7  (X7 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:06,Force Current,apply,A,08G,,,0.2692895,4A11_2B02,SMU,8,7,
+R8C7  (X7 Y8),resistance,26.9293,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:06,Kelvin Resistance,measure,ohm,08G,,,,4A11_2B02,SMU,8,7,
+R8C7  (X7 Y8),voltage,-6.87222e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:06,Kelvin Voltage (DMM),measure,V,08G,,,,2F01_4E12,DMM,8,7,
+R8C8  (X8 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:08,Force Current,apply,A,08H,,,0.2602634,4A11_2B02,SMU,8,8,
+R8C8  (X8 Y8),resistance,26.027,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:08,Kelvin Resistance,measure,ohm,08H,,,,4A11_2B02,SMU,8,8,
+R8C8  (X8 Y8),voltage,-6.73729e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:08,Kelvin Voltage (DMM),measure,V,08H,,,,2F01_4E12,DMM,8,8,
+R8C9  (X9 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:11,Force Current,apply,A,08I,,,0.2441344,4A11_2B02,SMU,8,9,
+R8C9  (X9 Y8),resistance,24.4136,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:11,Kelvin Resistance,measure,ohm,08I,,,,4A11_2B02,SMU,8,9,
+R8C9  (X9 Y8),voltage,-6.44104e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:11,Kelvin Voltage (DMM),measure,V,08I,,,,2F01_4E12,DMM,8,9,
+R8C10  (X10 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:13,Force Current,apply,A,08J,,,0.3244155,4A11_2B02,SMU,8,10,
+R8C10  (X10 Y8),resistance,32.4397,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:13,Kelvin Resistance,measure,ohm,08J,,,,4A11_2B02,SMU,8,10,
+R8C10  (X10 Y8),voltage,-7.87001e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:13,Kelvin Voltage (DMM),measure,V,08J,,,,2F01_4E12,DMM,8,10,
+R8C11  (X11 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:15,Force Current,apply,A,08K,,,0.2625609,4A11_2B02,SMU,8,11,
+R8C11  (X11 Y8),resistance,26.2558,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:15,Kelvin Resistance,measure,ohm,08K,,,,4A11_2B02,SMU,8,11,
+R8C11  (X11 Y8),voltage,-6.7864e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:15,Kelvin Voltage (DMM),measure,V,08K,,,,2F01_4E12,DMM,8,11,
+R8C12  (X12 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:17,Force Current,apply,A,08L,,,0.2420946,4A11_2B02,SMU,8,12,
+R8C12  (X12 Y8),resistance,24.2093,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:17,Kelvin Resistance,measure,ohm,08L,,,,4A11_2B02,SMU,8,12,
+R8C12  (X12 Y8),voltage,-6.45008e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:17,Kelvin Voltage (DMM),measure,V,08L,,,,2F01_4E12,DMM,8,12,
+R8C13  (X13 Y8),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:19,Force Current,apply,A,08M,,,0.2111912,4A11_2B02,SMU,8,13,
+R8C13  (X13 Y8),resistance,21.1198,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:19,Kelvin Resistance,measure,ohm,08M,,,,4A11_2B02,SMU,8,13,
+R8C13  (X13 Y8),voltage,-5.61805e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:19,Kelvin Voltage (DMM),measure,V,08M,,,,2F01_4E12,DMM,8,13,
+R8C14  (X14 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:21,Force Current,apply,A,08N,,,0.2265307,4A11_2B02,SMU,8,14,
+R8C14  (X14 Y8),resistance,22.6534,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:21,Kelvin Resistance,measure,ohm,08N,,,,4A11_2B02,SMU,8,14,
+R8C14  (X14 Y8),voltage,-5.90472e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:21,Kelvin Voltage (DMM),measure,V,08N,,,,2F01_4E12,DMM,8,14,
+R8C15  (X15 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:24,Force Current,apply,A,08O,,,0.2198676,4A11_2B02,SMU,8,15,
+R8C15  (X15 Y8),resistance,21.9866,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:24,Kelvin Resistance,measure,ohm,08O,,,,4A11_2B02,SMU,8,15,
+R8C15  (X15 Y8),voltage,-5.76954e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:24,Kelvin Voltage (DMM),measure,V,08O,,,,2F01_4E12,DMM,8,15,
+R8C16  (X16 Y8),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:26,Force Current,apply,A,08P,,,0.2291148,4A11_2B02,SMU,8,16,
+R8C16  (X16 Y8),resistance,22.912,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:26,Kelvin Resistance,measure,ohm,08P,,,,4A11_2B02,SMU,8,16,
+R8C16  (X16 Y8),voltage,-6.01521e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:26,Kelvin Voltage (DMM),measure,V,08P,,,,2F01_4E12,DMM,8,16,
+R8C17  (X17 Y8),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:28,Force Current,apply,A,08Q,,,0.2178104,4A11_2B02,SMU,8,17,
+R8C17  (X17 Y8),resistance,21.7811,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:28,Kelvin Resistance,measure,ohm,08Q,,,,4A11_2B02,SMU,8,17,
+R8C17  (X17 Y8),voltage,-5.7252e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:28,Kelvin Voltage (DMM),measure,V,08Q,,,,2F01_4E12,DMM,8,17,
+R9C2  (X2 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:30,Force Current,apply,A,09B,,,0.2132196,4A11_2B02,SMU,9,2,
+R9C2  (X2 Y9),resistance,21.3222,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:30,Kelvin Resistance,measure,ohm,09B,,,,4A11_2B02,SMU,9,2,
+R9C2  (X2 Y9),voltage,-5.38314e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:30,Kelvin Voltage (DMM),measure,V,09B,,,,2F01_4E12,DMM,9,2,
+R9C3  (X3 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:33,Force Current,apply,A,09C,,,0.2092822,4A11_2B02,SMU,9,3,
+R9C3  (X3 Y9),resistance,20.9283,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:33,Kelvin Resistance,measure,ohm,09C,,,,4A11_2B02,SMU,9,3,
+R9C3  (X3 Y9),voltage,-5.24111e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:33,Kelvin Voltage (DMM),measure,V,09C,,,,2F01_4E12,DMM,9,3,
+R9C4  (X4 Y9),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:35,Force Current,apply,A,09D,,,0.2627145,4A11_2B02,SMU,9,4,
+R9C4  (X4 Y9),resistance,26.2702,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:35,Kelvin Resistance,measure,ohm,09D,,,,4A11_2B02,SMU,9,4,
+R9C4  (X4 Y9),voltage,-6.70258e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:35,Kelvin Voltage (DMM),measure,V,09D,,,,2F01_4E12,DMM,9,4,
+R9C5  (X5 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:37,Force Current,apply,A,09E,,,0.2254788,4A11_2B02,SMU,9,5,
+R9C5  (X5 Y9),resistance,22.5477,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:37,Kelvin Resistance,measure,ohm,09E,,,,4A11_2B02,SMU,9,5,
+R9C5  (X5 Y9),voltage,-5.80962e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:37,Kelvin Voltage (DMM),measure,V,09E,,,,2F01_4E12,DMM,9,5,
+R9C6  (X6 Y9),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:39,Force Current,apply,A,09F,,,0.2203155,4A11_2B02,SMU,9,6,
+R9C6  (X6 Y9),resistance,22.0315,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:39,Kelvin Resistance,measure,ohm,09F,,,,4A11_2B02,SMU,9,6,
+R9C6  (X6 Y9),voltage,-5.66443e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:39,Kelvin Voltage (DMM),measure,V,09F,,,,2F01_4E12,DMM,9,6,
+R9C7  (X7 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:41,Force Current,apply,A,09G,,,0.2458604,4A11_2B02,SMU,9,7,
+R9C7  (X7 Y9),resistance,24.586,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:41,Kelvin Resistance,measure,ohm,09G,,,,4A11_2B02,SMU,9,7,
+R9C7  (X7 Y9),voltage,-6.39705e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:41,Kelvin Voltage (DMM),measure,V,09G,,,,2F01_4E12,DMM,9,7,
+R9C8  (X8 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:44,Force Current,apply,A,09H,,,0.3197088,4A11_2B02,SMU,9,8,
+R9C8  (X8 Y9),resistance,31.9702,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:44,Kelvin Resistance,measure,ohm,09H,,,,4A11_2B02,SMU,9,8,
+R9C8  (X8 Y9),voltage,-7.75117e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:44,Kelvin Voltage (DMM),measure,V,09H,,,,2F01_4E12,DMM,9,8,
+R9C9  (X9 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:46,Force Current,apply,A,09I,,,0.2388884,4A11_2B02,SMU,9,9,
+R9C9  (X9 Y9),resistance,23.8894,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:46,Kelvin Resistance,measure,ohm,09I,,,,4A11_2B02,SMU,9,9,
+R9C9  (X9 Y9),voltage,-6.21045e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:46,Kelvin Voltage (DMM),measure,V,09I,,,,2F01_4E12,DMM,9,9,
+R9C10  (X10 Y9),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:48,Force Current,apply,A,09J,,,0.2929028,4A11_2B02,SMU,9,10,
+R9C10  (X10 Y9),resistance,29.2918,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:48,Kelvin Resistance,measure,ohm,09J,,,,4A11_2B02,SMU,9,10,
+R9C10  (X10 Y9),voltage,-7.30339e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:48,Kelvin Voltage (DMM),measure,V,09J,,,,2F01_4E12,DMM,9,10,
+R9C11  (X11 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:50,Force Current,apply,A,09K,,,0.2439724,4A11_2B02,SMU,9,11,
+R9C11  (X11 Y9),resistance,24.3961,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:50,Kelvin Resistance,measure,ohm,09K,,,,4A11_2B02,SMU,9,11,
+R9C11  (X11 Y9),voltage,-6.34752e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:50,Kelvin Voltage (DMM),measure,V,09K,,,,2F01_4E12,DMM,9,11,
+R9C12  (X12 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:52,Force Current,apply,A,09L,,,0.2668538,4A11_2B02,SMU,9,12,
+R9C12  (X12 Y9),resistance,26.6863,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:52,Kelvin Resistance,measure,ohm,09L,,,,4A11_2B02,SMU,9,12,
+R9C12  (X12 Y9),voltage,-6.93831e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:52,Kelvin Voltage (DMM),measure,V,09L,,,,2F01_4E12,DMM,9,12,
+R9C13  (X13 Y9),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:55,Force Current,apply,A,09M,,,0.2349425,4A11_2B02,SMU,9,13,
+R9C13  (X13 Y9),resistance,23.4939,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:55,Kelvin Resistance,measure,ohm,09M,,,,4A11_2B02,SMU,9,13,
+R9C13  (X13 Y9),voltage,-6.16946e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:55,Kelvin Voltage (DMM),measure,V,09M,,,,2F01_4E12,DMM,9,13,
+R9C14  (X14 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:57,Force Current,apply,A,09N,,,0.2206018,4A11_2B02,SMU,9,14,
+R9C14  (X14 Y9),resistance,22.0607,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:57,Kelvin Resistance,measure,ohm,09N,,,,4A11_2B02,SMU,9,14,
+R9C14  (X14 Y9),voltage,-5.79221e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:57,Kelvin Voltage (DMM),measure,V,09N,,,,2F01_4E12,DMM,9,14,
+R9C15  (X15 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:59,Force Current,apply,A,09O,,,0.2138125,4A11_2B02,SMU,9,15,
+R9C15  (X15 Y9),resistance,21.3816,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:59,Kelvin Resistance,measure,ohm,09O,,,,4A11_2B02,SMU,9,15,
+R9C15  (X15 Y9),voltage,-5.43187e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:22:59,Kelvin Voltage (DMM),measure,V,09O,,,,2F01_4E12,DMM,9,15,
+R9C16  (X16 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:01,Force Current,apply,A,09P,,,0.2396608,4A11_2B02,SMU,9,16,
+R9C16  (X16 Y9),resistance,23.9659,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:01,Kelvin Resistance,measure,ohm,09P,,,,4A11_2B02,SMU,9,16,
+R9C16  (X16 Y9),voltage,-6.22952e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:01,Kelvin Voltage (DMM),measure,V,09P,,,,2F01_4E12,DMM,9,16,
+R9C17  (X17 Y9),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:03,Force Current,apply,A,09Q,,,0.2263023,4A11_2B02,SMU,9,17,
+R9C17  (X17 Y9),resistance,22.6294,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:03,Kelvin Resistance,measure,ohm,09Q,,,,4A11_2B02,SMU,9,17,
+R9C17  (X17 Y9),voltage,-5.88556e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:03,Kelvin Voltage (DMM),measure,V,09Q,,,,2F01_4E12,DMM,9,17,
+R10C1  (X1 Y10),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:06,Force Current,apply,A,10A,,,0.1991138,4A11_2B02,SMU,10,1,
+R10C1  (X1 Y10),resistance,19.9112,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:06,Kelvin Resistance,measure,ohm,10A,,,,4A11_2B02,SMU,10,1,
+R10C1  (X1 Y10),voltage,-2.6251e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:06,Kelvin Voltage (DMM),measure,V,10A,,,,2F01_4E12,DMM,10,1,
+R10C2  (X2 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:09,Force Current,apply,A,10B,,,0.2167004,4A11_2B02,SMU,10,2,
+R10C2  (X2 Y10),resistance,21.6699,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:09,Kelvin Resistance,measure,ohm,10B,,,,4A11_2B02,SMU,10,2,
+R10C2  (X2 Y10),voltage,-5.38186e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:09,Kelvin Voltage (DMM),measure,V,10B,,,,2F01_4E12,DMM,10,2,
+R10C3  (X3 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:11,Force Current,apply,A,10C,,,0.2133012,4A11_2B02,SMU,10,3,
+R10C3  (X3 Y10),resistance,21.3302,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:11,Kelvin Resistance,measure,ohm,10C,,,,4A11_2B02,SMU,10,3,
+R10C3  (X3 Y10),voltage,-5.34595e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:11,Kelvin Voltage (DMM),measure,V,10C,,,,2F01_4E12,DMM,10,3,
+R10C4  (X4 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:13,Force Current,apply,A,10D,,,0.2580322,4A11_2B02,SMU,10,4,
+R10C4  (X4 Y10),resistance,25.805,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:13,Kelvin Resistance,measure,ohm,10D,,,,4A11_2B02,SMU,10,4,
+R10C4  (X4 Y10),voltage,-6.54653e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:13,Kelvin Voltage (DMM),measure,V,10D,,,,2F01_4E12,DMM,10,4,
+R10C5  (X5 Y10),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:15,Force Current,apply,A,10E,,,0.2395975,4A11_2B02,SMU,10,5,
+R10C5  (X5 Y10),resistance,23.9597,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:15,Kelvin Resistance,measure,ohm,10E,,,,4A11_2B02,SMU,10,5,
+R10C5  (X5 Y10),voltage,-6.15293e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:15,Kelvin Voltage (DMM),measure,V,10E,,,,2F01_4E12,DMM,10,5,
+R10C6  (X6 Y10),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:17,Force Current,apply,A,10F,,,0.2470935,4A11_2B02,SMU,10,6,
+R10C6  (X6 Y10),resistance,24.7102,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:17,Kelvin Resistance,measure,ohm,10F,,,,4A11_2B02,SMU,10,6,
+R10C6  (X6 Y10),voltage,-6.37425e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:17,Kelvin Voltage (DMM),measure,V,10F,,,,2F01_4E12,DMM,10,6,
+R10C7  (X7 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:20,Force Current,apply,A,10G,,,0.2434327,4A11_2B02,SMU,10,7,
+R10C7  (X7 Y10),resistance,24.3437,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:20,Kelvin Resistance,measure,ohm,10G,,,,4A11_2B02,SMU,10,7,
+R10C7  (X7 Y10),voltage,-6.29595e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:20,Kelvin Voltage (DMM),measure,V,10G,,,,2F01_4E12,DMM,10,7,
+R10C8  (X8 Y10),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:22,Force Current,apply,A,10H,,,0.2499506,4A11_2B02,SMU,10,8,
+R10C8  (X8 Y10),resistance,24.9944,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:22,Kelvin Resistance,measure,ohm,10H,,,,4A11_2B02,SMU,10,8,
+R10C8  (X8 Y10),voltage,-6.42224e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:22,Kelvin Voltage (DMM),measure,V,10H,,,,2F01_4E12,DMM,10,8,
+R10C9  (X9 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:24,Force Current,apply,A,10I,,,0.3045887,4A11_2B02,SMU,10,9,
+R10C9  (X9 Y10),resistance,30.4595,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:24,Kelvin Resistance,measure,ohm,10I,,,,4A11_2B02,SMU,10,9,
+R10C9  (X9 Y10),voltage,-7.51738e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:24,Kelvin Voltage (DMM),measure,V,10I,,,,2F01_4E12,DMM,10,9,
+R10C10  (X10 Y10),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:26,Force Current,apply,A,10J,,,0.277768,4A11_2B02,SMU,10,10,
+R10C10  (X10 Y10),resistance,27.7762,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:26,Kelvin Resistance,measure,ohm,10J,,,,4A11_2B02,SMU,10,10,
+R10C10  (X10 Y10),voltage,-6.92418e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:26,Kelvin Voltage (DMM),measure,V,10J,,,,2F01_4E12,DMM,10,10,
+R10C11  (X11 Y10),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:28,Force Current,apply,A,10K,,,0.2770776,4A11_2B02,SMU,10,11,
+R10C11  (X11 Y10),resistance,27.708,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:28,Kelvin Resistance,measure,ohm,10K,,,,4A11_2B02,SMU,10,11,
+R10C11  (X11 Y10),voltage,-7.092e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:28,Kelvin Voltage (DMM),measure,V,10K,,,,2F01_4E12,DMM,10,11,
+R10C12  (X12 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:30,Force Current,apply,A,10L,,,0.300065,4A11_2B02,SMU,10,12,
+R10C12  (X12 Y10),resistance,30.0083,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:30,Kelvin Resistance,measure,ohm,10L,,,,4A11_2B02,SMU,10,12,
+R10C12  (X12 Y10),voltage,-7.49963e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:30,Kelvin Voltage (DMM),measure,V,10L,,,,2F01_4E12,DMM,10,12,
+R10C13  (X13 Y10),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:33,Force Current,apply,A,10M,,,0.2345055,4A11_2B02,SMU,10,13,
+R10C13  (X13 Y10),resistance,23.4505,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:33,Kelvin Resistance,measure,ohm,10M,,,,4A11_2B02,SMU,10,13,
+R10C13  (X13 Y10),voltage,-6.1602e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:33,Kelvin Voltage (DMM),measure,V,10M,,,,2F01_4E12,DMM,10,13,
+R10C14  (X14 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:35,Force Current,apply,A,10N,,,0.2328154,4A11_2B02,SMU,10,14,
+R10C14  (X14 Y10),resistance,23.2824,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:35,Kelvin Resistance,measure,ohm,10N,,,,4A11_2B02,SMU,10,14,
+R10C14  (X14 Y10),voltage,-6.14723e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:35,Kelvin Voltage (DMM),measure,V,10N,,,,2F01_4E12,DMM,10,14,
+R10C15  (X15 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:37,Force Current,apply,A,10O,,,0.2252086,4A11_2B02,SMU,10,15,
+R10C15  (X15 Y10),resistance,22.5219,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:37,Kelvin Resistance,measure,ohm,10O,,,,4A11_2B02,SMU,10,15,
+R10C15  (X15 Y10),voltage,-5.8782e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:37,Kelvin Voltage (DMM),measure,V,10O,,,,2F01_4E12,DMM,10,15,
+R10C16  (X16 Y10),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:39,Force Current,apply,A,10P,,,0.2714171,4A11_2B02,SMU,10,16,
+R10C16  (X16 Y10),resistance,27.143,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:39,Kelvin Resistance,measure,ohm,10P,,,,4A11_2B02,SMU,10,16,
+R10C16  (X16 Y10),voltage,-6.95216e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:39,Kelvin Voltage (DMM),measure,V,10P,,,,2F01_4E12,DMM,10,16,
+R10C17  (X17 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:41,Force Current,apply,A,10Q,,,0.2238784,4A11_2B02,SMU,10,17,
+R10C17  (X17 Y10),resistance,22.3881,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:41,Kelvin Resistance,measure,ohm,10Q,,,,4A11_2B02,SMU,10,17,
+R10C17  (X17 Y10),voltage,-5.79019e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:41,Kelvin Voltage (DMM),measure,V,10Q,,,,2F01_4E12,DMM,10,17,
+R10C18  (X18 Y10),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:44,Force Current,apply,A,10R,,,0.2375307,4A11_2B02,SMU,10,18,
+R10C18  (X18 Y10),resistance,23.7539,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:44,Kelvin Resistance,measure,ohm,10R,,,,4A11_2B02,SMU,10,18,
+R10C18  (X18 Y10),voltage,-6.18032e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:44,Kelvin Voltage (DMM),measure,V,10R,,,,2F01_4E12,DMM,10,18,
+R11C1  (X1 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:46,Force Current,apply,A,11A,,,0.2073352,4A11_2B02,SMU,11,1,
+R11C1  (X1 Y11),resistance,20.7333,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:46,Kelvin Resistance,measure,ohm,11A,,,,4A11_2B02,SMU,11,1,
+R11C1  (X1 Y11),voltage,-5.28581e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:46,Kelvin Voltage (DMM),measure,V,11A,,,,2F01_4E12,DMM,11,1,
+R11C2  (X2 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:49,Force Current,apply,A,11B,,,0.2100215,4A11_2B02,SMU,11,2,
+R11C2  (X2 Y11),resistance,21.0023,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:49,Kelvin Resistance,measure,ohm,11B,,,,4A11_2B02,SMU,11,2,
+R11C2  (X2 Y11),voltage,-5.28025e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:49,Kelvin Voltage (DMM),measure,V,11B,,,,2F01_4E12,DMM,11,2,
+R11C3  (X3 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:51,Force Current,apply,A,11C,,,0.2207242,4A11_2B02,SMU,11,3,
+R11C3  (X3 Y11),resistance,22.0719,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:51,Kelvin Resistance,measure,ohm,11C,,,,4A11_2B02,SMU,11,3,
+R11C3  (X3 Y11),voltage,-5.59914e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:51,Kelvin Voltage (DMM),measure,V,11C,,,,2F01_4E12,DMM,11,3,
+R11C4  (X4 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:53,Force Current,apply,A,11D,,,0.2312477,4A11_2B02,SMU,11,4,
+R11C4  (X4 Y11),resistance,23.1249,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:53,Kelvin Resistance,measure,ohm,11D,,,,4A11_2B02,SMU,11,4,
+R11C4  (X4 Y11),voltage,-5.92172e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:53,Kelvin Voltage (DMM),measure,V,11D,,,,2F01_4E12,DMM,11,4,
+R11C5  (X5 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:55,Force Current,apply,A,11E,,,0.2741028,4A11_2B02,SMU,11,5,
+R11C5  (X5 Y11),resistance,27.4105,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:55,Kelvin Resistance,measure,ohm,11E,,,,4A11_2B02,SMU,11,5,
+R11C5  (X5 Y11),voltage,-6.89073e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:55,Kelvin Voltage (DMM),measure,V,11E,,,,2F01_4E12,DMM,11,5,
+R11C6  (X6 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:57,Force Current,apply,A,11F,,,0.2244882,4A11_2B02,SMU,11,6,
+R11C6  (X6 Y11),resistance,22.4486,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:57,Kelvin Resistance,measure,ohm,11F,,,,4A11_2B02,SMU,11,6,
+R11C6  (X6 Y11),voltage,-5.67475e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:57,Kelvin Voltage (DMM),measure,V,11F,,,,2F01_4E12,DMM,11,6,
+R11C7  (X7 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:59,Force Current,apply,A,11G,,,0.3065413,4A11_2B02,SMU,11,7,
+R11C7  (X7 Y11),resistance,30.6545,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:59,Kelvin Resistance,measure,ohm,11G,,,,4A11_2B02,SMU,11,7,
+R11C7  (X7 Y11),voltage,-7.40491e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:23:59,Kelvin Voltage (DMM),measure,V,11G,,,,2F01_4E12,DMM,11,7,
+R11C8  (X8 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:02,Force Current,apply,A,11H,,,0.2793908,4A11_2B02,SMU,11,8,
+R11C8  (X8 Y11),resistance,27.9401,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:02,Kelvin Resistance,measure,ohm,11H,,,,4A11_2B02,SMU,11,8,
+R11C8  (X8 Y11),voltage,-7.07539e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:02,Kelvin Voltage (DMM),measure,V,11H,,,,2F01_4E12,DMM,11,8,
+R11C9  (X9 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:04,Force Current,apply,A,11I,,,0.2374408,4A11_2B02,SMU,11,9,
+R11C9  (X9 Y11),resistance,23.7443,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:04,Kelvin Resistance,measure,ohm,11I,,,,4A11_2B02,SMU,11,9,
+R11C9  (X9 Y11),voltage,-6.07511e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:04,Kelvin Voltage (DMM),measure,V,11I,,,,2F01_4E12,DMM,11,9,
+R11C10  (X10 Y11),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:06,Force Current,apply,A,11J,,,0.3306381,4A11_2B02,SMU,11,10,
+R11C10  (X10 Y11),resistance,33.0622,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:06,Kelvin Resistance,measure,ohm,11J,,,,4A11_2B02,SMU,11,10,
+R11C10  (X10 Y11),voltage,-7.73028e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:06,Kelvin Voltage (DMM),measure,V,11J,,,,2F01_4E12,DMM,11,10,
+R11C11  (X11 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:08,Force Current,apply,A,11K,,,0.2379651,4A11_2B02,SMU,11,11,
+R11C11  (X11 Y11),resistance,23.7966,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:08,Kelvin Resistance,measure,ohm,11K,,,,4A11_2B02,SMU,11,11,
+R11C11  (X11 Y11),voltage,-6.03969e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:08,Kelvin Voltage (DMM),measure,V,11K,,,,2F01_4E12,DMM,11,11,
+R11C12  (X12 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:10,Force Current,apply,A,11L,,,0.2276221,4A11_2B02,SMU,11,12,
+R11C12  (X12 Y11),resistance,22.761,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:10,Kelvin Resistance,measure,ohm,11L,,,,4A11_2B02,SMU,11,12,
+R11C12  (X12 Y11),voltage,-5.94433e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:10,Kelvin Voltage (DMM),measure,V,11L,,,,2F01_4E12,DMM,11,12,
+R11C13  (X13 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:13,Force Current,apply,A,11M,,,0.2588307,4A11_2B02,SMU,11,13,
+R11C13  (X13 Y11),resistance,25.883,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:13,Kelvin Resistance,measure,ohm,11M,,,,4A11_2B02,SMU,11,13,
+R11C13  (X13 Y11),voltage,-6.62982e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:13,Kelvin Voltage (DMM),measure,V,11M,,,,2F01_4E12,DMM,11,13,
+R11C14  (X14 Y11),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:15,Force Current,apply,A,11N,,,0.242052,4A11_2B02,SMU,11,14,
+R11C14  (X14 Y11),resistance,24.2054,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:15,Kelvin Resistance,measure,ohm,11N,,,,4A11_2B02,SMU,11,14,
+R11C14  (X14 Y11),voltage,-6.30182e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:15,Kelvin Voltage (DMM),measure,V,11N,,,,2F01_4E12,DMM,11,14,
+R11C15  (X15 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:17,Force Current,apply,A,11O,,,0.2311096,4A11_2B02,SMU,11,15,
+R11C15  (X15 Y11),resistance,23.1111,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:17,Kelvin Resistance,measure,ohm,11O,,,,4A11_2B02,SMU,11,15,
+R11C15  (X15 Y11),voltage,-6.04244e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:17,Kelvin Voltage (DMM),measure,V,11O,,,,2F01_4E12,DMM,11,15,
+R11C16  (X16 Y11),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:19,Force Current,apply,A,11P,,,0.2672449,4A11_2B02,SMU,11,16,
+R11C16  (X16 Y11),resistance,26.7231,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:19,Kelvin Resistance,measure,ohm,11P,,,,4A11_2B02,SMU,11,16,
+R11C16  (X16 Y11),voltage,-6.90997e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:19,Kelvin Voltage (DMM),measure,V,11P,,,,2F01_4E12,DMM,11,16,
+R11C17  (X17 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:21,Force Current,apply,A,11Q,,,0.2127461,4A11_2B02,SMU,11,17,
+R11C17  (X17 Y11),resistance,21.2752,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:21,Kelvin Resistance,measure,ohm,11Q,,,,4A11_2B02,SMU,11,17,
+R11C17  (X17 Y11),voltage,-5.41023e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:21,Kelvin Voltage (DMM),measure,V,11Q,,,,2F01_4E12,DMM,11,17,
+R11C18  (X18 Y11),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:24,Force Current,apply,A,11R,,,0.1945415,4A11_2B02,SMU,11,18,
+R11C18  (X18 Y11),resistance,19.4544,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:24,Kelvin Resistance,measure,ohm,11R,,,,4A11_2B02,SMU,11,18,
+R11C18  (X18 Y11),voltage,-2.65524e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:24,Kelvin Voltage (DMM),measure,V,11R,,,,2F01_4E12,DMM,11,18,
+R12C1  (X1 Y12),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:27,Force Current,apply,A,12A,,,0.1989628,4A11_2B02,SMU,12,1,
+R12C1  (X1 Y12),resistance,19.8964,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:27,Kelvin Resistance,measure,ohm,12A,,,,4A11_2B02,SMU,12,1,
+R12C1  (X1 Y12),voltage,-2.73732e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:27,Kelvin Voltage (DMM),measure,V,12A,,,,2F01_4E12,DMM,12,1,
+R12C2  (X2 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:29,Force Current,apply,A,12B,,,0.2025455,4A11_2B02,SMU,12,2,
+R12C2  (X2 Y12),resistance,20.2548,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:29,Kelvin Resistance,measure,ohm,12B,,,,4A11_2B02,SMU,12,2,
+R12C2  (X2 Y12),voltage,-5.15885e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:29,Kelvin Voltage (DMM),measure,V,12B,,,,2F01_4E12,DMM,12,2,
+R12C3  (X3 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:31,Force Current,apply,A,12C,,,0.196502,4A11_2B02,SMU,12,3,
+R12C3  (X3 Y12),resistance,19.6505,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:31,Kelvin Resistance,measure,ohm,12C,,,,4A11_2B02,SMU,12,3,
+R12C3  (X3 Y12),voltage,-2.68072e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:31,Kelvin Voltage (DMM),measure,V,12C,,,,2F01_4E12,DMM,12,3,
+R12C4  (X4 Y12),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:33,Force Current,apply,A,12D,,,0.234315,4A11_2B02,SMU,12,4,
+R12C4  (X4 Y12),resistance,23.4319,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:33,Kelvin Resistance,measure,ohm,12D,,,,4A11_2B02,SMU,12,4,
+R12C4  (X4 Y12),voltage,-5.98253e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:33,Kelvin Voltage (DMM),measure,V,12D,,,,2F01_4E12,DMM,12,4,
+R12C5  (X5 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:36,Force Current,apply,A,12E,,,0.2700587,4A11_2B02,SMU,12,5,
+R12C5  (X5 Y12),resistance,27.0056,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:36,Kelvin Resistance,measure,ohm,12E,,,,4A11_2B02,SMU,12,5,
+R12C5  (X5 Y12),voltage,-6.7613e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:36,Kelvin Voltage (DMM),measure,V,12E,,,,2F01_4E12,DMM,12,5,
+R12C6  (X6 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:38,Force Current,apply,A,12F,,,0.2284968,4A11_2B02,SMU,12,6,
+R12C6  (X6 Y12),resistance,22.8504,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:38,Kelvin Resistance,measure,ohm,12F,,,,4A11_2B02,SMU,12,6,
+R12C6  (X6 Y12),voltage,-5.83054e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:38,Kelvin Voltage (DMM),measure,V,12F,,,,2F01_4E12,DMM,12,6,
+R12C7  (X7 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:40,Force Current,apply,A,12G,,,0.259121,4A11_2B02,SMU,12,7,
+R12C7  (X7 Y12),resistance,25.9125,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:40,Kelvin Resistance,measure,ohm,12G,,,,4A11_2B02,SMU,12,7,
+R12C7  (X7 Y12),voltage,-6.55559e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:40,Kelvin Voltage (DMM),measure,V,12G,,,,2F01_4E12,DMM,12,7,
+R12C8  (X8 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:42,Force Current,apply,A,12H,,,0.2936691,4A11_2B02,SMU,12,8,
+R12C8  (X8 Y12),resistance,29.3645,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:42,Kelvin Resistance,measure,ohm,12H,,,,4A11_2B02,SMU,12,8,
+R12C8  (X8 Y12),voltage,-7.19868e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:42,Kelvin Voltage (DMM),measure,V,12H,,,,2F01_4E12,DMM,12,8,
+R12C9  (X9 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:44,Force Current,apply,A,12I,,,0.241599,4A11_2B02,SMU,12,9,
+R12C9  (X9 Y12),resistance,24.1599,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:44,Kelvin Resistance,measure,ohm,12I,,,,4A11_2B02,SMU,12,9,
+R12C9  (X9 Y12),voltage,-6.12863e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:44,Kelvin Voltage (DMM),measure,V,12I,,,,2F01_4E12,DMM,12,9,
+R12C10  (X10 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:47,Force Current,apply,A,12J,,,0.245105,4A11_2B02,SMU,12,10,
+R12C10  (X10 Y12),resistance,24.5104,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:47,Kelvin Resistance,measure,ohm,12J,,,,4A11_2B02,SMU,12,10,
+R12C10  (X10 Y12),voltage,-6.17876e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:47,Kelvin Voltage (DMM),measure,V,12J,,,,2F01_4E12,DMM,12,10,
+R12C11  (X11 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:49,Force Current,apply,A,12K,,,0.2492459,4A11_2B02,SMU,12,11,
+R12C11  (X11 Y12),resistance,24.9244,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:49,Kelvin Resistance,measure,ohm,12K,,,,4A11_2B02,SMU,12,11,
+R12C11  (X11 Y12),voltage,-6.35275e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:49,Kelvin Voltage (DMM),measure,V,12K,,,,2F01_4E12,DMM,12,11,
+R12C12  (X12 Y12),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:51,Force Current,apply,A,12L,,,0.2563827,4A11_2B02,SMU,12,12,
+R12C12  (X12 Y12),resistance,25.6376,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:51,Kelvin Resistance,measure,ohm,12L,,,,4A11_2B02,SMU,12,12,
+R12C12  (X12 Y12),voltage,-6.61602e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:51,Kelvin Voltage (DMM),measure,V,12L,,,,2F01_4E12,DMM,12,12,
+R12C13  (X13 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:53,Force Current,apply,A,12M,,,0.2359198,4A11_2B02,SMU,12,13,
+R12C13  (X13 Y12),resistance,23.5919,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:53,Kelvin Resistance,measure,ohm,12M,,,,4A11_2B02,SMU,12,13,
+R12C13  (X13 Y12),voltage,-6.12994e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:53,Kelvin Voltage (DMM),measure,V,12M,,,,2F01_4E12,DMM,12,13,
+R12C14  (X14 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:55,Force Current,apply,A,12N,,,0.2403333,4A11_2B02,SMU,12,14,
+R12C14  (X14 Y12),resistance,24.0328,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:55,Kelvin Resistance,measure,ohm,12N,,,,4A11_2B02,SMU,12,14,
+R12C14  (X14 Y12),voltage,-6.24742e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:55,Kelvin Voltage (DMM),measure,V,12N,,,,2F01_4E12,DMM,12,14,
+R12C15  (X15 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:57,Force Current,apply,A,12O,,,0.2097772,4A11_2B02,SMU,12,15,
+R12C15  (X15 Y12),resistance,20.9779,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:57,Kelvin Resistance,measure,ohm,12O,,,,4A11_2B02,SMU,12,15,
+R12C15  (X15 Y12),voltage,-5.35333e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:24:57,Kelvin Voltage (DMM),measure,V,12O,,,,2F01_4E12,DMM,12,15,
+R12C16  (X16 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:00,Force Current,apply,A,12P,,,0.2228847,4A11_2B02,SMU,12,16,
+R12C16  (X16 Y12),resistance,22.2878,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:00,Kelvin Resistance,measure,ohm,12P,,,,4A11_2B02,SMU,12,16,
+R12C16  (X16 Y12),voltage,-5.70146e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:00,Kelvin Voltage (DMM),measure,V,12P,,,,2F01_4E12,DMM,12,16,
+R12C17  (X17 Y12),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:02,Force Current,apply,A,12Q,,,0.207146,4A11_2B02,SMU,12,17,
+R12C17  (X17 Y12),resistance,20.7145,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:02,Kelvin Resistance,measure,ohm,12Q,,,,4A11_2B02,SMU,12,17,
+R12C17  (X17 Y12),voltage,-5.19401e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:02,Kelvin Voltage (DMM),measure,V,12Q,,,,2F01_4E12,DMM,12,17,
+R12C18  (X18 Y12),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:04,Force Current,apply,A,12R,,,0.2070476,4A11_2B02,SMU,12,18,
+R12C18  (X18 Y12),resistance,20.7043,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:04,Kelvin Resistance,measure,ohm,12R,,,,4A11_2B02,SMU,12,18,
+R12C18  (X18 Y12),voltage,-5.23004e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:04,Kelvin Voltage (DMM),measure,V,12R,,,,2F01_4E12,DMM,12,18,
+R13C1  (X1 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:07,Force Current,apply,A,13A,,,0.2069599,4A11_2B02,SMU,13,1,
+R13C1  (X1 Y13),resistance,20.6959,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:07,Kelvin Resistance,measure,ohm,13A,,,,4A11_2B02,SMU,13,1,
+R13C1  (X1 Y13),voltage,-5.26804e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:07,Kelvin Voltage (DMM),measure,V,13A,,,,2F01_4E12,DMM,13,1,
+R13C2  (X2 Y13),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:09,Force Current,apply,A,13B,,,0.2080045,4A11_2B02,SMU,13,2,
+R13C2  (X2 Y13),resistance,20.7995,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:09,Kelvin Resistance,measure,ohm,13B,,,,4A11_2B02,SMU,13,2,
+R13C2  (X2 Y13),voltage,-5.3174e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:09,Kelvin Voltage (DMM),measure,V,13B,,,,2F01_4E12,DMM,13,2,
+R13C3  (X3 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:11,Force Current,apply,A,13C,,,0.2159688,4A11_2B02,SMU,13,3,
+R13C3  (X3 Y13),resistance,21.5974,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:11,Kelvin Resistance,measure,ohm,13C,,,,4A11_2B02,SMU,13,3,
+R13C3  (X3 Y13),voltage,-5.48475e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:11,Kelvin Voltage (DMM),measure,V,13C,,,,2F01_4E12,DMM,13,3,
+R13C4  (X4 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:13,Force Current,apply,A,13D,,,0.2442103,4A11_2B02,SMU,13,4,
+R13C4  (X4 Y13),resistance,24.4224,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:13,Kelvin Resistance,measure,ohm,13D,,,,4A11_2B02,SMU,13,4,
+R13C4  (X4 Y13),voltage,-6.2578e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:13,Kelvin Voltage (DMM),measure,V,13D,,,,2F01_4E12,DMM,13,4,
+R13C5  (X5 Y13),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:16,Force Current,apply,A,13E,,,0.2408854,4A11_2B02,SMU,13,5,
+R13C5  (X5 Y13),resistance,24.0886,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:16,Kelvin Resistance,measure,ohm,13E,,,,4A11_2B02,SMU,13,5,
+R13C5  (X5 Y13),voltage,-6.15978e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:16,Kelvin Voltage (DMM),measure,V,13E,,,,2F01_4E12,DMM,13,5,
+R13C6  (X6 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:18,Force Current,apply,A,13F,,,0.281822,4A11_2B02,SMU,13,6,
+R13C6  (X6 Y13),resistance,28.1812,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:18,Kelvin Resistance,measure,ohm,13F,,,,4A11_2B02,SMU,13,6,
+R13C6  (X6 Y13),voltage,-6.93167e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:18,Kelvin Voltage (DMM),measure,V,13F,,,,2F01_4E12,DMM,13,6,
+R13C7  (X7 Y13),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:20,Force Current,apply,A,13G,,,0.2486639,4A11_2B02,SMU,13,7,
+R13C7  (X7 Y13),resistance,24.8664,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:20,Kelvin Resistance,measure,ohm,13G,,,,4A11_2B02,SMU,13,7,
+R13C7  (X7 Y13),voltage,-6.25653e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:20,Kelvin Voltage (DMM),measure,V,13G,,,,2F01_4E12,DMM,13,7,
+R13C8  (X8 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:22,Force Current,apply,A,13H,,,0.2807614,4A11_2B02,SMU,13,8,
+R13C8  (X8 Y13),resistance,28.076,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:22,Kelvin Resistance,measure,ohm,13H,,,,4A11_2B02,SMU,13,8,
+R13C8  (X8 Y13),voltage,-6.91614e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:22,Kelvin Voltage (DMM),measure,V,13H,,,,2F01_4E12,DMM,13,8,
+R13C9  (X9 Y13),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:24,Force Current,apply,A,13I,,,0.2957699,4A11_2B02,SMU,13,9,
+R13C9  (X9 Y13),resistance,29.5772,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:24,Kelvin Resistance,measure,ohm,13I,,,,4A11_2B02,SMU,13,9,
+R13C9  (X9 Y13),voltage,-7.20079e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:24,Kelvin Voltage (DMM),measure,V,13I,,,,2F01_4E12,DMM,13,9,
+R13C10  (X10 Y13),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:26,Force Current,apply,A,13J,,,0.3006463,4A11_2B02,SMU,13,10,
+R13C10  (X10 Y13),resistance,30.062,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:26,Kelvin Resistance,measure,ohm,13J,,,,4A11_2B02,SMU,13,10,
+R13C10  (X10 Y13),voltage,-7.46502e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:26,Kelvin Voltage (DMM),measure,V,13J,,,,2F01_4E12,DMM,13,10,
+R13C11  (X11 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:29,Force Current,apply,A,13K,,,0.2622127,4A11_2B02,SMU,13,11,
+R13C11  (X11 Y13),resistance,26.2214,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:29,Kelvin Resistance,measure,ohm,13K,,,,4A11_2B02,SMU,13,11,
+R13C11  (X11 Y13),voltage,-6.68245e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:29,Kelvin Voltage (DMM),measure,V,13K,,,,2F01_4E12,DMM,13,11,
+R13C12  (X12 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:31,Force Current,apply,A,13L,,,0.2607819,4A11_2B02,SMU,13,12,
+R13C12  (X12 Y13),resistance,26.0783,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:31,Kelvin Resistance,measure,ohm,13L,,,,4A11_2B02,SMU,13,12,
+R13C12  (X12 Y13),voltage,-6.69378e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:31,Kelvin Voltage (DMM),measure,V,13L,,,,2F01_4E12,DMM,13,12,
+R13C13  (X13 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:33,Force Current,apply,A,13M,,,0.2377094,4A11_2B02,SMU,13,13,
+R13C13  (X13 Y13),resistance,23.7713,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:33,Kelvin Resistance,measure,ohm,13M,,,,4A11_2B02,SMU,13,13,
+R13C13  (X13 Y13),voltage,-6.12099e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:33,Kelvin Voltage (DMM),measure,V,13M,,,,2F01_4E12,DMM,13,13,
+R13C14  (X14 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:35,Force Current,apply,A,13N,,,0.2499563,4A11_2B02,SMU,13,14,
+R13C14  (X14 Y13),resistance,24.9956,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:35,Kelvin Resistance,measure,ohm,13N,,,,4A11_2B02,SMU,13,14,
+R13C14  (X14 Y13),voltage,-6.37583e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:35,Kelvin Voltage (DMM),measure,V,13N,,,,2F01_4E12,DMM,13,14,
+R13C15  (X15 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:37,Force Current,apply,A,13O,,,0.2094001,4A11_2B02,SMU,13,15,
+R13C15  (X15 Y13),resistance,20.9402,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:37,Kelvin Resistance,measure,ohm,13O,,,,4A11_2B02,SMU,13,15,
+R13C15  (X15 Y13),voltage,-5.23725e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:37,Kelvin Voltage (DMM),measure,V,13O,,,,2F01_4E12,DMM,13,15,
+R13C16  (X16 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:40,Force Current,apply,A,13P,,,0.2430453,4A11_2B02,SMU,13,16,
+R13C16  (X16 Y13),resistance,24.3051,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:40,Kelvin Resistance,measure,ohm,13P,,,,4A11_2B02,SMU,13,16,
+R13C16  (X16 Y13),voltage,-6.22977e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:40,Kelvin Voltage (DMM),measure,V,13P,,,,2F01_4E12,DMM,13,16,
+R13C17  (X17 Y13),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:42,Force Current,apply,A,13Q,,,0.2026688,4A11_2B02,SMU,13,17,
+R13C17  (X17 Y13),resistance,20.2668,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:42,Kelvin Resistance,measure,ohm,13Q,,,,4A11_2B02,SMU,13,17,
+R13C17  (X17 Y13),voltage,-5.01307e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:42,Kelvin Voltage (DMM),measure,V,13Q,,,,2F01_4E12,DMM,13,17,
+R13C18  (X18 Y13),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:44,Force Current,apply,A,13R,,,0.2056082,4A11_2B02,SMU,13,18,
+R13C18  (X18 Y13),resistance,20.5606,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:44,Kelvin Resistance,measure,ohm,13R,,,,4A11_2B02,SMU,13,18,
+R13C18  (X18 Y13),voltage,-5.18479e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:44,Kelvin Voltage (DMM),measure,V,13R,,,,2F01_4E12,DMM,13,18,
+R14C1  (X1 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:47,Force Current,apply,A,14A,,,0.1922057,4A11_2B02,SMU,14,1,
+R14C1  (X1 Y14),resistance,19.2203,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:47,Kelvin Resistance,measure,ohm,14A,,,,4A11_2B02,SMU,14,1,
+R14C1  (X1 Y14),voltage,-2.57636e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:47,Kelvin Voltage (DMM),measure,V,14A,,,,2F01_4E12,DMM,14,1,
+R14C2  (X2 Y14),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:49,Force Current,apply,A,14B,,,0.2003842,4A11_2B02,SMU,14,2,
+R14C2  (X2 Y14),resistance,20.0382,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:49,Kelvin Resistance,measure,ohm,14B,,,,4A11_2B02,SMU,14,2,
+R14C2  (X2 Y14),voltage,-5.03183e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:49,Kelvin Voltage (DMM),measure,V,14B,,,,2F01_4E12,DMM,14,2,
+R14C3  (X3 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:51,Force Current,apply,A,14C,,,0.2072146,4A11_2B02,SMU,14,3,
+R14C3  (X3 Y14),resistance,20.7216,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:51,Kelvin Resistance,measure,ohm,14C,,,,4A11_2B02,SMU,14,3,
+R14C3  (X3 Y14),voltage,-5.18681e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:51,Kelvin Voltage (DMM),measure,V,14C,,,,2F01_4E12,DMM,14,3,
+R14C4  (X4 Y14),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:53,Force Current,apply,A,14D,,,0.2254338,4A11_2B02,SMU,14,4,
+R14C4  (X4 Y14),resistance,22.5431,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:53,Kelvin Resistance,measure,ohm,14D,,,,4A11_2B02,SMU,14,4,
+R14C4  (X4 Y14),voltage,-5.71566e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:53,Kelvin Voltage (DMM),measure,V,14D,,,,2F01_4E12,DMM,14,4,
+R14C5  (X5 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:56,Force Current,apply,A,14E,,,0.2282018,4A11_2B02,SMU,14,5,
+R14C5  (X5 Y14),resistance,22.8212,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:56,Kelvin Resistance,measure,ohm,14E,,,,4A11_2B02,SMU,14,5,
+R14C5  (X5 Y14),voltage,-5.77788e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:56,Kelvin Voltage (DMM),measure,V,14E,,,,2F01_4E12,DMM,14,5,
+R14C6  (X6 Y14),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:58,Force Current,apply,A,14F,,,0.2309974,4A11_2B02,SMU,14,6,
+R14C6  (X6 Y14),resistance,23.1,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:58,Kelvin Resistance,measure,ohm,14F,,,,4A11_2B02,SMU,14,6,
+R14C6  (X6 Y14),voltage,-5.88169e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:25:58,Kelvin Voltage (DMM),measure,V,14F,,,,2F01_4E12,DMM,14,6,
+R14C7  (X7 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:00,Force Current,apply,A,14G,,,0.3012025,4A11_2B02,SMU,14,7,
+R14C7  (X7 Y14),resistance,30.1196,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:00,Kelvin Resistance,measure,ohm,14G,,,,4A11_2B02,SMU,14,7,
+R14C7  (X7 Y14),voltage,-7.24887e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:00,Kelvin Voltage (DMM),measure,V,14G,,,,2F01_4E12,DMM,14,7,
+R14C8  (X8 Y14),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:02,Force Current,apply,A,14H,,,0.2820719,4A11_2B02,SMU,14,8,
+R14C8  (X8 Y14),resistance,28.2074,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:02,Kelvin Resistance,measure,ohm,14H,,,,4A11_2B02,SMU,14,8,
+R14C8  (X8 Y14),voltage,-6.94867e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:02,Kelvin Voltage (DMM),measure,V,14H,,,,2F01_4E12,DMM,14,8,
+R14C9  (X9 Y14),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:04,Force Current,apply,A,14I,,,0.2427049,4A11_2B02,SMU,14,9,
+R14C9  (X9 Y14),resistance,24.2711,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:04,Kelvin Resistance,measure,ohm,14I,,,,4A11_2B02,SMU,14,9,
+R14C9  (X9 Y14),voltage,-6.16672e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:04,Kelvin Voltage (DMM),measure,V,14I,,,,2F01_4E12,DMM,14,9,
+R14C10  (X10 Y14),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:07,Force Current,apply,A,14J,,,0.2514181,4A11_2B02,SMU,14,10,
+R14C10  (X10 Y14),resistance,25.1408,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:07,Kelvin Resistance,measure,ohm,14J,,,,4A11_2B02,SMU,14,10,
+R14C10  (X10 Y14),voltage,-6.44108e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:07,Kelvin Voltage (DMM),measure,V,14J,,,,2F01_4E12,DMM,14,10,
+R14C11  (X11 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:09,Force Current,apply,A,14K,,,0.2344208,4A11_2B02,SMU,14,11,
+R14C11  (X11 Y14),resistance,23.442,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:09,Kelvin Resistance,measure,ohm,14K,,,,4A11_2B02,SMU,14,11,
+R14C11  (X11 Y14),voltage,-6.0591e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:09,Kelvin Voltage (DMM),measure,V,14K,,,,2F01_4E12,DMM,14,11,
+R14C12  (X12 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:11,Force Current,apply,A,14L,,,0.2418111,4A11_2B02,SMU,14,12,
+R14C12  (X12 Y14),resistance,24.1815,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:11,Kelvin Resistance,measure,ohm,14L,,,,4A11_2B02,SMU,14,12,
+R14C12  (X12 Y14),voltage,-6.22916e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:11,Kelvin Voltage (DMM),measure,V,14L,,,,2F01_4E12,DMM,14,12,
+R14C13  (X13 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:13,Force Current,apply,A,14M,,,0.2240886,4A11_2B02,SMU,14,13,
+R14C13  (X13 Y14),resistance,22.4093,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:13,Kelvin Resistance,measure,ohm,14M,,,,4A11_2B02,SMU,14,13,
+R14C13  (X13 Y14),voltage,-5.76243e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:13,Kelvin Voltage (DMM),measure,V,14M,,,,2F01_4E12,DMM,14,13,
+R14C14  (X14 Y14),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:15,Force Current,apply,A,14N,,,0.2244535,4A11_2B02,SMU,14,14,
+R14C14  (X14 Y14),resistance,22.4453,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:15,Kelvin Resistance,measure,ohm,14N,,,,4A11_2B02,SMU,14,14,
+R14C14  (X14 Y14),voltage,-5.71084e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:15,Kelvin Voltage (DMM),measure,V,14N,,,,2F01_4E12,DMM,14,14,
+R14C15  (X15 Y14),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:18,Force Current,apply,A,14O,,,0.2110631,4A11_2B02,SMU,14,15,
+R14C15  (X15 Y14),resistance,21.1065,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:18,Kelvin Resistance,measure,ohm,14O,,,,4A11_2B02,SMU,14,15,
+R14C15  (X15 Y14),voltage,-5.24101e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:18,Kelvin Voltage (DMM),measure,V,14O,,,,2F01_4E12,DMM,14,15,
+R14C16  (X16 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:20,Force Current,apply,A,14P,,,0.2025056,4A11_2B02,SMU,14,16,
+R14C16  (X16 Y14),resistance,20.2504,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:20,Kelvin Resistance,measure,ohm,14P,,,,4A11_2B02,SMU,14,16,
+R14C16  (X16 Y14),voltage,-4.87051e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:20,Kelvin Voltage (DMM),measure,V,14P,,,,2F01_4E12,DMM,14,16,
+R14C17  (X17 Y14),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:22,Force Current,apply,A,14Q,,,0.2052788,4A11_2B02,SMU,14,17,
+R14C17  (X17 Y14),resistance,20.5279,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:22,Kelvin Resistance,measure,ohm,14Q,,,,4A11_2B02,SMU,14,17,
+R14C17  (X17 Y14),voltage,-4.95168e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:22,Kelvin Voltage (DMM),measure,V,14Q,,,,2F01_4E12,DMM,14,17,
+R14C18  (X18 Y14),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:24,Force Current,apply,A,14R,,,0.1907069,4A11_2B02,SMU,14,18,
+R14C18  (X18 Y14),resistance,19.0708,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:24,Kelvin Resistance,measure,ohm,14R,,,,4A11_2B02,SMU,14,18,
+R14C18  (X18 Y14),voltage,-2.42244e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:24,Kelvin Voltage (DMM),measure,V,14R,,,,2F01_4E12,DMM,14,18,
+R15C2  (X2 Y15),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:27,Force Current,apply,A,15B,,,0.1978975,4A11_2B02,SMU,15,2,
+R15C2  (X2 Y15),resistance,19.7897,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:27,Kelvin Resistance,measure,ohm,15B,,,,4A11_2B02,SMU,15,2,
+R15C2  (X2 Y15),voltage,-2.6135e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:27,Kelvin Voltage (DMM),measure,V,15B,,,,2F01_4E12,DMM,15,2,
+R15C3  (X3 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:29,Force Current,apply,A,15C,,,0.1982639,4A11_2B02,SMU,15,3,
+R15C3  (X3 Y15),resistance,19.8263,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:29,Kelvin Resistance,measure,ohm,15C,,,,4A11_2B02,SMU,15,3,
+R15C3  (X3 Y15),voltage,-2.68631e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:29,Kelvin Voltage (DMM),measure,V,15C,,,,2F01_4E12,DMM,15,3,
+R15C4  (X4 Y15),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:32,Force Current,apply,A,15D,,,0.2198349,4A11_2B02,SMU,15,4,
+R15C4  (X4 Y15),resistance,21.9839,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:32,Kelvin Resistance,measure,ohm,15D,,,,4A11_2B02,SMU,15,4,
+R15C4  (X4 Y15),voltage,-5.4677e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:32,Kelvin Voltage (DMM),measure,V,15D,,,,2F01_4E12,DMM,15,4,
+R15C5  (X5 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:34,Force Current,apply,A,15E,,,0.2140921,4A11_2B02,SMU,15,5,
+R15C5  (X5 Y15),resistance,21.4094,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:34,Kelvin Resistance,measure,ohm,15E,,,,4A11_2B02,SMU,15,5,
+R15C5  (X5 Y15),voltage,-5.32345e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:34,Kelvin Voltage (DMM),measure,V,15E,,,,2F01_4E12,DMM,15,5,
+R15C6  (X6 Y15),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:36,Force Current,apply,A,15F,,,0.2373297,4A11_2B02,SMU,15,6,
+R15C6  (X6 Y15),resistance,23.7342,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:36,Kelvin Resistance,measure,ohm,15F,,,,4A11_2B02,SMU,15,6,
+R15C6  (X6 Y15),voltage,-5.9824e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:36,Kelvin Voltage (DMM),measure,V,15F,,,,2F01_4E12,DMM,15,6,
+R15C7  (X7 Y15),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:38,Force Current,apply,A,15G,,,0.2209572,4A11_2B02,SMU,15,7,
+R15C7  (X7 Y15),resistance,22.096,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:38,Kelvin Resistance,measure,ohm,15G,,,,4A11_2B02,SMU,15,7,
+R15C7  (X7 Y15),voltage,-5.56382e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:38,Kelvin Voltage (DMM),measure,V,15G,,,,2F01_4E12,DMM,15,7,
+R15C8  (X8 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:40,Force Current,apply,A,15H,,,0.2975492,4A11_2B02,SMU,15,8,
+R15C8  (X8 Y15),resistance,29.7557,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:40,Kelvin Resistance,measure,ohm,15H,,,,4A11_2B02,SMU,15,8,
+R15C8  (X8 Y15),voltage,-7.29481e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:40,Kelvin Voltage (DMM),measure,V,15H,,,,2F01_4E12,DMM,15,8,
+R15C9  (X9 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:42,Force Current,apply,A,15I,,,0.237223,4A11_2B02,SMU,15,9,
+R15C9  (X9 Y15),resistance,23.7224,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:42,Kelvin Resistance,measure,ohm,15I,,,,4A11_2B02,SMU,15,9,
+R15C9  (X9 Y15),voltage,-6.05856e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:42,Kelvin Voltage (DMM),measure,V,15I,,,,2F01_4E12,DMM,15,9,
+R15C10  (X10 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:45,Force Current,apply,A,15J,,,0.2556298,4A11_2B02,SMU,15,10,
+R15C10  (X10 Y15),resistance,25.5627,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:45,Kelvin Resistance,measure,ohm,15J,,,,4A11_2B02,SMU,15,10,
+R15C10  (X10 Y15),voltage,-6.4974e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:45,Kelvin Voltage (DMM),measure,V,15J,,,,2F01_4E12,DMM,15,10,
+R15C11  (X11 Y15),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:47,Force Current,apply,A,15K,,,0.2170511,4A11_2B02,SMU,15,11,
+R15C11  (X11 Y15),resistance,21.7055,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:47,Kelvin Resistance,measure,ohm,15K,,,,4A11_2B02,SMU,15,11,
+R15C11  (X11 Y15),voltage,-5.50773e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:47,Kelvin Voltage (DMM),measure,V,15K,,,,2F01_4E12,DMM,15,11,
+R15C12  (X12 Y15),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:49,Force Current,apply,A,15L,,,0.2224509,4A11_2B02,SMU,15,12,
+R15C12  (X12 Y15),resistance,22.2458,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:49,Kelvin Resistance,measure,ohm,15L,,,,4A11_2B02,SMU,15,12,
+R15C12  (X12 Y15),voltage,-5.70045e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:49,Kelvin Voltage (DMM),measure,V,15L,,,,2F01_4E12,DMM,15,12,
+R15C13  (X13 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:51,Force Current,apply,A,15M,,,0.2347789,4A11_2B02,SMU,15,13,
+R15C13  (X13 Y15),resistance,23.4782,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:51,Kelvin Resistance,measure,ohm,15M,,,,4A11_2B02,SMU,15,13,
+R15C13  (X13 Y15),voltage,-6.02458e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:51,Kelvin Voltage (DMM),measure,V,15M,,,,2F01_4E12,DMM,15,13,
+R15C14  (X14 Y15),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:53,Force Current,apply,A,15N,,,0.2209364,4A11_2B02,SMU,15,14,
+R15C14  (X14 Y15),resistance,22.0943,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:53,Kelvin Resistance,measure,ohm,15N,,,,4A11_2B02,SMU,15,14,
+R15C14  (X14 Y15),voltage,-5.61396e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:53,Kelvin Voltage (DMM),measure,V,15N,,,,2F01_4E12,DMM,15,14,
+R15C15  (X15 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:56,Force Current,apply,A,15O,,,0.2266923,4A11_2B02,SMU,15,15,
+R15C15  (X15 Y15),resistance,22.6695,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:56,Kelvin Resistance,measure,ohm,15O,,,,4A11_2B02,SMU,15,15,
+R15C15  (X15 Y15),voltage,-5.68413e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:56,Kelvin Voltage (DMM),measure,V,15O,,,,2F01_4E12,DMM,15,15,
+R15C16  (X16 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:58,Force Current,apply,A,15P,,,0.2063164,4A11_2B02,SMU,15,16,
+R15C16  (X16 Y15),resistance,20.6314,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:58,Kelvin Resistance,measure,ohm,15P,,,,4A11_2B02,SMU,15,16,
+R15C16  (X16 Y15),voltage,-5.0396e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:26:58,Kelvin Voltage (DMM),measure,V,15P,,,,2F01_4E12,DMM,15,16,
+R15C17  (X17 Y15),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:00,Force Current,apply,A,15Q,,,0.1907659,4A11_2B02,SMU,15,17,
+R15C17  (X17 Y15),resistance,19.0765,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:00,Kelvin Resistance,measure,ohm,15Q,,,,4A11_2B02,SMU,15,17,
+R15C17  (X17 Y15),voltage,-2.4834e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:00,Kelvin Voltage (DMM),measure,V,15Q,,,,2F01_4E12,DMM,15,17,
+R16C2  (X2 Y16),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:03,Force Current,apply,A,16B,,,0.2058865,4A11_2B02,SMU,16,2,
+R16C2  (X2 Y16),resistance,20.588,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:03,Kelvin Resistance,measure,ohm,16B,,,,4A11_2B02,SMU,16,2,
+R16C2  (X2 Y16),voltage,-5.15431e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:03,Kelvin Voltage (DMM),measure,V,16B,,,,2F01_4E12,DMM,16,2,
+R16C3  (X3 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:05,Force Current,apply,A,16C,,,0.2192136,4A11_2B02,SMU,16,3,
+R16C3  (X3 Y16),resistance,21.9216,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:05,Kelvin Resistance,measure,ohm,16C,,,,4A11_2B02,SMU,16,3,
+R16C3  (X3 Y16),voltage,-5.59497e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:05,Kelvin Voltage (DMM),measure,V,16C,,,,2F01_4E12,DMM,16,3,
+R16C4  (X4 Y16),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:07,Force Current,apply,A,16D,,,0.2088739,4A11_2B02,SMU,16,4,
+R16C4  (X4 Y16),resistance,20.8878,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:07,Kelvin Resistance,measure,ohm,16D,,,,4A11_2B02,SMU,16,4,
+R16C4  (X4 Y16),voltage,-5.10509e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:07,Kelvin Voltage (DMM),measure,V,16D,,,,2F01_4E12,DMM,16,4,
+R16C5  (X5 Y16),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:09,Force Current,apply,A,16E,,,0.2179315,4A11_2B02,SMU,16,5,
+R16C5  (X5 Y16),resistance,21.7936,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:09,Kelvin Resistance,measure,ohm,16E,,,,4A11_2B02,SMU,16,5,
+R16C5  (X5 Y16),voltage,-5.43725e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:09,Kelvin Voltage (DMM),measure,V,16E,,,,2F01_4E12,DMM,16,5,
+R16C6  (X6 Y16),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:11,Force Current,apply,A,16F,,,0.2302367,4A11_2B02,SMU,16,6,
+R16C6  (X6 Y16),resistance,23.0227,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:11,Kelvin Resistance,measure,ohm,16F,,,,4A11_2B02,SMU,16,6,
+R16C6  (X6 Y16),voltage,-5.75797e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:11,Kelvin Voltage (DMM),measure,V,16F,,,,2F01_4E12,DMM,16,6,
+R16C7  (X7 Y16),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:14,Force Current,apply,A,16G,,,0.2257397,4A11_2B02,SMU,16,7,
+R16C7  (X7 Y16),resistance,22.5739,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:14,Kelvin Resistance,measure,ohm,16G,,,,4A11_2B02,SMU,16,7,
+R16C7  (X7 Y16),voltage,-5.63486e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:14,Kelvin Voltage (DMM),measure,V,16G,,,,2F01_4E12,DMM,16,7,
+R16C8  (X8 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:16,Force Current,apply,A,16H,,,0.234797,4A11_2B02,SMU,16,8,
+R16C8  (X8 Y16),resistance,23.4797,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:16,Kelvin Resistance,measure,ohm,16H,,,,4A11_2B02,SMU,16,8,
+R16C8  (X8 Y16),voltage,-5.95443e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:16,Kelvin Voltage (DMM),measure,V,16H,,,,2F01_4E12,DMM,16,8,
+R16C9  (X9 Y16),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:18,Force Current,apply,A,16I,,,0.2411766,4A11_2B02,SMU,16,9,
+R16C9  (X9 Y16),resistance,24.1175,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:18,Kelvin Resistance,measure,ohm,16I,,,,4A11_2B02,SMU,16,9,
+R16C9  (X9 Y16),voltage,-6.19834e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:18,Kelvin Voltage (DMM),measure,V,16I,,,,2F01_4E12,DMM,16,9,
+R16C10  (X10 Y16),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:20,Force Current,apply,A,16J,,,0.2326755,4A11_2B02,SMU,16,10,
+R16C10  (X10 Y16),resistance,23.2661,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:20,Kelvin Resistance,measure,ohm,16J,,,,4A11_2B02,SMU,16,10,
+R16C10  (X10 Y16),voltage,-5.92052e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:20,Kelvin Voltage (DMM),measure,V,16J,,,,2F01_4E12,DMM,16,10,
+R16C11  (X11 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:22,Force Current,apply,A,16K,,,0.2275803,4A11_2B02,SMU,16,11,
+R16C11  (X11 Y16),resistance,22.7583,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:22,Kelvin Resistance,measure,ohm,16K,,,,4A11_2B02,SMU,16,11,
+R16C11  (X11 Y16),voltage,-5.81312e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:22,Kelvin Voltage (DMM),measure,V,16K,,,,2F01_4E12,DMM,16,11,
+R16C12  (X12 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:25,Force Current,apply,A,16L,,,0.2201639,4A11_2B02,SMU,16,12,
+R16C12  (X12 Y16),resistance,22.0159,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:25,Kelvin Resistance,measure,ohm,16L,,,,4A11_2B02,SMU,16,12,
+R16C12  (X12 Y16),voltage,-5.56274e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:25,Kelvin Voltage (DMM),measure,V,16L,,,,2F01_4E12,DMM,16,12,
+R16C13  (X13 Y16),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:27,Force Current,apply,A,16M,,,0.2163623,4A11_2B02,SMU,16,13,
+R16C13  (X13 Y16),resistance,21.637,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:27,Kelvin Resistance,measure,ohm,16M,,,,4A11_2B02,SMU,16,13,
+R16C13  (X13 Y16),voltage,-5.50643e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:27,Kelvin Voltage (DMM),measure,V,16M,,,,2F01_4E12,DMM,16,13,
+R16C14  (X14 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:29,Force Current,apply,A,16N,,,0.2171234,4A11_2B02,SMU,16,14,
+R16C14  (X14 Y16),resistance,21.7117,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:29,Kelvin Resistance,measure,ohm,16N,,,,4A11_2B02,SMU,16,14,
+R16C14  (X14 Y16),voltage,-5.37893e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:29,Kelvin Voltage (DMM),measure,V,16N,,,,2F01_4E12,DMM,16,14,
+R16C15  (X15 Y16),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:31,Force Current,apply,A,16O,,,0.2035894,4A11_2B02,SMU,16,15,
+R16C15  (X15 Y16),resistance,20.3591,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:31,Kelvin Resistance,measure,ohm,16O,,,,4A11_2B02,SMU,16,15,
+R16C15  (X15 Y16),voltage,-4.90008e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:31,Kelvin Voltage (DMM),measure,V,16O,,,,2F01_4E12,DMM,16,15,
+R16C16  (X16 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:33,Force Current,apply,A,16P,,,0.1817724,4A11_2B02,SMU,16,16,
+R16C16  (X16 Y16),resistance,18.1773,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:33,Kelvin Resistance,measure,ohm,16P,,,,4A11_2B02,SMU,16,16,
+R16C16  (X16 Y16),voltage,-2.18791e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:33,Kelvin Voltage (DMM),measure,V,16P,,,,2F01_4E12,DMM,16,16,
+R16C17  (X17 Y16),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:36,Force Current,apply,A,16Q,,,0.1816535,4A11_2B02,SMU,16,17,
+R16C17  (X17 Y16),resistance,18.1654,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:36,Kelvin Resistance,measure,ohm,16Q,,,,4A11_2B02,SMU,16,17,
+R16C17  (X17 Y16),voltage,-2.22299e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:36,Kelvin Voltage (DMM),measure,V,16Q,,,,2F01_4E12,DMM,16,17,
+R17C2  (X2 Y17),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:38,Force Current,apply,A,17B,,,0.206176,4A11_2B02,SMU,17,2,
+R17C2  (X2 Y17),resistance,20.6178,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:38,Kelvin Resistance,measure,ohm,17B,,,,4A11_2B02,SMU,17,2,
+R17C2  (X2 Y17),voltage,-5.14641e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:38,Kelvin Voltage (DMM),measure,V,17B,,,,2F01_4E12,DMM,17,2,
+R17C3  (X3 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:40,Force Current,apply,A,17C,,,0.2079258,4A11_2B02,SMU,17,3,
+R17C3  (X3 Y17),resistance,20.7924,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:40,Kelvin Resistance,measure,ohm,17C,,,,4A11_2B02,SMU,17,3,
+R17C3  (X3 Y17),voltage,-5.22973e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:40,Kelvin Voltage (DMM),measure,V,17C,,,,2F01_4E12,DMM,17,3,
+R17C4  (X4 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:43,Force Current,apply,A,17D,,,0.2155181,4A11_2B02,SMU,17,4,
+R17C4  (X4 Y17),resistance,21.5514,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:43,Kelvin Resistance,measure,ohm,17D,,,,4A11_2B02,SMU,17,4,
+R17C4  (X4 Y17),voltage,-5.40498e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:43,Kelvin Voltage (DMM),measure,V,17D,,,,2F01_4E12,DMM,17,4,
+R17C5  (X5 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:45,Force Current,apply,A,17E,,,0.2305695,4A11_2B02,SMU,17,5,
+R17C5  (X5 Y17),resistance,23.0561,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:45,Kelvin Resistance,measure,ohm,17E,,,,4A11_2B02,SMU,17,5,
+R17C5  (X5 Y17),voltage,-5.92068e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:45,Kelvin Voltage (DMM),measure,V,17E,,,,2F01_4E12,DMM,17,5,
+R17C6  (X6 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:47,Force Current,apply,A,17F,,,0.2301527,4A11_2B02,SMU,17,6,
+R17C6  (X6 Y17),resistance,23.0154,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:47,Kelvin Resistance,measure,ohm,17F,,,,4A11_2B02,SMU,17,6,
+R17C6  (X6 Y17),voltage,-5.8504e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:47,Kelvin Voltage (DMM),measure,V,17F,,,,2F01_4E12,DMM,17,6,
+R17C7  (X7 Y17),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:49,Force Current,apply,A,17G,,,0.2250153,4A11_2B02,SMU,17,7,
+R17C7  (X7 Y17),resistance,22.5016,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:49,Kelvin Resistance,measure,ohm,17G,,,,4A11_2B02,SMU,17,7,
+R17C7  (X7 Y17),voltage,-5.75716e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:49,Kelvin Voltage (DMM),measure,V,17G,,,,2F01_4E12,DMM,17,7,
+R17C8  (X8 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:51,Force Current,apply,A,17H,,,0.2262616,4A11_2B02,SMU,17,8,
+R17C8  (X8 Y17),resistance,22.6262,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:51,Kelvin Resistance,measure,ohm,17H,,,,4A11_2B02,SMU,17,8,
+R17C8  (X8 Y17),voltage,-5.82826e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:51,Kelvin Voltage (DMM),measure,V,17H,,,,2F01_4E12,DMM,17,8,
+R17C9  (X9 Y17),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:54,Force Current,apply,A,17I,,,0.2314675,4A11_2B02,SMU,17,9,
+R17C9  (X9 Y17),resistance,23.1471,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:54,Kelvin Resistance,measure,ohm,17I,,,,4A11_2B02,SMU,17,9,
+R17C9  (X9 Y17),voltage,-5.99221e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:54,Kelvin Voltage (DMM),measure,V,17I,,,,2F01_4E12,DMM,17,9,
+R17C10  (X10 Y17),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:56,Force Current,apply,A,17J,,,0.236567,4A11_2B02,SMU,17,10,
+R17C10  (X10 Y17),resistance,23.6565,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:56,Kelvin Resistance,measure,ohm,17J,,,,4A11_2B02,SMU,17,10,
+R17C10  (X10 Y17),voltage,-6.08942e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:56,Kelvin Voltage (DMM),measure,V,17J,,,,2F01_4E12,DMM,17,10,
+R17C11  (X11 Y17),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:58,Force Current,apply,A,17K,,,0.2239669,4A11_2B02,SMU,17,11,
+R17C11  (X11 Y17),resistance,22.397,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:58,Kelvin Resistance,measure,ohm,17K,,,,4A11_2B02,SMU,17,11,
+R17C11  (X11 Y17),voltage,-5.73958e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:27:58,Kelvin Voltage (DMM),measure,V,17K,,,,2F01_4E12,DMM,17,11,
+R17C12  (X12 Y17),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:00,Force Current,apply,A,17L,,,0.21643,4A11_2B02,SMU,17,12,
+R17C12  (X12 Y17),resistance,21.6435,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:00,Kelvin Resistance,measure,ohm,17L,,,,4A11_2B02,SMU,17,12,
+R17C12  (X12 Y17),voltage,-5.46307e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:00,Kelvin Voltage (DMM),measure,V,17L,,,,2F01_4E12,DMM,17,12,
+R17C13  (X13 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:02,Force Current,apply,A,17M,,,0.2093098,4A11_2B02,SMU,17,13,
+R17C13  (X13 Y17),resistance,20.931,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:02,Kelvin Resistance,measure,ohm,17M,,,,4A11_2B02,SMU,17,13,
+R17C13  (X13 Y17),voltage,-5.24467e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:02,Kelvin Voltage (DMM),measure,V,17M,,,,2F01_4E12,DMM,17,13,
+R17C14  (X14 Y17),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:05,Force Current,apply,A,17N,,,0.2026816,4A11_2B02,SMU,17,14,
+R17C14  (X14 Y17),resistance,20.2681,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:05,Kelvin Resistance,measure,ohm,17N,,,,4A11_2B02,SMU,17,14,
+R17C14  (X14 Y17),voltage,-4.96259e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:05,Kelvin Voltage (DMM),measure,V,17N,,,,2F01_4E12,DMM,17,14,
+R17C15  (X15 Y17),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:07,Force Current,apply,A,17O,,,0.1894729,4A11_2B02,SMU,17,15,
+R17C15  (X15 Y17),resistance,18.9471,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:07,Kelvin Resistance,measure,ohm,17O,,,,4A11_2B02,SMU,17,15,
+R17C15  (X15 Y17),voltage,-2.4299e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:07,Kelvin Voltage (DMM),measure,V,17O,,,,2F01_4E12,DMM,17,15,
+R17C16  (X16 Y17),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:09,Force Current,apply,A,17P,,,0.1789673,4A11_2B02,SMU,17,16,
+R17C16  (X16 Y17),resistance,17.8968,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:09,Kelvin Resistance,measure,ohm,17P,,,,4A11_2B02,SMU,17,16,
+R17C16  (X16 Y17),voltage,-2.12565e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:09,Kelvin Voltage (DMM),measure,V,17P,,,,2F01_4E12,DMM,17,16,
+R17C17  (X17 Y17),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:11,Force Current,apply,A,17Q,,,0.1807579,4A11_2B02,SMU,17,17,
+R17C17  (X17 Y17),resistance,18.0758,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:11,Kelvin Resistance,measure,ohm,17Q,,,,4A11_2B02,SMU,17,17,
+R17C17  (X17 Y17),voltage,-2.20939e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:11,Kelvin Voltage (DMM),measure,V,17Q,,,,2F01_4E12,DMM,17,17,
+R18C3  (X3 Y18),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:14,Force Current,apply,A,18C,,,0.1961953,4A11_2B02,SMU,18,3,
+R18C3  (X3 Y18),resistance,19.6191,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:14,Kelvin Resistance,measure,ohm,18C,,,,4A11_2B02,SMU,18,3,
+R18C3  (X3 Y18),voltage,-2.53472e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:14,Kelvin Voltage (DMM),measure,V,18C,,,,2F01_4E12,DMM,18,3,
+R18C4  (X4 Y18),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:16,Force Current,apply,A,18D,,,0.2173786,4A11_2B02,SMU,18,4,
+R18C4  (X4 Y18),resistance,21.7377,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:16,Kelvin Resistance,measure,ohm,18D,,,,4A11_2B02,SMU,18,4,
+R18C4  (X4 Y18),voltage,-5.42375e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:16,Kelvin Voltage (DMM),measure,V,18D,,,,2F01_4E12,DMM,18,4,
+R18C5  (X5 Y18),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:19,Force Current,apply,A,18E,,,0.2104999,4A11_2B02,SMU,18,5,
+R18C5  (X5 Y18),resistance,21.0501,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:19,Kelvin Resistance,measure,ohm,18E,,,,4A11_2B02,SMU,18,5,
+R18C5  (X5 Y18),voltage,-5.14519e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:19,Kelvin Voltage (DMM),measure,V,18E,,,,2F01_4E12,DMM,18,5,
+R18C6  (X6 Y18),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:21,Force Current,apply,A,18F,,,0.2173286,4A11_2B02,SMU,18,6,
+R18C6  (X6 Y18),resistance,21.7332,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:21,Kelvin Resistance,measure,ohm,18F,,,,4A11_2B02,SMU,18,6,
+R18C6  (X6 Y18),voltage,-5.31969e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:21,Kelvin Voltage (DMM),measure,V,18F,,,,2F01_4E12,DMM,18,6,
+R18C7  (X7 Y18),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:23,Force Current,apply,A,18G,,,0.231687,4A11_2B02,SMU,18,7,
+R18C7  (X7 Y18),resistance,23.1686,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:23,Kelvin Resistance,measure,ohm,18G,,,,4A11_2B02,SMU,18,7,
+R18C7  (X7 Y18),voltage,-5.75709e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:23,Kelvin Voltage (DMM),measure,V,18G,,,,2F01_4E12,DMM,18,7,
+R18C8  (X8 Y18),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:25,Force Current,apply,A,18H,,,0.1974204,4A11_2B02,SMU,18,8,
+R18C8  (X8 Y18),resistance,19.7424,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:25,Kelvin Resistance,measure,ohm,18H,,,,4A11_2B02,SMU,18,8,
+R18C8  (X8 Y18),voltage,-2.51787e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:25,Kelvin Voltage (DMM),measure,V,18H,,,,2F01_4E12,DMM,18,8,
+R18C9  (X9 Y18),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:27,Force Current,apply,A,18I,,,0.2183893,4A11_2B02,SMU,18,9,
+R18C9  (X9 Y18),resistance,21.8394,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:27,Kelvin Resistance,measure,ohm,18I,,,,4A11_2B02,SMU,18,9,
+R18C9  (X9 Y18),voltage,-5.49636e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:27,Kelvin Voltage (DMM),measure,V,18I,,,,2F01_4E12,DMM,18,9,
+R18C10  (X10 Y18),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:30,Force Current,apply,A,18J,,,0.2088871,4A11_2B02,SMU,18,10,
+R18C10  (X10 Y18),resistance,20.8883,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:30,Kelvin Resistance,measure,ohm,18J,,,,4A11_2B02,SMU,18,10,
+R18C10  (X10 Y18),voltage,-5.21355e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:30,Kelvin Voltage (DMM),measure,V,18J,,,,2F01_4E12,DMM,18,10,
+R18C11  (X11 Y18),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:32,Force Current,apply,A,18K,,,0.2202041,4A11_2B02,SMU,18,11,
+R18C11  (X11 Y18),resistance,22.0207,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:32,Kelvin Resistance,measure,ohm,18K,,,,4A11_2B02,SMU,18,11,
+R18C11  (X11 Y18),voltage,-5.62403e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:32,Kelvin Voltage (DMM),measure,V,18K,,,,2F01_4E12,DMM,18,11,
+R18C12  (X12 Y18),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:34,Force Current,apply,A,18L,,,0.1996168,4A11_2B02,SMU,18,12,
+R18C12  (X12 Y18),resistance,19.9613,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:34,Kelvin Resistance,measure,ohm,18L,,,,4A11_2B02,SMU,18,12,
+R18C12  (X12 Y18),voltage,-2.55698e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:34,Kelvin Voltage (DMM),measure,V,18L,,,,2F01_4E12,DMM,18,12,
+R18C13  (X13 Y18),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:36,Force Current,apply,A,18M,,,0.2143816,4A11_2B02,SMU,18,13,
+R18C13  (X13 Y18),resistance,21.4379,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:36,Kelvin Resistance,measure,ohm,18M,,,,4A11_2B02,SMU,18,13,
+R18C13  (X13 Y18),voltage,-5.38224e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:36,Kelvin Voltage (DMM),measure,V,18M,,,,2F01_4E12,DMM,18,13,
+R18C14  (X14 Y18),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:38,Force Current,apply,A,18N,,,0.1990688,4A11_2B02,SMU,18,14,
+R18C14  (X14 Y18),resistance,19.9072,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:38,Kelvin Resistance,measure,ohm,18N,,,,4A11_2B02,SMU,18,14,
+R18C14  (X14 Y18),voltage,-2.56436e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:38,Kelvin Voltage (DMM),measure,V,18N,,,,2F01_4E12,DMM,18,14,
+R18C15  (X15 Y18),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:41,Force Current,apply,A,18O,,,0.1861585,4A11_2B02,SMU,18,15,
+R18C15  (X15 Y18),resistance,18.6158,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:41,Kelvin Resistance,measure,ohm,18O,,,,4A11_2B02,SMU,18,15,
+R18C15  (X15 Y18),voltage,-2.19213e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:41,Kelvin Voltage (DMM),measure,V,18O,,,,2F01_4E12,DMM,18,15,
+R18C16  (X16 Y18),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:43,Force Current,apply,A,18P,,,0.1790508,4A11_2B02,SMU,18,16,
+R18C16  (X16 Y18),resistance,17.905,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:43,Kelvin Resistance,measure,ohm,18P,,,,4A11_2B02,SMU,18,16,
+R18C16  (X16 Y18),voltage,-2.01969e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:43,Kelvin Voltage (DMM),measure,V,18P,,,,2F01_4E12,DMM,18,16,
+R19C3  (X3 Y19),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:46,Force Current,apply,A,19C,,,0.1925253,4A11_2B02,SMU,19,3,
+R19C3  (X3 Y19),resistance,19.2524,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:46,Kelvin Resistance,measure,ohm,19C,,,,4A11_2B02,SMU,19,3,
+R19C3  (X3 Y19),voltage,-2.44576e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:46,Kelvin Voltage (DMM),measure,V,19C,,,,2F01_4E12,DMM,19,3,
+R19C4  (X4 Y19),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:48,Force Current,apply,A,19D,,,0.2050965,4A11_2B02,SMU,19,4,
+R19C4  (X4 Y19),resistance,20.5092,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:48,Kelvin Resistance,measure,ohm,19D,,,,4A11_2B02,SMU,19,4,
+R19C4  (X4 Y19),voltage,-4.99786e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:48,Kelvin Voltage (DMM),measure,V,19D,,,,2F01_4E12,DMM,19,4,
+R19C5  (X5 Y19),current,0.00999985,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:50,Force Current,apply,A,19E,,,0.2098244,4A11_2B02,SMU,19,5,
+R19C5  (X5 Y19),resistance,20.9826,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:50,Kelvin Resistance,measure,ohm,19E,,,,4A11_2B02,SMU,19,5,
+R19C5  (X5 Y19),voltage,-5.15399e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:50,Kelvin Voltage (DMM),measure,V,19E,,,,2F01_4E12,DMM,19,5,
+R19C6  (X6 Y19),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:52,Force Current,apply,A,19F,,,0.2207157,4A11_2B02,SMU,19,6,
+R19C6  (X6 Y19),resistance,22.0719,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:52,Kelvin Resistance,measure,ohm,19F,,,,4A11_2B02,SMU,19,6,
+R19C6  (X6 Y19),voltage,-5.46408e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:52,Kelvin Voltage (DMM),measure,V,19F,,,,2F01_4E12,DMM,19,6,
+R19C7  (X7 Y19),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:55,Force Current,apply,A,19G,,,0.2315845,4A11_2B02,SMU,19,7,
+R19C7  (X7 Y19),resistance,23.1587,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:55,Kelvin Resistance,measure,ohm,19G,,,,4A11_2B02,SMU,19,7,
+R19C7  (X7 Y19),voltage,-5.76506e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:55,Kelvin Voltage (DMM),measure,V,19G,,,,2F01_4E12,DMM,19,7,
+R19C8  (X8 Y19),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:57,Force Current,apply,A,19H,,,0.206997,4A11_2B02,SMU,19,8,
+R19C8  (X8 Y19),resistance,20.6996,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:57,Kelvin Resistance,measure,ohm,19H,,,,4A11_2B02,SMU,19,8,
+R19C8  (X8 Y19),voltage,-5.10606e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:57,Kelvin Voltage (DMM),measure,V,19H,,,,2F01_4E12,DMM,19,8,
+R19C9  (X9 Y19),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:59,Force Current,apply,A,19I,,,0.2141688,4A11_2B02,SMU,19,9,
+R19C9  (X9 Y19),resistance,21.4171,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:59,Kelvin Resistance,measure,ohm,19I,,,,4A11_2B02,SMU,19,9,
+R19C9  (X9 Y19),voltage,-5.3756e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:28:59,Kelvin Voltage (DMM),measure,V,19I,,,,2F01_4E12,DMM,19,9,
+R19C10  (X10 Y19),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:01,Force Current,apply,A,19J,,,0.2024395,4A11_2B02,SMU,19,10,
+R19C10  (X10 Y19),resistance,20.2435,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:01,Kelvin Resistance,measure,ohm,19J,,,,4A11_2B02,SMU,19,10,
+R19C10  (X10 Y19),voltage,-5.05857e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:01,Kelvin Voltage (DMM),measure,V,19J,,,,2F01_4E12,DMM,19,10,
+R19C11  (X11 Y19),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:03,Force Current,apply,A,19K,,,0.2111317,4A11_2B02,SMU,19,11,
+R19C11  (X11 Y19),resistance,21.1132,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:03,Kelvin Resistance,measure,ohm,19K,,,,4A11_2B02,SMU,19,11,
+R19C11  (X11 Y19),voltage,-5.37268e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:03,Kelvin Voltage (DMM),measure,V,19K,,,,2F01_4E12,DMM,19,11,
+R19C12  (X12 Y19),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:06,Force Current,apply,A,19L,,,0.1908313,4A11_2B02,SMU,19,12,
+R19C12  (X12 Y19),resistance,19.0834,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:06,Kelvin Resistance,measure,ohm,19L,,,,4A11_2B02,SMU,19,12,
+R19C12  (X12 Y19),voltage,-2.48057e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:06,Kelvin Voltage (DMM),measure,V,19L,,,,2F01_4E12,DMM,19,12,
+R19C13  (X13 Y19),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:08,Force Current,apply,A,19M,,,0.1963126,4A11_2B02,SMU,19,13,
+R19C13  (X13 Y19),resistance,19.6317,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:08,Kelvin Resistance,measure,ohm,19M,,,,4A11_2B02,SMU,19,13,
+R19C13  (X13 Y19),voltage,-2.60152e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:08,Kelvin Voltage (DMM),measure,V,19M,,,,2F01_4E12,DMM,19,13,
+R19C14  (X14 Y19),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:10,Force Current,apply,A,19N,,,0.1901721,4A11_2B02,SMU,19,14,
+R19C14  (X14 Y19),resistance,19.0176,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:10,Kelvin Resistance,measure,ohm,19N,,,,4A11_2B02,SMU,19,14,
+R19C14  (X14 Y19),voltage,-2.38812e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:10,Kelvin Voltage (DMM),measure,V,19N,,,,2F01_4E12,DMM,19,14,
+R19C15  (X15 Y19),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:12,Force Current,apply,A,19O,,,0.193705,4A11_2B02,SMU,19,15,
+R19C15  (X15 Y19),resistance,19.371,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:12,Kelvin Resistance,measure,ohm,19O,,,,4A11_2B02,SMU,19,15,
+R19C15  (X15 Y19),voltage,-2.52804e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:12,Kelvin Voltage (DMM),measure,V,19O,,,,2F01_4E12,DMM,19,15,
+R19C16  (X16 Y19),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:15,Force Current,apply,A,19P,,,0.1907624,4A11_2B02,SMU,19,16,
+R19C16  (X16 Y19),resistance,19.0763,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:15,Kelvin Resistance,measure,ohm,19P,,,,4A11_2B02,SMU,19,16,
+R19C16  (X16 Y19),voltage,-2.47596e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:15,Kelvin Voltage (DMM),measure,V,19P,,,,2F01_4E12,DMM,19,16,
+R20C4  (X4 Y20),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:17,Force Current,apply,A,20D,,,0.2017601,4A11_2B02,SMU,20,4,
+R20C4  (X4 Y20),resistance,20.1767,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:17,Kelvin Resistance,measure,ohm,20D,,,,4A11_2B02,SMU,20,4,
+R20C4  (X4 Y20),voltage,-4.87571e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:17,Kelvin Voltage (DMM),measure,V,20D,,,,2F01_4E12,DMM,20,4,
+R20C5  (X5 Y20),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:19,Force Current,apply,A,20E,,,0.2166153,4A11_2B02,SMU,20,5,
+R20C5  (X5 Y20),resistance,21.6619,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:19,Kelvin Resistance,measure,ohm,20E,,,,4A11_2B02,SMU,20,5,
+R20C5  (X5 Y20),voltage,-5.35166e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:19,Kelvin Voltage (DMM),measure,V,20E,,,,2F01_4E12,DMM,20,5,
+R20C6  (X6 Y20),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:22,Force Current,apply,A,20F,,,0.2258267,4A11_2B02,SMU,20,6,
+R20C6  (X6 Y20),resistance,22.583,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:22,Kelvin Resistance,measure,ohm,20F,,,,4A11_2B02,SMU,20,6,
+R20C6  (X6 Y20),voltage,-5.61431e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:22,Kelvin Voltage (DMM),measure,V,20F,,,,2F01_4E12,DMM,20,6,
+R20C7  (X7 Y20),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:24,Force Current,apply,A,20G,,,0.2264525,4A11_2B02,SMU,20,7,
+R20C7  (X7 Y20),resistance,22.6453,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:24,Kelvin Resistance,measure,ohm,20G,,,,4A11_2B02,SMU,20,7,
+R20C7  (X7 Y20),voltage,-5.58806e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:24,Kelvin Voltage (DMM),measure,V,20G,,,,2F01_4E12,DMM,20,7,
+R20C8  (X8 Y20),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:26,Force Current,apply,A,20H,,,0.2188699,4A11_2B02,SMU,20,8,
+R20C8  (X8 Y20),resistance,21.8869,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:26,Kelvin Resistance,measure,ohm,20H,,,,4A11_2B02,SMU,20,8,
+R20C8  (X8 Y20),voltage,-5.34674e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:26,Kelvin Voltage (DMM),measure,V,20H,,,,2F01_4E12,DMM,20,8,
+R20C9  (X9 Y20),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:28,Force Current,apply,A,20I,,,0.2176452,4A11_2B02,SMU,20,9,
+R20C9  (X9 Y20),resistance,21.7642,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:28,Kelvin Resistance,measure,ohm,20I,,,,4A11_2B02,SMU,20,9,
+R20C9  (X9 Y20),voltage,-5.36387e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:28,Kelvin Voltage (DMM),measure,V,20I,,,,2F01_4E12,DMM,20,9,
+R20C10  (X10 Y20),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:30,Force Current,apply,A,20J,,,0.2091471,4A11_2B02,SMU,20,10,
+R20C10  (X10 Y20),resistance,20.9147,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:30,Kelvin Resistance,measure,ohm,20J,,,,4A11_2B02,SMU,20,10,
+R20C10  (X10 Y20),voltage,-5.11841e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:30,Kelvin Voltage (DMM),measure,V,20J,,,,2F01_4E12,DMM,20,10,
+R20C11  (X11 Y20),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:33,Force Current,apply,A,20K,,,0.2059618,4A11_2B02,SMU,20,11,
+R20C11  (X11 Y20),resistance,20.5964,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:33,Kelvin Resistance,measure,ohm,20K,,,,4A11_2B02,SMU,20,11,
+R20C11  (X11 Y20),voltage,-4.96383e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:33,Kelvin Voltage (DMM),measure,V,20K,,,,2F01_4E12,DMM,20,11,
+R20C12  (X12 Y20),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:35,Force Current,apply,A,20L,,,0.2011547,4A11_2B02,SMU,20,12,
+R20C12  (X12 Y20),resistance,20.1155,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:35,Kelvin Resistance,measure,ohm,20L,,,,4A11_2B02,SMU,20,12,
+R20C12  (X12 Y20),voltage,-4.80936e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:35,Kelvin Voltage (DMM),measure,V,20L,,,,2F01_4E12,DMM,20,12,
+R20C13  (X13 Y20),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:37,Force Current,apply,A,20M,,,0.1832345,4A11_2B02,SMU,20,13,
+R20C13  (X13 Y20),resistance,18.3238,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:37,Kelvin Resistance,measure,ohm,20M,,,,4A11_2B02,SMU,20,13,
+R20C13  (X13 Y20),voltage,-2.28236e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:37,Kelvin Voltage (DMM),measure,V,20M,,,,2F01_4E12,DMM,20,13,
+R20C14  (X14 Y20),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:39,Force Current,apply,A,20N,,,0.1954298,4A11_2B02,SMU,20,14,
+R20C14  (X14 Y20),resistance,19.5431,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:39,Kelvin Resistance,measure,ohm,20N,,,,4A11_2B02,SMU,20,14,
+R20C14  (X14 Y20),voltage,-2.46287e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:39,Kelvin Voltage (DMM),measure,V,20N,,,,2F01_4E12,DMM,20,14,
+R20C15  (X15 Y20),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:41,Force Current,apply,A,20O,,,0.1777739,4A11_2B02,SMU,20,15,
+R20C15  (X15 Y20),resistance,17.7773,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:41,Kelvin Resistance,measure,ohm,20O,,,,4A11_2B02,SMU,20,15,
+R20C15  (X15 Y20),voltage,-2.09052e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:41,Kelvin Voltage (DMM),measure,V,20O,,,,2F01_4E12,DMM,20,15,
+R21C5  (X5 Y21),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:44,Force Current,apply,A,21E,,,0.2086421,4A11_2B02,SMU,21,5,
+R21C5  (X5 Y21),resistance,20.8645,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:44,Kelvin Resistance,measure,ohm,21E,,,,4A11_2B02,SMU,21,5,
+R21C5  (X5 Y21),voltage,-5.13766e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:44,Kelvin Voltage (DMM),measure,V,21E,,,,2F01_4E12,DMM,21,5,
+R21C6  (X6 Y21),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:46,Force Current,apply,A,21F,,,0.2011189,4A11_2B02,SMU,21,6,
+R21C6  (X6 Y21),resistance,20.1117,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:46,Kelvin Resistance,measure,ohm,21F,,,,4A11_2B02,SMU,21,6,
+R21C6  (X6 Y21),voltage,-4.9414e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:46,Kelvin Voltage (DMM),measure,V,21F,,,,2F01_4E12,DMM,21,6,
+R21C7  (X7 Y21),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:48,Force Current,apply,A,21G,,,0.2060071,4A11_2B02,SMU,21,7,
+R21C7  (X7 Y21),resistance,20.6005,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:48,Kelvin Resistance,measure,ohm,21G,,,,4A11_2B02,SMU,21,7,
+R21C7  (X7 Y21),voltage,-5.10576e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:48,Kelvin Voltage (DMM),measure,V,21G,,,,2F01_4E12,DMM,21,7,
+R21C8  (X8 Y21),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:51,Force Current,apply,A,21H,,,0.2006779,4A11_2B02,SMU,21,8,
+R21C8  (X8 Y21),resistance,20.0673,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:51,Kelvin Resistance,measure,ohm,21H,,,,4A11_2B02,SMU,21,8,
+R21C8  (X8 Y21),voltage,-4.93582e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:51,Kelvin Voltage (DMM),measure,V,21H,,,,2F01_4E12,DMM,21,8,
+R21C9  (X9 Y21),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:53,Force Current,apply,A,21I,,,0.202211,4A11_2B02,SMU,21,9,
+R21C9  (X9 Y21),resistance,20.221,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:53,Kelvin Resistance,measure,ohm,21I,,,,4A11_2B02,SMU,21,9,
+R21C9  (X9 Y21),voltage,-5.03442e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:53,Kelvin Voltage (DMM),measure,V,21I,,,,2F01_4E12,DMM,21,9,
+R21C10  (X10 Y21),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:55,Force Current,apply,A,21J,,,0.1999378,4A11_2B02,SMU,21,10,
+R21C10  (X10 Y21),resistance,19.9936,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:55,Kelvin Resistance,measure,ohm,21J,,,,4A11_2B02,SMU,21,10,
+R21C10  (X10 Y21),voltage,-2.71001e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:55,Kelvin Voltage (DMM),measure,V,21J,,,,2F01_4E12,DMM,21,10,
+R21C11  (X11 Y21),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:57,Force Current,apply,A,21K,,,0.19331,4A11_2B02,SMU,21,11,
+R21C11  (X11 Y21),resistance,19.3308,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:57,Kelvin Resistance,measure,ohm,21K,,,,4A11_2B02,SMU,21,11,
+R21C11  (X11 Y21),voltage,-2.52906e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:29:57,Kelvin Voltage (DMM),measure,V,21K,,,,2F01_4E12,DMM,21,11,
+R21C12  (X12 Y21),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:00,Force Current,apply,A,21L,,,0.1897823,4A11_2B02,SMU,21,12,
+R21C12  (X12 Y21),resistance,18.9782,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:00,Kelvin Resistance,measure,ohm,21L,,,,4A11_2B02,SMU,21,12,
+R21C12  (X12 Y21),voltage,-2.39068e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:00,Kelvin Voltage (DMM),measure,V,21L,,,,2F01_4E12,DMM,21,12,
+R21C13  (X13 Y21),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:02,Force Current,apply,A,21M,,,0.1883907,4A11_2B02,SMU,21,13,
+R21C13  (X13 Y21),resistance,18.8391,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:02,Kelvin Resistance,measure,ohm,21M,,,,4A11_2B02,SMU,21,13,
+R21C13  (X13 Y21),voltage,-2.33995e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:02,Kelvin Voltage (DMM),measure,V,21M,,,,2F01_4E12,DMM,21,13,
+R21C14  (X14 Y21),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:04,Force Current,apply,A,21N,,,0.1843942,4A11_2B02,SMU,21,14,
+R21C14  (X14 Y21),resistance,18.4392,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:04,Kelvin Resistance,measure,ohm,21N,,,,4A11_2B02,SMU,21,14,
+R21C14  (X14 Y21),voltage,-2.29656e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:04,Kelvin Voltage (DMM),measure,V,21N,,,,2F01_4E12,DMM,21,14,
+R22C6  (X6 Y22),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:07,Force Current,apply,A,22F,,,0.198615,4A11_2B02,SMU,22,6,
+R22C6  (X6 Y22),resistance,19.8616,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:07,Kelvin Resistance,measure,ohm,22F,,,,4A11_2B02,SMU,22,6,
+R22C6  (X6 Y22),voltage,-2.56857e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:07,Kelvin Voltage (DMM),measure,V,22F,,,,2F01_4E12,DMM,22,6,
+R22C7  (X7 Y22),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:09,Force Current,apply,A,22G,,,0.2067886,4A11_2B02,SMU,22,7,
+R22C7  (X7 Y22),resistance,20.6791,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:09,Kelvin Resistance,measure,ohm,22G,,,,4A11_2B02,SMU,22,7,
+R22C7  (X7 Y22),voltage,-5.14824e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:09,Kelvin Voltage (DMM),measure,V,22G,,,,2F01_4E12,DMM,22,7,
+R22C8  (X8 Y22),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:11,Force Current,apply,A,22H,,,0.2103554,4A11_2B02,SMU,22,8,
+R22C8  (X8 Y22),resistance,21.0358,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:11,Kelvin Resistance,measure,ohm,22H,,,,4A11_2B02,SMU,22,8,
+R22C8  (X8 Y22),voltage,-5.23057e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:11,Kelvin Voltage (DMM),measure,V,22H,,,,2F01_4E12,DMM,22,8,
+R22C9  (X9 Y22),current,0.00999984,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:13,Force Current,apply,A,22I,,,0.2144911,4A11_2B02,SMU,22,9,
+R22C9  (X9 Y22),resistance,21.4489,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:13,Kelvin Resistance,measure,ohm,22I,,,,4A11_2B02,SMU,22,9,
+R22C9  (X9 Y22),voltage,-5.36425e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:13,Kelvin Voltage (DMM),measure,V,22I,,,,2F01_4E12,DMM,22,9,
+R22C10  (X10 Y22),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:15,Force Current,apply,A,22J,,,0.1981635,4A11_2B02,SMU,22,10,
+R22C10  (X10 Y22),resistance,19.8163,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:15,Kelvin Resistance,measure,ohm,22J,,,,4A11_2B02,SMU,22,10,
+R22C10  (X10 Y22),voltage,-2.58311e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:15,Kelvin Voltage (DMM),measure,V,22J,,,,2F01_4E12,DMM,22,10,
+R22C11  (X11 Y22),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:18,Force Current,apply,A,22K,,,0.1912587,4A11_2B02,SMU,22,11,
+R22C11  (X11 Y22),resistance,19.1259,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:18,Kelvin Resistance,measure,ohm,22K,,,,4A11_2B02,SMU,22,11,
+R22C11  (X11 Y22),voltage,-2.44648e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:18,Kelvin Voltage (DMM),measure,V,22K,,,,2F01_4E12,DMM,22,11,
+R22C12  (X12 Y22),current,0.00999983,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:20,Force Current,apply,A,22L,,,0.1844121,4A11_2B02,SMU,22,12,
+R22C12  (X12 Y22),resistance,18.4404,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:20,Kelvin Resistance,measure,ohm,22L,,,,4A11_2B02,SMU,22,12,
+R22C12  (X12 Y22),voltage,-2.31637e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:20,Kelvin Voltage (DMM),measure,V,22L,,,,2F01_4E12,DMM,22,12,
+R22C13  (X13 Y22),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:22,Force Current,apply,A,22M,,,0.1848847,4A11_2B02,SMU,22,13,
+R22C13  (X13 Y22),resistance,18.4884,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:22,Kelvin Resistance,measure,ohm,22M,,,,4A11_2B02,SMU,22,13,
+R22C13  (X13 Y22),voltage,-2.28697e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:22,Kelvin Voltage (DMM),measure,V,22M,,,,2F01_4E12,DMM,22,13,
+R23C7  (X7 Y23),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:25,Force Current,apply,A,23G,,,0.1874673,4A11_2B02,SMU,23,7,
+R23C7  (X7 Y23),resistance,18.7463,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:25,Kelvin Resistance,measure,ohm,23G,,,,4A11_2B02,SMU,23,7,
+R23C7  (X7 Y23),voltage,-2.27006e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:25,Kelvin Voltage (DMM),measure,V,23G,,,,2F01_4E12,DMM,23,7,
+R23C8  (X8 Y23),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:27,Force Current,apply,A,23H,,,0.1874236,4A11_2B02,SMU,23,8,
+R23C8  (X8 Y23),resistance,18.7421,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:27,Kelvin Resistance,measure,ohm,23H,,,,4A11_2B02,SMU,23,8,
+R23C8  (X8 Y23),voltage,-2.35987e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:27,Kelvin Voltage (DMM),measure,V,23H,,,,2F01_4E12,DMM,23,8,
+R23C9  (X9 Y23),current,0.0099998,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:29,Force Current,apply,A,23I,,,0.1958644,4A11_2B02,SMU,23,9,
+R23C9  (X9 Y23),resistance,19.5867,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:29,Kelvin Resistance,measure,ohm,23I,,,,4A11_2B02,SMU,23,9,
+R23C9  (X9 Y23),voltage,-2.61059e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:29,Kelvin Voltage (DMM),measure,V,23I,,,,2F01_4E12,DMM,23,9,
+R23C10  (X10 Y23),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:32,Force Current,apply,A,23J,,,0.1949229,4A11_2B02,SMU,23,10,
+R23C10  (X10 Y23),resistance,19.4915,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:32,Kelvin Resistance,measure,ohm,23J,,,,4A11_2B02,SMU,23,10,
+R23C10  (X10 Y23),voltage,-2.56389e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:32,Kelvin Voltage (DMM),measure,V,23J,,,,2F01_4E12,DMM,23,10,
+R23C11  (X11 Y23),current,0.00999982,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:34,Force Current,apply,A,23K,,,0.1856111,4A11_2B02,SMU,23,11,
+R23C11  (X11 Y23),resistance,18.561,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:34,Kelvin Resistance,measure,ohm,23K,,,,4A11_2B02,SMU,23,11,
+R23C11  (X11 Y23),voltage,-2.34817e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:34,Kelvin Voltage (DMM),measure,V,23K,,,,2F01_4E12,DMM,23,11,
+R23C12  (X12 Y23),current,0.00999981,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:36,Force Current,apply,A,23L,,,0.1783419,4A11_2B02,SMU,23,12,
+R23C12  (X12 Y23),resistance,17.8341,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:36,Kelvin Resistance,measure,ohm,23L,,,,4A11_2B02,SMU,23,12,
+R23C12  (X12 Y23),voltage,-2.20391e-05,RESULT,,,,MADDY_TL_REV_D,Maddy TL,,,,,,,2026-09-01 17:30:36,Kelvin Voltage (DMM),measure,V,23L,,,,2F01_4E12,DMM,23,12,
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,1,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,1,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,1,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,1,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,1,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,1,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,2,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,3,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,4,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,5,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,6,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,7,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,10,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,8,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,8,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,9,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,1,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,9,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,12,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,10,18,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,1,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,7,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,10,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,11,18,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,1,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,12,18,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,1,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,10,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,13,18,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,1,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,7,FAIL
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,14,18,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,15,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,16,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,2,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,17,17,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,18,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,3,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,19,16,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,4,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,20,15,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,5,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,21,14,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,6,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,12,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,22,13,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,23,7,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,23,8,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,23,9,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,23,10,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,23,11,PASS
+,,,DIE,,,,,,,,,,,,,,,,,,,,,,23,12,PASS

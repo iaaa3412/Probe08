@@ -3753,6 +3753,13 @@ class MainLayout(ttk.Frame):
         try:
             ok = self._exec2_run_steps_once(steps)
         finally:
+            # Captured before this gets wiped - _exec2_tally_shot_result
+            # (below) needs the real die ID per slot to know which slots
+            # in _exec2_slot_verdicts are actual dies (countable) versus
+            # empty NA/TARGET corners (not), the same distinction
+            # eg_pma_run_panel._measure_here already makes on the
+            # Electroglas side.
+            ids_by_slot = list(getattr(self, "_exec2_die_ids_by_slot", None) or [])
             if shot_geom is not None:
                 self._exec2_die_rc_by_slot = []
                 self._exec2_die_ids_by_slot = []
@@ -3762,6 +3769,7 @@ class MainLayout(ttk.Frame):
 
         if row is not None and col is not None:
             self._exec2_color_shot_squares(shot_geom, shot_row, shot_col, row, col, ok)
+        self._exec2_tally_shot_result(shot_geom, ids_by_slot, ok)
 
         if self._exec2_aborted:
             # Stop Run already separated the chuck (its own D, sent the
@@ -3994,7 +4002,9 @@ class MainLayout(ttk.Frame):
 
                 ok = self._exec2_zup_measure_zdown(
                     sim, prober, die_label, row=int(y), col=int(x), shot_geom=shot_geom)
-                self.after(0, self._exec2_add_pass if ok else self._exec2_add_fail)
+                # Pass/Fail counters are updated inside _exec2_zup_measure_zdown
+                # itself now (see _exec2_tally_shot_result) - once per real
+                # die in the shot, not once per touchdown.
 
                 if (not self._exec2_running or self._exec2_aborted
                         or self._exec2_run_token != my_token):
@@ -4236,6 +4246,53 @@ class MainLayout(ttk.Frame):
                 self._exec2_update_die_color(real_row, real_col, passed)
         else:
             self._exec2_update_die_color(fallback_row, fallback_col, fallback_ok)
+
+    def _exec2_tally_shot_result(self, shot_geom, ids_by_slot: list, fallback_ok: bool):
+        """Add this touchdown's result(s) to the Pass/Fail counters - once
+        per REAL die in the shot when the recipe tagged its passfail steps
+        with a Die #, not once per touchdown.
+
+        A LAMP-style quad is one physical touchdown covering up to 4 real
+        devices, measured through 4 different switch-routed pin pairs -
+        Minor Moves off the whole time, since the chuck never moves between
+        them. Without this, a quad with two real dies (one PASS, one FAIL)
+        added exactly one tally for the whole shot, so the counters showed
+        results by SHOT (touchdown) instead of by DIE - the same "counts
+        shots, not dies" complaint _exec2_run_steps_once's passfail-step
+        found-is-None gap partly caused, but this half of it lives here,
+        not there: even with slot_verdicts fully and correctly populated,
+        nothing before this ever expanded ONE _exec2_add_pass/_exec2_add_fail
+        call per touchdown into one per die for the OVERALL counters (only
+        _exec2_color_shot_squares, just above, already did that for the map
+        squares).
+
+        An empty NA/TARGET corner still gets a passfail verdict (LAMP
+        measures the switch either way, e.g. to catch a mis-wired card) but
+        is not a real die and must not be counted - same rule
+        eg_pma_run_panel._measure_here already applies on the Electroglas
+        side, so both systems agree on what "a die" means here. ids_by_slot
+        is 0-indexed by die # - 1 (die #1 is index 0), built by
+        _exec2_publish_die_slots_for/_at right before the steps ran.
+        """
+        slot_verdicts = dict(getattr(self, "_exec2_slot_verdicts", None) or {})
+        if shot_geom is not None and slot_verdicts:
+            counted = 0
+            for die_num, passed in sorted(slot_verdicts.items()):
+                die_id = (ids_by_slot[die_num - 1]
+                          if 0 <= die_num - 1 < len(ids_by_slot) else "")
+                if (die_id or "").strip().upper() in ("", "NA"):
+                    continue
+                counted += 1
+                self._exec2_safe_after(
+                    self._exec2_add_pass if passed else self._exec2_add_fail)
+            if counted:
+                return
+            # No slot resolved to a real, named die (e.g. no Wafer Builder
+            # map published yet) - fall through to the single combined
+            # tally below rather than silently adding nothing for a real
+            # touchdown that WAS measured.
+        self._exec2_safe_after(
+            self._exec2_add_pass if fallback_ok else self._exec2_add_fail)
 
     def _exec2_minor_move_thread(self, shots: list, my_token: int, overlay_offset: tuple,
                                  shot_rows: int, shot_cols: int, shot_cells: dict):
@@ -5306,7 +5363,9 @@ class MainLayout(ttk.Frame):
 
                 ok = self._exec2_zup_measure_zdown(
                     sim, prober, die_label, row=row, col=col, shot_geom=shot_geom)
-                self.after(0, self._exec2_add_pass if ok else self._exec2_add_fail)
+                # Pass/Fail counters are updated inside _exec2_zup_measure_zdown
+                # itself now (see _exec2_tally_shot_result) - once per real
+                # die in the shot, not once per touchdown.
 
                 idx += 1
                 if (not self._exec2_running or self._exec2_aborted
@@ -5964,6 +6023,20 @@ class MainLayout(ttk.Frame):
                     continue
 
                 if t == "passfail":
+                    # Resolved before the reading lookup below, not after -
+                    # a die whose OWN reading is missing/errored still needs
+                    # its slot recorded (as a FAIL), or that die silently
+                    # drops out of both the pass and the fail tally instead
+                    # of counting as the fail it actually is. That is what
+                    # under-counted a quad with a real failing die: its
+                    # current-measure step came back with nothing to check
+                    # against, this step "continue"d without ever touching
+                    # _exec2_slot_verdicts, and the die was never counted at
+                    # all - not failed, not passed, just missing.
+                    try:
+                        die_no = int(float(s.get("die") or "1"))
+                    except (TypeError, ValueError):
+                        die_no = 1
                     tgt = (s.get("target") or "").strip()
                     if tgt:
                         found = readings_by_name.get(tgt)
@@ -5975,6 +6048,7 @@ class MainLayout(ttk.Frame):
                         self._exec2_log(f"[MEASURE] {i}. {name}: ERROR no reading found "
                                         f"for '{ref_name}' — FAIL")
                         overall_ok = False
+                        self._exec2_slot_verdicts[die_no] = False
                         continue
                     value, unit = found
                     mn, mx = s.get("min") or "", s.get("max") or ""
@@ -5984,10 +6058,6 @@ class MainLayout(ttk.Frame):
                     # Keep each die's verdict as well as the combined one. A
                     # shot's four dies pass or fail independently, so folding
                     # them into a single bool threw away three results.
-                    try:
-                        die_no = int(float(s.get("die") or "1"))
-                    except (TypeError, ValueError):
-                        die_no = 1
                     self._exec2_slot_verdicts[die_no] = verdict
                     spec = f"[{mn or '-inf'}, {mx or '+inf'}]"
                     self._exec2_log(f"[MEASURE] {i}. {name}: "

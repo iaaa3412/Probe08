@@ -40,7 +40,7 @@ def _exe_dir() -> str:
 # inside a fresh temp extraction directory (sys._MEIPASS) that gets wiped
 # when the process exits, so a bare __file__-relative path here would
 # silently lose every "Set Default" the moment the app closed and always
-# fall back to PRESETS["automationproject"] on the next launch. Anchoring
+# fall back to PRESETS["proberautomation"] on the next launch. Anchoring
 # to the exe's own real, persistent folder (or the checkout root in dev
 # mode) is what makes "just the exe, self-creating this one file next to
 # itself on first Set Default" a valid deployment - no installer, no
@@ -49,8 +49,8 @@ _PREF_PATH = os.path.join(_exe_dir(), "working_dir_pref.json")
 
 # No forced override - proberautomation is confirmed ready, so
 # get_default_working_dir() just uses whatever was last saved via Set
-# Default (falling back to the automationproject preset if nothing has
-# been saved yet on this PC).
+# Default (falling back to the proberautomation preset - the real shared
+# location - if nothing has been saved yet on this PC).
 _FORCE_TEMPORARY_DEFAULT = None
 
 
@@ -79,7 +79,7 @@ def saved_default_working_dir() -> "str | None":
 def get_default_working_dir() -> str:
     if _FORCE_TEMPORARY_DEFAULT:
         return _FORCE_TEMPORARY_DEFAULT
-    return saved_default_working_dir() or PRESETS["automationproject"]
+    return saved_default_working_dir() or PRESETS["proberautomation"]
 
 
 def set_default_working_dir(path: str) -> None:
