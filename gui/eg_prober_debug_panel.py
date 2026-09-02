@@ -319,8 +319,7 @@ class EgProberDebugPanel(ttk.Frame):
         Step sizes are read on the main thread before the worker starts -
         Tkinter is not thread-safe.
         """
-        lf = ttk.LabelFrame(parent, text="Jog  (arrow keys work when focused)",
-                            padding=6)
+        lf = ttk.LabelFrame(parent, text="Jog", padding=6)
         lf.pack(fill="x", padx=4, pady=(4, 6))
 
         mode_row = ttk.Frame(lf)
@@ -396,10 +395,40 @@ class EgProberDebugPanel(ttk.Frame):
                   foreground="#aa5500", font=("Arial", 8), wraplength=380,
                   justify="left").pack(anchor="w", pady=(4, 0))
 
-        # Arrow keys follow the physical direction, same mapping as the buttons.
-        for key, (dx, dy) in (("<Up>", _JOG_UP), ("<Down>", _JOG_DOWN),
-                              ("<Left>", _JOG_LEFT), ("<Right>", _JOG_RIGHT)):
-            self.bind_all(key, lambda e, x=dx, y=dy: self._jog_xy(x, y))
+        # Arrow keys follow the physical direction, same mapping as the
+        # buttons - but ONLY while explicitly enabled below. This used to
+        # be an unconditional self.bind_all(), which grabs arrow keys for
+        # the WHOLE APPLICATION the moment this panel is built, not just
+        # while this tab is visible or focused (bind_all's own semantics -
+        # it isn't scoped by widget at all) - a real report: arrow keys
+        # pressed anywhere else in the app (e.g. Accretech's own tabs) sent
+        # a live jog command to whatever prober driver happened to be
+        # active, which is exactly how 'AccretechUF200R' object has no
+        # attribute 'move_relative_die' surfaced - this Electroglas-only
+        # jog reaching an Accretech session. Locked behind an explicit,
+        # default-OFF toggle instead of any implicit scoping (hover/focus),
+        # so a stray arrow key press can never move real hardware unless
+        # the operator deliberately turned this on for this tab, this
+        # session.
+        self._jog_keys_enabled_var = tk.BooleanVar(value=False)
+
+        def _jog_keys_toggled():
+            if self._jog_keys_enabled_var.get():
+                for key, (dx, dy) in (("<Up>", _JOG_UP), ("<Down>", _JOG_DOWN),
+                                      ("<Left>", _JOG_LEFT), ("<Right>", _JOG_RIGHT)):
+                    self.bind_all(key, lambda e, x=dx, y=dy: self._jog_xy(x, y))
+                self._log("[JOG] Arrow-key jog ENABLED — arrow keys anywhere in the "
+                         "app will now move the chuck until this is turned off.")
+            else:
+                for key in ("<Up>", "<Down>", "<Left>", "<Right>"):
+                    self.unbind_all(key)
+                self._log("[JOG] Arrow-key jog disabled.")
+
+        self._jog_keys_toggled = _jog_keys_toggled
+        ttk.Checkbutton(lf, text="⚠ Enable arrow-key jog (moves real hardware from "
+                                 "anywhere in the app while checked - off by default)",
+                        variable=self._jog_keys_enabled_var,
+                        command=_jog_keys_toggled).pack(anchor="w", pady=(6, 0))
 
         self._build_theta(parent)
 
