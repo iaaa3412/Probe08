@@ -60,6 +60,20 @@ class CassettePanel(ttk.Frame):
         self._slot_idx = 0
         self._armed = False
         self._paused_for_yield = False
+        # Set when an advance (L) or a run auto-start failed - e.g. a
+        # physical cassette/prober error on some slot (a real report: slot
+        # 4 of 6 was a bit faulty). Distinct from _paused_for_yield (a
+        # wafer finished fine, yield was just low) - here the slot in
+        # question never actually finished, so ▶ Continue has to RETRY it,
+        # not advance past it. _error_retry_kind says what to retry:
+        # "advance" (resend L - _advance_thread) if the load itself
+        # failed, "start" (just retry starting the run - _start_next_run)
+        # if the wafer loaded fine but the run failed to auto-start.
+        self._paused_for_error = False
+        self._error_retry_kind = "advance"
+        # Set while the "Move to Selected Slot" arm/target toggle is
+        # active - see _move_selected_slot_button.
+        self._move_slot_armed = False
         # "full" (▶ Full Die), "test" (▶ Test Selected), or "run" (▶ Run -
         # the recipe's own saved touchdown list, Minor Moves included) -
         # which one to repeat on every later slot, set from the first
@@ -102,6 +116,17 @@ class CassettePanel(ttk.Frame):
         self._stop_btn.pack(side="left", padx=4)
         ttk.Button(bar, text="🔄 Reset to Slot #1",
                   command=self._reset_slot).pack(side="left", padx=4)
+        # Bookkeeping-only, same as Reset to Slot #1 (no hardware command -
+        # the prober's cassette mechanism has no "jump to slot N", only
+        # sequential unload+load-next), just to any slot instead of always
+        # #1 - for a slot the operator skipped after an error, or one they
+        # want to re-run. Same arm/target-toggle pattern as the Run tab's
+        # own ➡ Move to Selected (instrument_panel._exec2_move_selected_
+        # button): click to arm, click a slot ROW below, click again
+        # ("📍 Move") to confirm.
+        self._move_slot_btn = ttk.Button(bar, text="📍 Move to Selected Slot",
+                                         command=self._move_selected_slot_button)
+        self._move_slot_btn.pack(side="left", padx=4)
         # U was found to error out often when used as part of cassette
         # advance (see cassette_unload_and_load_next's own comment) - "L"
         # is what automation uses now. This button is for a deliberate,
@@ -163,6 +188,9 @@ class CassettePanel(ttk.Frame):
             self._slot_tree.column(cid, width=width, anchor="center" if cid == "slot" else "w")
         self._slot_tree.grid(row=1, column=0, sticky="ew")
         self._slot_tree.bind("<Double-1>", lambda _e: self._edit_slot())
+        # Only acts while Move to Selected Slot is armed - see
+        # _move_selected_slot_button. Harmless no-op the rest of the time.
+        self._slot_tree.bind("<<TreeviewSelect>>", self._on_move_slot_row_selected)
 
     def _build_export(self):
         ef = ttk.LabelFrame(self, text="Auto-Export", padding=6)
@@ -363,7 +391,84 @@ class CassettePanel(ttk.Frame):
         self._slot_idx = 0
         self._lot_summary = []
         self._redraw_slots()
+        # Keep the Run tab's own Lot ID/Wafer ID in sync with the slot
+        # tracking now points at - same reasoning as _move_selected_slot's
+        # own sync (see that method's comment): whatever the operator does
+        # next (manually start slot #1's run, or press ▶ Arm), the export
+        # this produces has to be tagged with the RIGHT wafer, not whatever
+        # was left over from wherever automation was before this reset.
+        if self._wafers:
+            self.ui.lot_id.set(self._lot_id())
+            self.ui.wafer_id_var.set(self._wafers[0])
         self._log_event(1, "", "Reset — next Arm will start tracking from slot #1.")
+
+    # ------------------------------------------------------- move to slot
+
+    def _move_selected_slot_button(self):
+        """📍 Move to Selected Slot - arm/target toggle, same shape as the
+        Run tab's own ➡ Move to Selected:
+
+          IDLE ("📍 Move to Selected Slot") --click--> ARMED, no target
+              ("✕ Cancel Move") --click a slot row--> ARMED, one target
+              ("📍 Move") --click--> executes, back to idle
+
+        Bookkeeping only - moves self._slot_idx (and this panel's own
+        _lot_summary is left untouched, unlike 🔄 Reset to Slot #1, since
+        this is meant for skipping/revisiting ONE slot mid-lot, not
+        restarting the whole thing). No hardware command is sent; the
+        prober's cassette mechanism has no "jump to slot N" of its own -
+        only sequential unload+load-next. If the physically-loaded wafer
+        doesn't actually match the slot moved to, that's on the operator
+        to have handled (📥 Load Next Wafer's own manual-recovery warning
+        says the same thing) - this only ever changes what the SOFTWARE
+        thinks the current slot is.
+        """
+        if self._armed:
+            messagebox.showerror("Automation Armed",
+                                 "Stop automation before moving to a different slot.")
+            return
+        if not self._move_slot_armed:
+            self._move_slot_armed = True
+            self._move_slot_btn.config(text="✕ Cancel Move")
+            return
+        idx = self._selected_slot_index()
+        self._disarm_move_slot()
+        if idx is None:
+            self._log("[CASSETTE] Move to Selected Slot: cancelled.")
+            return
+        self._do_move_to_slot(idx)
+
+    def _on_move_slot_row_selected(self, _e=None):
+        if not self._move_slot_armed:
+            return
+        if self._selected_slot_index() is not None:
+            self._move_slot_btn.config(text="📍 Move")
+
+    def _disarm_move_slot(self):
+        self._move_slot_armed = False
+        self._move_slot_btn.config(text="📍 Move to Selected Slot")
+
+    def _do_move_to_slot(self, idx: int):
+        if not (0 <= idx < len(self._wafers)):
+            return
+        self._slot_idx = idx
+        wafer_id = self._wafers[idx]
+        lot_id = self._lot_id()
+        # VERY IMPORTANT (per the report this was built for): the next
+        # export - whether from a run the operator starts by hand, or one
+        # ▶ Arm auto-starts - has to be tagged with THIS slot's wafer, not
+        # whatever the Run tab's Lot ID/Wafer ID fields were last left at.
+        # _on_wafer_finished/_export_current always read self._wafers[self.
+        # _slot_idx] fresh at export time, so setting both here is enough -
+        # nothing downstream needs its own separate fix to "match".
+        self.ui.lot_id.set(lot_id)
+        self.ui.wafer_id_var.set(wafer_id)
+        self._redraw_slots()
+        self._log_event(
+            idx + 1, lot_id,
+            f"Moved to slot {idx + 1} ({wafer_id}) — next run/▶ Arm will use this "
+            "slot. Make sure the physically loaded wafer actually matches before "
+            "starting.")
 
     # --------------------------------------------------------- manual unload
 
@@ -468,15 +573,37 @@ class CassettePanel(ttk.Frame):
 
     def _set_paused_for_yield(self, paused: bool):
         self._paused_for_yield = paused
-        self._continue_btn.config(state="normal" if paused else "disabled")
+        self._refresh_continue_btn()
+
+    def _set_paused_for_error(self, paused: bool, kind: str = "advance"):
+        self._paused_for_error = paused
+        self._error_retry_kind = kind
+        self._refresh_continue_btn()
+
+    def _refresh_continue_btn(self):
+        self._continue_btn.config(
+            state="normal" if (self._paused_for_yield or self._paused_for_error)
+            else "disabled")
 
     def _continue_after_pause(self):
-        """▶ Continue, next to the yield threshold - resumes past the wafer
-        that just paused automation (already tested and exported, so this
-        advances to the NEXT slot exactly like a passing wafer would have,
-        rather than re-running the one that triggered the pause)."""
-        if not self._paused_for_yield or self._armed:
+        """▶ Continue - dispatches to whichever kind of pause is actually
+        active. A low-yield pause and a failed-advance pause need opposite
+        handling (advance past a finished wafer vs. retry one that never
+        finished), so they can't share one action even though they share
+        one button."""
+        if self._armed:
             return
+        if self._paused_for_error:
+            self._continue_after_error()
+            return
+        if self._paused_for_yield:
+            self._continue_after_yield()
+
+    def _continue_after_yield(self):
+        """Resumes past the wafer that just paused automation for low yield
+        (already tested and exported, so this advances to the NEXT slot
+        exactly like a passing wafer would have, rather than re-running the
+        one that triggered the pause)."""
         self._set_paused_for_yield(False)
         lot_id = self._lot_id()
         self._slot_idx += 1
@@ -496,13 +623,43 @@ class CassettePanel(ttk.Frame):
                         "Continuing past the low-yield wafer.")
         threading.Thread(target=self._advance_thread, daemon=True).start()
 
+    def _continue_after_error(self):
+        """Resumes after a failed advance/run-start - e.g. a physical
+        cassette/prober error on some slot (a real report: slot 4 of 6 was
+        a bit faulty, threw an error, and automation stopped with no way
+        to resume). Retries the SAME slot (self._slot_idx is left exactly
+        where it was), not the next one - that wafer never actually
+        finished, so nothing has been tested or exported for it yet.
+        Assumes the operator has manually fixed whatever the physical
+        problem was before pressing this - there's no way to verify that
+        from software, same as ▶ Load Next Wafer's own manual-recovery
+        warning."""
+        self._set_paused_for_error(False)
+        lot_id = self._lot_id()
+        self._armed = True
+        self.ui._exec2_on_run_finished = self._on_wafer_finished
+        self._set_locked(True)
+        self._redraw_slots()
+        if self._error_retry_kind == "start":
+            self._set_state("RETRYING — re-attempting to start this slot's run", "#f97316")
+            self._log_event(self._slot_idx + 1, lot_id,
+                            "Retrying the run start — operator confirmed the issue is fixed.")
+            self._start_next_run()
+        else:
+            self._set_state("RETRYING — re-attempting the failed slot", "#f97316")
+            self._log_event(self._slot_idx + 1, lot_id,
+                            "Retrying — operator confirmed the issue is fixed.")
+            threading.Thread(target=self._advance_thread, daemon=True).start()
+
     def _disarm(self, reason: str = ""):
         self._armed = False
-        # Default to "not resumable" - Stop/aborted-run/no-next-wafer all
-        # route through here too, and only a real yield pause should leave
-        # ▶ Continue enabled. _on_wafer_finished's yield branch re-enables
-        # it right after calling this, for that one case.
+        # Default to "not resumable" - Stop/aborted-run all route through
+        # here too, and only a real pause (yield or error) should leave
+        # ▶ Continue enabled. _on_wafer_finished's yield branch and
+        # _advance_thread/_start_next_run's error branches all re-enable
+        # it right after calling this, for those specific cases.
         self._set_paused_for_yield(False)
+        self._set_paused_for_error(False)
         if getattr(self.ui, "_exec2_on_run_finished", None) is self._on_wafer_finished:
             self.ui._exec2_on_run_finished = None
         self._set_locked(False)
@@ -673,10 +830,13 @@ class CassettePanel(ttk.Frame):
         if not next_ready:
             self.after(0, lambda: self._log_event(
                 self._slot_idx + 1, "", "No next wafer (cassette empty/idle/error) — "
-                "cassette automation stopped."))
+                "cassette automation stopped. Fix the physical issue, then press "
+                "▶ Continue to retry this slot."))
             self.after(0, self._disarm)
+            self.after(0, lambda: self._set_paused_for_error(True, "advance"))
             self.after(0, lambda: self._set_state(
-                "STOPPED (no next wafer)", "#dc2626"))
+                f"PAUSED (slot {self._slot_idx + 1} failed to load) — fix the issue, "
+                "then ▶ Continue to retry", "#dc2626"))
             return
 
         wafer_id = self._wafers[self._slot_idx]
@@ -709,9 +869,13 @@ class CassettePanel(ttk.Frame):
                 if not sites:
                     self._log_event(self._slot_idx + 1, "",
                                     "Could not auto-start the next run: no remembered "
-                                    "Test Selected sites from the first wafer.")
+                                    "Test Selected sites from the first wafer. Fix "
+                                    "and press ▶ Continue to retry starting this slot.")
                     self._disarm()
-                    self._set_state("STOPPED (auto-start failed)", "#dc2626")
+                    self._set_paused_for_error(True, "start")
+                    self._set_state(
+                        f"PAUSED (slot {self._slot_idx + 1} — auto-start failed) — "
+                        "fix the issue, then ▶ Continue to retry", "#dc2626")
                     return
                 self.ui._exec2_start_site_list(sites, "Test Die", "test")
             elif self._run_mode == "run":
@@ -719,6 +883,11 @@ class CassettePanel(ttk.Frame):
             else:
                 self.ui._exec2_start_full_die()
         except Exception as e:
-            self._log_event(self._slot_idx + 1, "", f"Could not auto-start the next run: {e}")
+            self._log_event(self._slot_idx + 1, "",
+                            f"Could not auto-start the next run: {e}. Fix and press "
+                            "▶ Continue to retry starting this slot.")
             self._disarm()
-            self._set_state("STOPPED (auto-start failed)", "#dc2626")
+            self._set_paused_for_error(True, "start")
+            self._set_state(
+                f"PAUSED (slot {self._slot_idx + 1} — auto-start failed) — "
+                "fix the issue, then ▶ Continue to retry", "#dc2626")
