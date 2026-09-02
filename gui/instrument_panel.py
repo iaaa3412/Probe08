@@ -2086,6 +2086,10 @@ class MainLayout(ttk.Frame):
         # self.nanoz_panel attribute that no longer exists.
         self.controller.notify_nanoz_ata_folder_loaded(folder_path)
 
+        cassette = getattr(self, "cassette_panel", None)
+        if cassette is not None and hasattr(cassette, "on_ata_folder_loaded"):
+            cassette.on_ata_folder_loaded(folder_path)
+
         self._update_default_ata_label()
         return n_dies
 

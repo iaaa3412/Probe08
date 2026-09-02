@@ -1,9 +1,41 @@
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+
+# Pass-yield auto-continue threshold is a per-ATA-folder setting, not a
+# per-machine/global one - different projects have different real yield
+# expectations, so the default that makes sense for one is not necessarily
+# right for another. Same small-JSON-file-in-the-ATA-folder pattern used
+# throughout this codebase (e.g. instruments/nanoz_board.py's
+# save_probe_height) rather than a shared settings module - this file has
+# no existing dependency on one, and this is the only value it persists.
+YIELD_THRESHOLD_FILENAME = "ata_cassette_yield.json"
+
+
+def save_yield_threshold(folder: str, pct: float) -> None:
+    path = os.path.join(folder, YIELD_THRESHOLD_FILENAME)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"yield_threshold": float(pct)}, f)
+    except OSError:
+        pass
+
+
+def load_yield_threshold(folder: str, default: float = 95.0) -> float:
+    path = os.path.join(folder, YIELD_THRESHOLD_FILENAME)
+    if not os.path.isfile(path):
+        return default
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return float(data.get("yield_threshold", default))
+    except (OSError, ValueError, TypeError):
+        return default
 
 
 class CassettePanel(ttk.Frame):
@@ -42,6 +74,11 @@ class CassettePanel(ttk.Frame):
         # complete" popup (_show_lot_summary); cleared by _reset_slot, same
         # "start the whole list over" action that resets _slot_idx.
         self._lot_summary: list = []
+        # Which ATA folder self._yield_var currently reflects, so a later
+        # edit knows where to save without needing an explicit "current
+        # folder" argument threaded through - see on_ata_folder_loaded/
+        # _on_yield_edited.
+        self._yield_folder: str | None = None
 
         self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
@@ -79,7 +116,13 @@ class CassettePanel(ttk.Frame):
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(bar, text="Pass yield ≥").pack(side="left")
         self._yield_var = tk.StringVar(value="95")
-        ttk.Entry(bar, textvariable=self._yield_var, width=5).pack(side="left", padx=(2, 0))
+        yield_ent = ttk.Entry(bar, textvariable=self._yield_var, width=5)
+        yield_ent.pack(side="left", padx=(2, 0))
+        # Saved per ATA folder (see on_ata_folder_loaded) - the operator can
+        # set a project's real default once and have it stick, rather than
+        # every session starting back at the flat 95% default.
+        yield_ent.bind("<Return>", lambda _e: self._on_yield_edited())
+        yield_ent.bind("<FocusOut>", lambda _e: self._on_yield_edited())
         ttk.Label(bar, text="% to auto-continue, else pause").pack(side="left", padx=(2, 0))
         self._continue_btn = ttk.Button(bar, text="▶ Continue", state="disabled",
                                         command=self._continue_after_pause)
@@ -225,6 +268,19 @@ class CassettePanel(ttk.Frame):
             return float(self._yield_var.get())
         except ValueError:
             return 95.0
+
+    def on_ata_folder_loaded(self, folder_path: str):
+        """Called from MainLayout.load_ata_folder whenever a folder opens -
+        loads that folder's own saved yield threshold (95% if it's never
+        set one), and remembers the folder so a later edit knows where to
+        save."""
+        self._yield_folder = folder_path
+        self._yield_var.set(f"{load_yield_threshold(folder_path):g}")
+
+    def _on_yield_edited(self):
+        if not self._yield_folder:
+            return
+        save_yield_threshold(self._yield_folder, self._yield_threshold())
 
     # ------------------------------------------------------------ slot list
 

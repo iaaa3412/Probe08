@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from wafer_map_view import WaferMapPanel
 from pma_wafer_panel import centroid_offset
+from cassette_panel import save_yield_threshold, load_yield_threshold
 from prober_debug_panel import ProberDebugPanel
 from eg_prober_debug_panel import EgProberDebugPanel
 import instruments.nanoz_board as nzb
@@ -2521,7 +2522,16 @@ class NanoZPanel(ttk.Frame):
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(bar, text="Pass yield ≥").pack(side="left")
         self._cst_yield_var = tk.StringVar(value="95")
-        ttk.Entry(bar, textvariable=self._cst_yield_var, width=5).pack(side="left", padx=(2, 0))
+        # Which ATA folder this reflects, so an edit knows where to save -
+        # see on_ata_folder_loaded/_on_cst_yield_edited. Saved per ATA
+        # folder, same reasoning/persistence as the normal Cassette tab's
+        # own threshold (cassette_panel.save_yield_threshold) - different
+        # projects have different real yield expectations.
+        self._cst_yield_folder: str | None = None
+        cst_yield_ent = ttk.Entry(bar, textvariable=self._cst_yield_var, width=5)
+        cst_yield_ent.pack(side="left", padx=(2, 0))
+        cst_yield_ent.bind("<Return>", lambda _e: self._on_cst_yield_edited())
+        cst_yield_ent.bind("<FocusOut>", lambda _e: self._on_cst_yield_edited())
         ttk.Label(bar, text="% to auto-continue, else pause").pack(side="left", padx=(2, 0))
         self._cst_state_var = tk.StringVar(value="IDLE")
         self._cst_state_lbl = ttk.Label(bar, textvariable=self._cst_state_var,
@@ -2607,6 +2617,11 @@ class NanoZPanel(ttk.Frame):
             return float(self._cst_yield_var.get())
         except ValueError:
             return 95.0
+
+    def _on_cst_yield_edited(self):
+        if not self._cst_yield_folder:
+            return
+        save_yield_threshold(self._cst_yield_folder, self._cst_yield_threshold())
 
     def _cst_redraw_slots(self):
         self._cst_tree.delete(*self._cst_tree.get_children())
@@ -3899,6 +3914,10 @@ class NanoZPanel(ttk.Frame):
         # card) setting - loaded before anything below that depends on it
         # (_eg_refresh_wafer_plan_from_wafer_builder's window height).
         self._probe_height_var.set(nzb.load_probe_height(folder_path))
+        # Cassette tab's pass-yield auto-continue threshold - see
+        # _on_cst_yield_edited/cassette_panel.save_yield_threshold.
+        self._cst_yield_folder = folder_path
+        self._cst_yield_var.set(f"{load_yield_threshold(folder_path):g}")
         if self._system == "electroglas":
             # No ata_wafer_map_accretech.csv on this side - the Wafer
             # Builder map is the wafer data here (see
