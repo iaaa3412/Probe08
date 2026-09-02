@@ -28,7 +28,7 @@ from eg_prober_debug_panel import EgProberDebugPanel
 from gpib_trace_panel import GpibTracePanel
 from eg_pma_run_panel import EgPmaRunPanel
 from accr_wafer_panel import AccrWaferPanel
-from cassette_panel import CassettePanel
+from cassette_panel import CassettePanel, save_yield_threshold, load_yield_threshold
 from recipe_panel import RecipePanel, load_default_recipe, compute_target_derived
 from pma_wafer_panel import PmaWaferPanel, centroid_offset
 from pma_process_panel import PmaProcessPanel
@@ -1394,6 +1394,67 @@ class MainLayout(ttk.Frame):
         self._refresh_default_prober_choices()
         self._update_default_prober_label()
 
+    def _build_default_yield_row(self, tab):
+        """Same setting as the Cassette tab's own "Pass yield >= ...%"
+        Entry (cassette_panel.CassettePanel) - a per-ATA-folder default,
+        not per-machine (see save_yield_threshold's own comment: different
+        projects have different real yield expectations). Surfaced here
+        too, next to every other per-folder default this tab already
+        manages (Set as Default ATA folder, default prober), since that's
+        where an operator looking for "where do I set a default" would
+        naturally check first - the Cassette tab's Entry already
+        auto-saves on edit, this is a second, explicit place to see/set
+        the same value, not a second source of truth for it. Accretech
+        only - Electroglas has no Cassette tab at all.
+        """
+        lf = ttk.LabelFrame(tab, text="Cassette pass-yield default (per ATA folder)",
+                            padding=6)
+        lf.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 4))
+
+        ttk.Label(lf, text="Pass yield ≥").pack(side="left", padx=(0, 2))
+        self._default_yield_var = tk.StringVar(value="95")
+        ttk.Entry(lf, textvariable=self._default_yield_var, width=5).pack(
+            side="left", padx=(0, 2))
+        ttk.Label(lf, text="% to auto-continue, else pause").pack(side="left", padx=(0, 8))
+        ttk.Button(lf, text="⭐ Set Default",
+                  command=self._set_default_yield).pack(side="left", padx=(0, 10))
+
+        self._default_yield_lbl = ttk.Label(lf, text="", foreground="#374151",
+                                            font=("Segoe UI", 8, "italic"))
+        self._default_yield_lbl.pack(side="left")
+        self._update_default_yield_label()
+
+    def _update_default_yield_label(self):
+        lbl = getattr(self, "_default_yield_lbl", None)
+        if lbl is None:
+            return
+        if self._ata_folder:
+            lbl.config(text=f"saved for this folder: {load_yield_threshold(self._ata_folder):g}%",
+                      foreground="#166534")
+        else:
+            lbl.config(text="load an ATA folder first", foreground="#6b7280")
+
+    def _set_default_yield(self):
+        if not self._ata_folder:
+            messagebox.showerror("No ATA Folder", "Load an ATA folder first.")
+            return
+        try:
+            pct = float(self._default_yield_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Value", "Pass yield must be a number.")
+            return
+        save_yield_threshold(self._ata_folder, pct)
+        # Keep the Cassette tab's own Entry in sync immediately, same
+        # session - both are the same setting, not two independent ones.
+        cassette = getattr(self, "cassette_panel", None)
+        if cassette is not None:
+            cassette._yield_folder = self._ata_folder
+            cassette._yield_var.set(f"{pct:g}")
+        self._update_default_yield_label()
+        self.controller.log(
+            f"[SYSTEM] Cassette pass-yield default set to {pct:g}% for "
+            f"'{os.path.basename(self._ata_folder)}'.")
+
     def _prober_choices(self) -> list:
         """[(label, system, bench)] for every prober on both systems."""
         out = [(f"Accretech — {b}", "accretech", b)
@@ -1446,7 +1507,7 @@ class MainLayout(ttk.Frame):
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Internal")
-        tab.rowconfigure(2, weight=1)          # the file list / map split
+        tab.rowconfigure(3, weight=1)          # the file list / map split
         tab.columnconfigure(0, weight=1)
 
         ctrl = ttk.Frame(tab)
@@ -1493,6 +1554,8 @@ class MainLayout(ttk.Frame):
         self._update_default_ata_label()
 
         self._build_default_prober_row(tab)
+        if self._system == "accretech":
+            self._build_default_yield_row(tab)
 
         # Same fix as the Run tab's _exec2_map_source_var: Electroglas has no
         # hardware-extracted map of its own - the legacy "Electroglas" source
@@ -1510,7 +1573,7 @@ class MainLayout(ttk.Frame):
         # the tree feel: folder -> key files / probe cards+recipes per
         # system / subfolders (each expandable) / other root files.
         tree_frame = ttk.Frame(tab)
-        tree_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        tree_frame.grid(row=3, column=0, sticky="nsew", padx=6, pady=(2, 6))
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
 
@@ -2089,6 +2152,9 @@ class MainLayout(ttk.Frame):
         cassette = getattr(self, "cassette_panel", None)
         if cassette is not None and hasattr(cassette, "on_ata_folder_loaded"):
             cassette.on_ata_folder_loaded(folder_path)
+        if hasattr(self, "_default_yield_var"):
+            self._default_yield_var.set(f"{load_yield_threshold(folder_path):g}")
+            self._update_default_yield_label()
 
         self._update_default_ata_label()
         return n_dies
