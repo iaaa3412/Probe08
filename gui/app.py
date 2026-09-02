@@ -123,6 +123,7 @@ class AtomicaDashboard(tk.Tk):
         super().__init__()
         self.title("Electrical Prober")
         self.geometry("1400x800")
+        self.protocol("WM_DELETE_WINDOW", self._on_close_request)
         self._check_machine_config_folder()
         # Self-healing, independent of the dialog above: accretech_probers.yaml
         # is new (this machine's GUI System folder predates it), and
@@ -446,6 +447,14 @@ class AtomicaDashboard(tk.Tk):
     def cmd_set_active_system(self, system):
         if system == self.active_system or system not in self._by_system:
             return
+        if self._any_run_in_progress():
+            messagebox.showwarning(
+                "Run In Progress",
+                "A run (or armed cassette automation) is still going on the "
+                "current system. Stop or finish it before switching to "
+                f"{system.capitalize()} - switching now would pull the "
+                "drivers/ATA folder out from under it mid-run.")
+            return
         carry_over_folder = self.ui._ata_folder
         old_widget = self._displayed_widget
         self.active_system = system
@@ -637,11 +646,23 @@ class AtomicaDashboard(tk.Tk):
         ui = self.ui
         if getattr(ui, "_exec2_running", False):
             return True
+        # CassettePanel never sets a "_running" attribute of its own - the
+        # actual per-wafer run is one of the _exec2_running/eg_run checks
+        # above/below, this only tracks the automation LOOP watching for
+        # wafers to finish (armed, or paused waiting on a yield/error
+        # decision) - all three still mean "don't let go of this folder/
+        # system/window right now" just as much as a run actually moving.
         cassette = getattr(ui, "cassette_panel", None)
-        if cassette is not None and getattr(cassette, "_running", False):
+        if cassette is not None and (
+                getattr(cassette, "_armed", False)
+                or getattr(cassette, "_paused_for_yield", False)
+                or getattr(cassette, "_paused_for_error", False)):
             return True
         accr = getattr(ui, "accr_wafer", None)
         if accr is not None and getattr(accr, "_running", False):
+            return True
+        eg_run = getattr(ui, "eg_pma_run", None)
+        if eg_run is not None and getattr(eg_run, "_running", False):
             return True
         # NanoZ is no longer a MainLayout tab (see gui/nanoz_mode.py) - its
         # panel, when one exists, hangs off the NanoZ-mode container
@@ -655,6 +676,22 @@ class AtomicaDashboard(tk.Tk):
         if nanoz_mode_ui is not None and nanoz_mode_ui.any_running():
             return True
         return False
+
+    def _on_close_request(self):
+        """Bound to the window's WM_DELETE_WINDOW (title-bar X / Alt-F4) -
+        a plain self.destroy() would otherwise kill the process mid-run
+        with no warning, leaving the prober wherever it was and the
+        results file half-written. Only asks when something is actually
+        going; closing an idle window still works with no popup, exactly
+        as before."""
+        if self._any_run_in_progress():
+            if not messagebox.askyesno(
+                    "Run In Progress",
+                    "A run (or armed cassette automation) is still going. "
+                    "Closing now will kill it mid-run without a clean stop.\n\n"
+                    "Close anyway?", icon="warning", default="no"):
+                return
+        self.destroy()
 
     def _set_prober_ready(self, stb):
         self._prober_stb = stb
@@ -1654,6 +1691,14 @@ class AtomicaDashboard(tk.Tk):
 
     def _do_load_ata_folder(self, folder):
         folder_name = os.path.basename(folder)
+        if self._any_run_in_progress():
+            messagebox.showwarning(
+                "Run In Progress",
+                "A run (or armed cassette automation) is still going. Stop "
+                "or finish it before loading a different ATA folder - "
+                "switching now would pull the recipe/wafer map/results out "
+                "from under it mid-run.")
+            return
         self._show_switch_splash(f"Loading ATA folder '{folder_name}'…")
         try:
             n_dies = self.ui.load_ata_folder(folder)

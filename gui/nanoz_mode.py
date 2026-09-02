@@ -117,7 +117,9 @@ class NanozModeLayout(ttk.Frame):
         it misses a run left active on whichever system isn't on screen."""
         for holder in self._holders.values():
             panel = getattr(holder, "nanoz_panel", None)
-            if panel is not None and getattr(panel, "_running", False):
+            if panel is not None and (
+                    getattr(panel, "_running", False)
+                    or getattr(panel, "_cst_armed", False)):
                 return True
         return False
 

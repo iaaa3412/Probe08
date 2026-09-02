@@ -2119,6 +2119,12 @@ class MainLayout(ttk.Frame):
         self._exec2_draw_wafer_map(quiet_if_missing=True)
         self._exec2_reapply_overlay()
         self._refresh_export_formats()
+        self._refresh_cenfire_transfer_button()
+        self._refresh_lamp_push_button()
+        if hasattr(self, "mdb_path_var"):
+            global_mdb = app_settings.load_settings().get("mdb_path", "")
+            self.mdb_path_var.set(mdb_export.load_mdb_path(folder_path, default=global_mdb))
+            self._update_mdb_default_label()
 
         pma_process = getattr(self, "pma_process", None)
         if pma_process is not None:
@@ -7079,14 +7085,31 @@ class MainLayout(ttk.Frame):
         ttk.Button(
             sql_row, text="⭐ Set Default", command=self._set_default_export_format
         ).pack(side="left", padx=(6, 0))
-        ttk.Button(
-            sql_row, text="🗑 Delete", command=self._delete_export_format
-        ).pack(side="left", padx=(6, 0))
+        # Only meaningful for Cenfire - launches the SAME external tool
+        # (references/AzTransfer, its own separate git repo/project) the
+        # same way LabView invokes it after a run, so this is a convenience
+        # shortcut, not a reimplementation - never touch AzTransfer.ps1
+        # itself. Disabled unless a Cenfire ATA folder is loaded (see
+        # _is_cenfire_folder/_refresh_cenfire_transfer_button), so it can't
+        # be pressed against the wrong project's data by mistake.
+        self._cenfire_transfer_btn = ttk.Button(
+            sql_row, text="🚀 Transfer Cenfire", command=self._run_cenfire_transfer,
+            state="disabled")
+        self._cenfire_transfer_btn.pack(side="left", padx=(6, 0))
+        # LaMP's analogue - there is no external tool like AzTransfer for
+        # this one, so this actually does the database push itself (see
+        # mdb_export.push_sql_dump_folder), rather than just launching
+        # something else that already does it. Disabled unless a LaMP ATA
+        # folder is loaded, same reasoning as the Cenfire button above.
+        self._lamp_push_btn = ttk.Button(
+            sql_row, text="📤 Push LaMP SQL Dump", command=self._run_lamp_sql_push,
+            state="disabled")
+        self._lamp_push_btn.pack(side="left", padx=(6, 0))
         # Push straight into an Access database instead of writing a .sql
-        # file for someone to run later. Electroglas only for now: LaMP's
-        # tblLampElectricalMeasurements is the database this exists for.
-        if self._system == "electroglas":
-            self._build_mdb_row(export_frame)
+        # file for someone to run later. Built for both systems - the
+        # target .mdb/table is whatever Export Format + path the operator
+        # picks, not tied to LaMP/Electroglas specifically.
+        self._build_mdb_row(export_frame)
 
         self._export_formats: list = []
         self._export_default_lbl_var = tk.StringVar(value="")
@@ -7166,20 +7189,20 @@ class MainLayout(ttk.Frame):
             side="left", padx=(8, 2))
         ttk.Button(row, text="⬆ Push to DB", command=self._mdb_push).pack(
             side="left", padx=2)
+        ttk.Button(row, text="⭐ Set Default", command=self._set_default_mdb_path).pack(
+            side="left", padx=(8, 2))
         self._mdb_status_var = tk.StringVar(value="")
         ttk.Label(parent, textvariable=self._mdb_status_var, foreground="#6b7280",
+                 font=("Segoe UI", 8), wraplength=620, justify="left").pack(
+                 anchor="w", padx=10, pady=(0, 2))
+        self._mdb_default_lbl_var = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self._mdb_default_lbl_var, foreground="#6b7280",
                  font=("Segoe UI", 8), wraplength=620, justify="left").pack(
                  anchor="w", padx=10, pady=(0, 8))
 
     def _mdb_say(self, text: str):
-        """Status line, or nothing on a system that never built the row.
-
-        The push methods live on MainLayout for both systems but only
-        Electroglas draws the controls, so on Accretech the status var does
-        not exist. Nothing can reach them there through the UI - this just
-        keeps that an inert fact rather than an AttributeError waiting for
-        the first caller who does not know it.
-        """
+        """Status line - guarded with getattr since _mdb_status_var is only
+        ever set once _build_mdb_row actually runs."""
         var = getattr(self, "_mdb_status_var", None)
         if var is not None:
             var.set(text)
@@ -7191,12 +7214,38 @@ class MainLayout(ttk.Frame):
         if not path:
             return
         self.mdb_path_var.set(path)
-        # Remembered globally, not per ATA folder: it is one shared database
-        # for the line, and re-picking it for every lot would be busywork.
+        # Remembered globally as a fallback (starting value before any ATA
+        # folder has set its OWN default via Set Default below) - a fresh
+        # PC/folder with no saved default yet still starts from whatever
+        # was last picked anywhere, instead of blank.
         settings = app_settings.load_settings()
         settings["mdb_path"] = path
         app_settings.save_settings(settings)
         self._mdb_check()
+
+    def _set_default_mdb_path(self):
+        if not self._ata_folder:
+            messagebox.showerror("No ATA Folder",
+                                 "Load an ATA folder first — the default is "
+                                 "saved there (ata_mdb_path.json).")
+            return
+        path = self.mdb_path_var.get().strip()
+        if not path:
+            messagebox.showerror("No Path", "Enter or Browse to an .mdb path first.")
+            return
+        mdb_export.save_mdb_path(self._ata_folder, path)
+        self._update_mdb_default_label()
+        self.controller.log(
+            f"[MDB] Set default Access DB path for this ATA folder: {path}")
+
+    def _update_mdb_default_label(self):
+        var = getattr(self, "_mdb_default_lbl_var", None)
+        if var is None:
+            return
+        folder = getattr(self, "_ata_folder", "") or ""
+        saved = mdb_export.load_mdb_path(folder, default="") if folder else ""
+        var.set(f"⭐ Default for this ATA folder: {saved}" if saved else
+                "No per-folder default set yet — using the global last-picked path.")
 
     def _mdb_format(self):
         fmt = self.get_selected_export_format()
@@ -7471,21 +7520,84 @@ class MainLayout(ttk.Frame):
         self.controller.log(f"[RESULTS] '{fmt['name']}' and export path "
                             f"'{self.export_path_var.get()}' set as default for this project.")
 
-    def _delete_export_format(self):
+    def _is_cenfire_folder(self) -> bool:
+        return bool(self._ata_folder) and os.path.basename(
+            self._ata_folder).lower().startswith("cenfire")
+
+    def _refresh_cenfire_transfer_button(self):
+        btn = getattr(self, "_cenfire_transfer_btn", None)
+        if btn is None:
+            return
+        btn.config(state="normal" if self._is_cenfire_folder() else "disabled")
+
+    def _run_cenfire_transfer(self):
+        # references/AzTransfer is a separate, already-working external
+        # tool (its own git repo/remote) that LabView normally invokes at
+        # the end of a Cenfire test session - this just fires the exact
+        # same command in its own terminal window, nothing reimplemented
+        # or reached into.
+        import subprocess
         from tkinter import messagebox
-        fmt = self.get_selected_export_format()
-        if not fmt:
-            messagebox.showerror("No Format Selected",
-                                 "Pick a format from the Export Format dropdown first.")
+        try:
+            subprocess.Popen(
+                'start "AzTransfer" powershell -ExecutionPolicy Bypass '
+                '-file "C:/AzTransfer/AzTransfer.ps1"', shell=True)
+            self.controller.log(
+                "[RESULTS] Launched AzTransfer (Cenfire data transfer) in "
+                "its own terminal window.")
+        except Exception as exc:
+            messagebox.showerror("Transfer Cenfire",
+                                 f"Could not launch AzTransfer:\n{exc}")
+
+    def _is_lamp_folder(self) -> bool:
+        return bool(self._ata_folder) and os.path.basename(
+            self._ata_folder).lower().startswith("lamp")
+
+    def _refresh_lamp_push_button(self):
+        btn = getattr(self, "_lamp_push_btn", None)
+        if btn is None:
             return
-        if not messagebox.askyesno(
-            "Delete Export Format",
-            f"Delete export format '{fmt['name']}'? This cannot be undone."
-        ):
+        btn.config(state="normal" if self._is_lamp_folder() else "disabled")
+
+    def _run_lamp_sql_push(self):
+        from tkinter import messagebox
+        dump_dir = mdb_export.LAMP_SQL_DUMP_DIR
+        mdb_path = mdb_export.LAMP_MDB_PATH
+        if not os.path.isdir(dump_dir):
+            messagebox.showerror(
+                "Push LaMP SQL Dump", f"Dump folder not found:\n{dump_dir}")
             return
-        xfmt.delete_format(self._ata_folder, fmt["name"], system=self._system)
-        self.controller.log(f"[RESULTS] Deleted export format '{fmt['name']}'.")
-        self._refresh_export_formats()
+        sql_files = [f for f in os.listdir(dump_dir) if f.lower().endswith(".sql")]
+        if not sql_files:
+            messagebox.showinfo(
+                "Push LaMP SQL Dump", f"No .sql files waiting in:\n{dump_dir}")
+            return
+        if not messagebox.askokcancel(
+                "Push LaMP SQL Dump",
+                f"Push {len(sql_files)} .sql file(s) from\n{dump_dir}\n"
+                f"into the database at\n{mdb_path}?\n\n"
+                "Each file's rows are inserted all-or-nothing, then the "
+                "file is moved into a 'Pushed' subfolder so it never gets "
+                "pushed twice. This writes directly into the shared "
+                "database — there is no undo."):
+            return
+        res = mdb_export.push_sql_dump_folder(mdb_path, dump_dir)
+        if res.get("error") and not res["files"]:
+            messagebox.showerror("Push LaMP SQL Dump", res["error"])
+            self.controller.log(f"[LAMP DB] Push failed — {res['error']}")
+            return
+        ok_files = [f for f in res["files"] if f["ok"]]
+        bad_files = [f for f in res["files"] if not f["ok"]]
+        msg = f"Pushed {res['total_rows']} row(s) from {len(ok_files)} file(s)."
+        if bad_files:
+            msg += ("\n" + f"{len(bad_files)} file(s) FAILED and were left "
+                    "in place (not moved, not re-pushed automatically):\n" +
+                    "\n".join(f"  {b['file']}: {b['error']}" for b in bad_files))
+        self.controller.log("[LAMP DB] " + msg.replace("\n", "  "))
+        if bad_files:
+            messagebox.showwarning("Push LaMP SQL Dump", msg)
+        else:
+            messagebox.showinfo("Push LaMP SQL Dump", msg)
 
     def get_selected_export_format(self):
         name = self.export_format_var.get()
@@ -7859,9 +7971,22 @@ class MainLayout(ttk.Frame):
                                 f"{type_var.get()}) to ATA folder.")
             dlg.destroy()
 
+        def delete():
+            if not messagebox.askyesno(
+                "Delete Export Format",
+                f"Delete export format '{existing_fmt['name']}'? This cannot be undone."
+            ):
+                return
+            xfmt.delete_format(self._ata_folder, existing_fmt["name"], system=self._system)
+            self.controller.log(f"[RESULTS] Deleted export format '{existing_fmt['name']}'.")
+            self._refresh_export_formats()
+            dlg.destroy()
+
         btns = ttk.Frame(frm)
         btns.grid(row=14, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         ttk.Button(btns, text="Save Format", command=save).pack(side="left")
+        if existing_fmt is not None:
+            ttk.Button(btns, text="🗑 Delete", command=delete).pack(side="left", padx=(6, 0))
         ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right")
 
         _on_type_change()

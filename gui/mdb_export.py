@@ -30,7 +30,9 @@ something opaque.
 """
 from __future__ import annotations
 
+import json
 import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import export_formats as xfmt
@@ -41,6 +43,33 @@ try:
 except ImportError as _e:  # pragma: no cover - depends on the install
     pyodbc = None
     _PYODBC_ERR = f"{type(_e).__name__}: {_e}"
+
+# Per-ATA-folder default .mdb path - separate from app_settings' global
+# "mdb_path" (still used as the starting value before any folder has ever
+# set its own). Same small-JSON-in-the-folder pattern as
+# cassette_panel.save_yield_threshold/load_yield_threshold.
+MDB_PATH_FILENAME = "ata_mdb_path.json"
+
+
+def save_mdb_path(folder: str, path: str) -> None:
+    fpath = os.path.join(folder, MDB_PATH_FILENAME)
+    try:
+        with open(fpath, "w", encoding="utf-8") as f:
+            json.dump({"mdb_path": path}, f)
+    except OSError:
+        pass
+
+
+def load_mdb_path(folder: str, default: str = "") -> str:
+    fpath = os.path.join(folder, MDB_PATH_FILENAME)
+    if not os.path.isfile(fpath):
+        return default
+    try:
+        with open(fpath, encoding="utf-8") as f:
+            data = json.load(f)
+        return str(data.get("mdb_path", default)) or default
+    except (OSError, ValueError, TypeError):
+        return default
 
 ACCESS_DRIVER_HINT = "Microsoft Access Driver"
 
@@ -210,3 +239,97 @@ def push(path: str, fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
             conn.close()
         except Exception:
             pass
+
+
+# ----------------------------------------------------------------------
+# LAMP SQL DUMP FOLDER -> DATABASE
+#
+# Separate from push() above: those rows come from a run still in memory
+# in the GUI. These come from .sql files someone (or a recipe's own "Save
+# to CSV"-style export) already wrote out to a folder - each file is just
+# plain text, one "INSERT INTO tblLampElectricalMeasurements (...) VALUES
+# (...)" statement per line, no semicolons, no comments (the same shape
+# every LAMP_*.sql export already produced this session). Running this IS
+# how those rows actually reach the shared database - nothing else in this
+# project pushes them there automatically.
+# ----------------------------------------------------------------------
+LAMP_SQL_DUMP_DIR = r"C:\LampDump"
+LAMP_MDB_PATH = r"\\fabserve\ProberStuff\LampElectricalProbeData.mdb"
+
+
+def push_sql_dump_folder(mdb_path: str, dump_dir: str) -> Dict[str, Any]:
+    """Execute every .sql file in dump_dir against the Access database at
+    mdb_path, one file at a time.
+
+    Each file is all-or-nothing (same reasoning as push() above: a file
+    that fails halfway must not leave a partial, undetectable set of rows
+    behind) - a bad file is rolled back and left exactly where it was, for
+    someone to look at. Only a fully-committed file gets moved into
+    dump_dir/Pushed/, so running this again never re-inserts it.
+    """
+    result: Dict[str, Any] = {"ok": False, "files": [], "total_rows": 0, "error": None}
+    if pyodbc is None:
+        result["error"] = f"pyodbc is not installed ({_PYODBC_ERR})"
+        return result
+    if not os.path.isdir(dump_dir):
+        result["error"] = f"Dump folder not found: {dump_dir}"
+        return result
+    sql_files = sorted(f for f in os.listdir(dump_dir)
+                       if f.lower().endswith(".sql")
+                       and os.path.isfile(os.path.join(dump_dir, f)))
+    if not sql_files:
+        result["ok"] = True
+        result["error"] = f"No .sql files waiting in {dump_dir}."
+        return result
+
+    drivers = access_drivers()
+    if not drivers:
+        result["error"] = "No Microsoft Access ODBC driver found on this PC."
+        return result
+
+    try:
+        conn = pyodbc.connect(connection_string(mdb_path, drivers[0]),
+                              timeout=10, autocommit=False)
+    except Exception as exc:
+        result["error"] = f"Could not open {mdb_path}: {exc}"
+        return result
+
+    pushed_dir = os.path.join(dump_dir, "Pushed")
+    try:
+        cur = conn.cursor()
+        for fname in sql_files:
+            fpath = os.path.join(dump_dir, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8-sig") as f:
+                    statements = [ln.strip().rstrip(";")
+                                 for ln in f if ln.strip()]
+                n = 0
+                for stmt in statements:
+                    cur.execute(stmt)
+                    n += 1
+                conn.commit()
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                result["files"].append(
+                    {"file": fname, "ok": False, "rows": 0,
+                     "error": f"{type(exc).__name__}: {exc}"})
+                continue
+            os.makedirs(pushed_dir, exist_ok=True)
+            dest = os.path.join(pushed_dir, fname)
+            if os.path.exists(dest):
+                stem, ext = os.path.splitext(fname)
+                dest = os.path.join(pushed_dir, f"{stem}_{int(time.time())}{ext}")
+            os.replace(fpath, dest)
+            result["files"].append({"file": fname, "ok": True, "rows": n, "error": None})
+            result["total_rows"] += n
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    result["ok"] = all(f["ok"] for f in result["files"])
+    return result
