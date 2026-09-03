@@ -1412,7 +1412,7 @@ class MainLayout(ttk.Frame):
         lf.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 4))
 
         ttk.Label(lf, text="Pass yield ≥").pack(side="left", padx=(0, 2))
-        self._default_yield_var = tk.StringVar(value="95")
+        self._default_yield_var = tk.StringVar(value="0")
         ttk.Entry(lf, textvariable=self._default_yield_var, width=5).pack(
             side="left", padx=(0, 2))
         ttk.Label(lf, text="% to auto-continue, else pause").pack(side="left", padx=(0, 8))
@@ -7731,6 +7731,9 @@ class MainLayout(ttk.Frame):
         append_time_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_time", False))
         ttk.Checkbutton(type_row, text="🕐 + time (_HHMMSS)",
                        variable=append_time_var).pack(side="left", padx=(8, 0))
+        append_recipe_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_recipe", False))
+        ttk.Checkbutton(type_row, text="📋 + recipe name",
+                       variable=append_recipe_var).pack(side="left", padx=(8, 0))
 
         only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
         only_pma_chk = ttk.Checkbutton(
@@ -8060,7 +8063,7 @@ class MainLayout(ttk.Frame):
                 return
             fmt = {"name": name, "table": table, "type": type_var.get(),
                   "requires_die_id": only_pma_var.get(), "append_date": append_date_var.get(),
-                  "append_time": append_time_var.get(),
+                  "append_time": append_time_var.get(), "append_recipe": append_recipe_var.get(),
                   "columns": columns}
             wafer_join = wafer_join_var.get()
             if wafer_join and wafer_join != "_":

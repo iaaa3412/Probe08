@@ -301,7 +301,7 @@ class NanoZPanel(ttk.Frame):
         # window height (Compute Recipe's touchdown windows), the Run tab's
         # position-window box on the map, and the valid range for manually
         # assigning a board's slot (Setup tab's Slot columns, below).
-        ttk.Label(brow, text="Probe head slots:").pack(side="left")
+        ttk.Label(brow, text="Number of dies:").pack(side="left")
         self._probe_height_var = tk.IntVar(value=nzb.DEFAULT_PROBE_HEIGHT)
         self._probe_height_spin = ttk.Spinbox(
             brow, from_=1, to=20, width=4, textvariable=self._probe_height_var,
@@ -1179,10 +1179,13 @@ class NanoZPanel(ttk.Frame):
         # Copies the picked .xlsx into the ATA folder at a fixed name first,
         # then parses/uses THAT copy - the source the user picked (e.g.
         # references/nautilusprobeplan.xlsx) is only ever a template/example,
-        # the folder's own copy is the one Select Plan/Compute Recipe and
-        # future folder reloads actually work from. Does NOT touch
-        # self._shots/build a recipe - Compute Recipe (Run tab) is what
-        # turns a wafer plan into a recipe now.
+        # the folder's own copy is the one Compute Recipe (product/reference
+        # classification) and future folder reloads actually work from.
+        # ☑ Select Plan (Run tab) no longer reads this at all - it tiles
+        # straight off the live wafer map's own real die positions, see
+        # nzb.tile_windows_covering_wafer. Does NOT touch self._shots/build
+        # a recipe - Compute Recipe (Run tab) is what turns a selection
+        # into a recipe.
         try:
             dest = nzb.import_wafer_plan_into_folder(folder, path)
             plan = nzb.load_wafer_plan(dest, probe_height=probe_height)
@@ -1213,7 +1216,7 @@ class NanoZPanel(ttk.Frame):
                   f"dies tall. Physical positions across all touchdowns: "
                   f"{stats['product']} product, "
                   f"{stats['reference']} reference, {stats['off_wafer']} off-wafer. "
-                  f"Use Select Plan (Run tab) to highlight one die per touchdown, then "
+                  f"Use ☑ Select Plan (Run tab) to highlight one die per touchdown, then "
                   f"Compute Recipe to build the recipe.")
             self._log_main(msg)
             self.refresh_eg_anchor_choices()
@@ -1714,22 +1717,31 @@ class NanoZPanel(ttk.Frame):
         return centroid_offset(plan_grid, self.wafer_map.dies.keys())
 
     def _select_plan(self):
-        # Pick the top die of every touchdown in the plan's own touchdown
-        # list, translated into Accretech's coordinate space so they land on
-        # the actual dies shown on this map - not the plan's own numbering.
-        if self._wafer_plan is None:
+        # Does NOT read an imported wafer plan (see nzb.tile_windows_
+        # covering_wafer's own docstring) - purely computed from the LIVE
+        # wafer map's own real (row, col) die positions and the Setup
+        # tab's "Number of dies" window height, tiling 1 x N windows down
+        # each column with no overlap (a window may run off the wafer edge
+        # at a column's end - expected) and picking the top real die of
+        # each. Only ever picks/highlights dies on the map, exactly like
+        # Select All or a manual click - never touches the wafer map or
+        # die IDs, and saves nothing on its own; the operator still saves
+        # (＋ New / 💾 Save) whenever they're ready to, same as any other
+        # touchdown-picking button on this tab.
+        window_height = self._probe_height()
+        die_keys = list(self.wafer_map.dies.keys())
+        if not die_keys:
             messagebox.showerror(
-                "No Wafer Plan",
-                "Import a wafer plan first — Wafer Map tab -> Import Wafer Plan (.xlsx).")
+                "No Wafer Map", "No wafer map is loaded — load an ATA folder first.")
             return
-        row_off, col_off = self._wafer_plan_offset()
-        picks = [(r + row_off, c + col_off) for r, c in self._wafer_plan.touchdowns]
+        picks = nzb.tile_windows_covering_wafer(die_keys, window_height)
         self.wafer_map.set_picked(picks)
         self._on_sites_changed(picks)
         self._log_main(
-            f"NanoZ Run: selected {len(picks)} die(s) — the first die of each touchdown in "
-            f"the imported wafer plan (offset {row_off:+d}/{col_off:+d} onto the Accretech "
-            f"map). Press Compute Recipe to build the recipe from this.")
+            f"NanoZ Run: selected {len(picks)} die(s) — the top die of every "
+            f"{window_height}-tall window tiling the wafer map, no overlap "
+            f"(a window may extend past the wafer edge at a column's end). "
+            f"Press Compute Recipe to build the recipe from this.")
 
     _NZMAP_MAX_VISIBLE_LABELS = 900
 
@@ -2570,7 +2582,7 @@ class NanoZPanel(ttk.Frame):
             side="left", padx=4)
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(bar, text="Pass yield ≥").pack(side="left")
-        self._cst_yield_var = tk.StringVar(value="95")
+        self._cst_yield_var = tk.StringVar(value="0")
         # Which ATA folder this reflects, so an edit knows where to save -
         # see on_ata_folder_loaded/_on_cst_yield_edited. Saved per ATA
         # folder, same reasoning/persistence as the normal Cassette tab's
@@ -2665,7 +2677,7 @@ class NanoZPanel(ttk.Frame):
         try:
             return float(self._cst_yield_var.get())
         except ValueError:
-            return 95.0
+            return 0.0
 
     def _on_cst_yield_edited(self):
         if not self._cst_yield_folder:
@@ -3995,6 +4007,32 @@ class NanoZPanel(ttk.Frame):
             n = self.wafer_map.load_die_list(dies, label="dies")
         else:
             n = self.wafer_map.load_from_ata(folder_path, filename="ata_wafer_map_accretech.csv")
+            # Accretech's own native map file carries no die-ID column at
+            # all (row,col,x_die,y_die,raw_q only - confirmed against the
+            # real file), so without this every label/lookup on this tab
+            # comes back empty even though dies are drawn. The normal
+            # (non-NanoZ) Accretech tab gets its real device IDs from its
+            # own Wafer Builder Overlay instead - reuse THAT SAME result
+            # here rather than re-deriving it, since self._main_layout is
+            # the very same MainLayout instance the normal tab uses (see
+            # nanoz_mode.py), already carrying it once an operator has
+            # pressed Overlay on Map for this folder (there, or via
+            # load_ata_folder's own automatic _exec2_reapply_overlay for
+            # a folder that already had a confirmed offset saved). Keyed
+            # by the SAME (row, col) both wafer maps use - this panel's
+            # own map and the normal tab's both load the identical
+            # ata_wafer_map_accretech.csv, so no offset translation is
+            # needed here (only the separate Wafer Plan grid, see
+            # _wafer_plan_offset, needs that).
+            overlay_ids = getattr(self._main_layout, "_exec2_overlay_die_ids", None)
+            if overlay_ids:
+                self.wafer_map.die_ids.update(overlay_ids)
+                # load_from_ata already ran its own on_redraw (via
+                # _draw_from_die_list) before die_ids was merged in above -
+                # re-run it now so the labels this die_ids update enables
+                # actually get drawn, not just left available for the next
+                # unrelated redraw to happen to pick up.
+                self._redraw_overlay_on_run_map()
         if n:
             self._log_main(f"Wafer map auto-loaded from "
                            f"'{os.path.basename(folder_path)}' — {n} die(s).")
@@ -4996,17 +5034,14 @@ class NanoZPanel(ttk.Frame):
         """Real die ID for a physical (row, col), if any source knows one -
         preferred over the prober's own row/col numbering everywhere a
         measurement is displayed/exported, since that's what the user
-        actually identifies dies by. Checked in priority order: an Overlay
-        match (real IDs matched onto the Accretech grid), then whatever's
-        loaded on the Run tab's own wafer map (CSV/Accretech), then the
+        actually identifies dies by. wafer_map.die_ids already carries the
+        Wafer Builder Overlay match merged in for Accretech (see
+        on_ata_folder_loaded) as well as whatever the CSV/Accretech map
+        file itself provided, so one lookup covers both; falls back to the
         imported wafer plan's Die Map (translated through the same
-        centroid offset Select Plan/Compute Recipe use) - same priority
-        Accretech's own die-ID resolution uses. None if nothing knows an
+        centroid offset Compute Recipe uses). None if nothing knows an
         ID for this die; row/col are still recorded either way, this only
         ever adds an ID on top."""
-        die_id = self.wafer_map.die_ids.get((row, col))
-        if die_id:
-            return die_id
         die_id = self.wafer_map.die_ids.get((row, col))
         if die_id:
             return die_id

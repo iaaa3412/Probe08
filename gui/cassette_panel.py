@@ -26,7 +26,7 @@ def save_yield_threshold(folder: str, pct: float) -> None:
         pass
 
 
-def load_yield_threshold(folder: str, default: float = 95.0) -> float:
+def load_yield_threshold(folder: str, default: float = 0.0) -> float:
     path = os.path.join(folder, YIELD_THRESHOLD_FILENAME)
     if not os.path.isfile(path):
         return default
@@ -140,7 +140,7 @@ class CassettePanel(ttk.Frame):
 
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(bar, text="Pass yield ≥").pack(side="left")
-        self._yield_var = tk.StringVar(value="95")
+        self._yield_var = tk.StringVar(value="0")
         yield_ent = ttk.Entry(bar, textvariable=self._yield_var, width=5)
         yield_ent.pack(side="left", padx=(2, 0))
         # Saved per ATA folder (see on_ata_folder_loaded) - the operator can
@@ -295,7 +295,7 @@ class CassettePanel(ttk.Frame):
         try:
             return float(self._yield_var.get())
         except ValueError:
-            return 95.0
+            return 0.0
 
     def on_ata_folder_loaded(self, folder_path: str):
         """Called from MainLayout.load_ata_folder whenever a folder opens -

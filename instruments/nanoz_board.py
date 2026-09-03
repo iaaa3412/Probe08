@@ -904,6 +904,46 @@ def load_wafer_plan(path, probe_height: int = DEFAULT_PROBE_HEIGHT) -> WaferPlan
                      probe_height=probe_height)
 
 
+def tile_windows_covering_wafer(die_keys, window_height: int) -> list:
+    """The top die of every window needed to cover a wafer map with a 1 x
+    window_height comb (a NanoZ probe head's real physical shape), no
+    overlap, per column - not read from any imported plan, computed
+    straight off the map's own real (row, col) die positions.
+
+    Per column that has at least one real die: tile its rows into
+    consecutive window_height-tall windows starting at that column's own
+    topmost die, continuing past its bottommost die if window_height
+    doesn't divide the column's die count evenly (a window may run off
+    the wafer edge there - that's expected, not an error). Each window
+    contributes the topmost REAL die inside its own row-span; a window
+    whose entire row-span has no real die (fully off-wafer) contributes
+    nothing, since there is nothing there to touch down on.
+
+    die_keys: any iterable of (row, col) tuples (e.g. WaferMapPanel.dies.
+    keys()). Order of the returned list is column-major, top-to-bottom
+    within each column, ascending by column - a plain, deterministic scan
+    order rather than the wafer's own physical layout, which does not
+    matter here since every returned (row, col) is just picked/highlighted
+    on the map, not run in a particular order by this function itself.
+    """
+    window_height = max(1, int(window_height or 1))
+    rows_by_col: dict = {}
+    for r, c in die_keys:
+        rows_by_col.setdefault(c, []).append(r)
+    picks = []
+    for c in sorted(rows_by_col):
+        rows = sorted(rows_by_col[c])
+        rows_set = set(rows)
+        start, max_r = rows[0], rows[-1]
+        while start <= max_r:
+            end = start + window_height - 1
+            top = next((r for r in range(start, end + 1) if r in rows_set), None)
+            if top is not None:
+                picks.append((top, c))
+            start += window_height
+    return picks
+
+
 def classify_die(plan: "WaferPlan", row: int, col: int,
                  row_offset: int = 0, col_offset: int = 0) -> str:
     """Returns 'product', 'reference', or 'off_wafer' for a given (row, col).

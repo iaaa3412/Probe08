@@ -2133,6 +2133,11 @@ class AtomicaDashboard(tk.Tk):
         # its own text reads correctly right up against the timestamp) -
         # stripped here so joining below can't ever double it up into "__".
         name_parts.append((fmt["table"] or "export").strip("_"))
+        if fmt.get("append_recipe"):
+            recipe_panel = getattr(self.ui, "recipe_panel", None)
+            recipe_name = (recipe_panel.get_active_recipe() if recipe_panel else "") or ""
+            if recipe_name and recipe_name != "(unsaved)":
+                name_parts.append(recipe_name)
         if fmt.get("append_date"):
             now = dt.datetime.now()
             name_parts.append(now.strftime("%Y%m%d_%H%M%S") if fmt.get("append_time")
