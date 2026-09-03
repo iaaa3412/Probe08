@@ -7829,6 +7829,31 @@ class MainLayout(ttk.Frame):
         lu_col_col_var = tk.StringVar(value=_lu.get("lookup_col_col", ""))
         lu_our_row_var = tk.StringVar(value=_lu.get("our_row_field", "abs_row"))
         lu_our_col_var = tk.StringVar(value=_lu.get("our_col_field", "abs_col"))
+        # A trusted per-die ID string (e.g. "2-7-7-1") already attached to
+        # the row/group, joined against the lookup file's own ID column -
+        # see export_formats.apply_lookup's own docstring for why this is
+        # preferred over the (row, col) fields below whenever the run
+        # itself already knows which die it measured: a position join only
+        # works when this app's (row, col) grid and the reference file's
+        # own coordinate columns agree on origin/sign/rotation, which nothing
+        # here can verify - a silent mismatch there just looks like "no
+        # match" (or, worse, a WRONG match) rather than an error. Editing
+        # and re-saving a format through this dialog used to always rebuild
+        # "lookup" from only the four (row, col) fields below, even for a
+        # format that had key_field/lookup_key_col set instead - silently
+        # discarding a working ID-based join and replacing it with a
+        # position join that may not even use the same convention.
+        lu_key_field_var = tk.StringVar(value=_lu.get("key_field", ""))
+        lu_key_col_var = tk.StringVar(value=_lu.get("lookup_key_col", ""))
+        lu_row0 = ttk.Frame(lookup_lf)
+        lu_row0.pack(fill="x", padx=6, pady=(4, 2))
+        ttk.Label(lu_row0, text="Or match by a trusted ID string instead — "
+                                "this format's own field:").pack(side="left")
+        ttk.Entry(lu_row0, textvariable=lu_key_field_var, width=14).pack(
+            side="left", padx=(2, 12))
+        ttk.Label(lu_row0, text="against the CSV's own ID column:").pack(side="left")
+        ttk.Entry(lu_row0, textvariable=lu_key_col_var, width=14).pack(
+            side="left", padx=(2, 0))
         lu_row1 = ttk.Frame(lookup_lf)
         lu_row1.pack(fill="x", padx=6, pady=(4, 2))
         ttk.Label(lu_row1, text="CSV filename:").pack(side="left")
@@ -7848,7 +7873,8 @@ class MainLayout(ttk.Frame):
             side="left", padx=(2, 0))
         ttk.Label(lookup_lf, text="Leave CSV filename blank for no lookup table. "
                                   "A column can then use any of that CSV's own "
-                                  "headers as its Source above.",
+                                  "headers as its Source above. If the ID field "
+                                  "above is filled in it wins over row/col matching.",
                  foreground="#6b7280", font=("Segoe UI", 8), wraplength=520,
                  justify="left").pack(anchor="w", padx=6, pady=(0, 4))
 
@@ -8040,7 +8066,18 @@ class MainLayout(ttk.Frame):
             if wafer_join and wafer_join != "_":
                 fmt["wafer_join"] = wafer_join
             lu_file = lu_file_var.get().strip()
-            if lu_file:
+            lu_key_field = lu_key_field_var.get().strip()
+            lu_key_col = lu_key_col_var.get().strip()
+            if lu_file and lu_key_field:
+                # ID-string join wins over row/col matching, matching
+                # apply_lookup's own precedence - see this section's
+                # comment above for why editing this dialog used to
+                # silently destroy a working ID-based lookup.
+                fmt["lookup"] = {
+                    "file": lu_file, "key_field": lu_key_field,
+                    "lookup_key_col": lu_key_col or lu_key_field,
+                }
+            elif lu_file:
                 fmt["lookup"] = {
                     "file": lu_file,
                     "lookup_row_col": lu_row_col_var.get().strip() or "row",
