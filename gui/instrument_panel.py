@@ -7117,6 +7117,8 @@ class MainLayout(ttk.Frame):
         if self._system == "accretech":
             self._export_dir_choices = {
                 "PROBE08 (network)": r"\\prober\NewData\ETL\RAWDATA\PROBE08",
+                "Cenfire-DataDump": r"C:\Cenfire-DataDump",
+                "C:\\data": r"C:\data",
                 "Downloads": self._downloads_dir,
             }
             export_dir_var = tk.StringVar(value="PROBE08 (network)")
@@ -7708,6 +7710,10 @@ class MainLayout(ttk.Frame):
         table_var = tk.StringVar(value=(existing_fmt or {}).get("table", ""))
         ttk.Entry(frm, textvariable=table_var, width=46).grid(
             row=1, column=1, columnspan=3, sticky="w", pady=2)
+        ttk.Label(frm, text="Lot+Wafer join:").grid(row=1, column=4, sticky="e", pady=2)
+        wafer_join_var = tk.StringVar(value=(existing_fmt or {}).get("wafer_join", "_"))
+        ttk.Entry(frm, textvariable=wafer_join_var, width=6).grid(
+            row=1, column=5, sticky="w", pady=2)
 
         ttk.Label(frm, text="Format Type:").grid(row=2, column=0, sticky="e", pady=2)
         type_var = tk.StringVar(value=(existing_fmt or {}).get("type", "sql"))
@@ -7722,6 +7728,9 @@ class MainLayout(ttk.Frame):
         append_date_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_date", False))
         ttk.Checkbutton(type_row, text="📅 Append date to filename (_YYYYMMDD)",
                        variable=append_date_var).pack(side="left", padx=(20, 0))
+        append_time_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_time", False))
+        ttk.Checkbutton(type_row, text="🕐 + time (_HHMMSS)",
+                       variable=append_time_var).pack(side="left", padx=(8, 0))
 
         only_pma_var = tk.BooleanVar(value=(existing_fmt or {}).get("requires_die_id", True))
         only_pma_chk = ttk.Checkbutton(
@@ -8025,7 +8034,11 @@ class MainLayout(ttk.Frame):
                 return
             fmt = {"name": name, "table": table, "type": type_var.get(),
                   "requires_die_id": only_pma_var.get(), "append_date": append_date_var.get(),
+                  "append_time": append_time_var.get(),
                   "columns": columns}
+            wafer_join = wafer_join_var.get()
+            if wafer_join and wafer_join != "_":
+                fmt["wafer_join"] = wafer_join
             lu_file = lu_file_var.get().strip()
             if lu_file:
                 fmt["lookup"] = {

@@ -2119,10 +2119,24 @@ class AtomicaDashboard(tk.Tk):
                 f"this format needs {reason}.")
             return None
         ext = "csv" if fmt_type == "csv" else "sql"
-        name_parts = [current_lot] + ([wafer_id] if wafer_id else []) + [
-            fmt["table"] or "export"]
+        # "Lot+Wafer join" lets a format join them directly (e.g. "-w", to
+        # match Cenfire's LabVIEW-generated "LOTID-wWAFERID" convention)
+        # instead of always splitting them into two separate "_"-joined
+        # name parts - every other format's saved JSON has no "wafer_join"
+        # key at all, so it keeps exactly its previous two-part behavior.
+        wafer_join = fmt.get("wafer_join") or "_"
+        if wafer_join == "_" or not wafer_id:
+            name_parts = [current_lot] + ([wafer_id] if wafer_id else [])
+        else:
+            name_parts = [f"{current_lot}{wafer_join}{wafer_id}"]
+        # A table name is sometimes itself written with a trailing "_" (so
+        # its own text reads correctly right up against the timestamp) -
+        # stripped here so joining below can't ever double it up into "__".
+        name_parts.append((fmt["table"] or "export").strip("_"))
         if fmt.get("append_date"):
-            name_parts.append(dt.date.today().strftime("%Y%m%d"))
+            now = dt.datetime.now()
+            name_parts.append(now.strftime("%Y%m%d_%H%M%S") if fmt.get("append_time")
+                              else now.strftime("%Y%m%d"))
         filepath = os.path.join(export_dir, "_".join(name_parts) + f".{ext}")
 
         ata_folder = getattr(self.ui, "_ata_folder", "") or ""

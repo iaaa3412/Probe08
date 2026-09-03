@@ -459,11 +459,14 @@ class NanoZPanel(ttk.Frame):
         self._recipe_name_cb.pack(side="left", padx=(4, 4))
         self._recipe_name_cb.bind(
             "<<ComboboxSelected>>", lambda _e: self._load_named_recipe())
-        ttk.Button(name_row, text="💾 Save As…", command=self._save_recipe_as).pack(
+        ttk.Button(name_row, text="＋ New", command=self._new_named_recipe).pack(
             side="left", padx=2)
-        ttk.Button(name_row, text="📂 Load", command=lambda: self._load_named_recipe()).pack(
+        ttk.Button(name_row, text="✎ Rename", command=self._rename_named_recipe).pack(
             side="left", padx=2)
         ttk.Button(name_row, text="🗑 Delete", command=self._delete_named_recipe).pack(
+            side="left", padx=2)
+        ttk.Separator(name_row, orient="vertical").pack(side="left", fill="y", padx=6)
+        ttk.Button(name_row, text="💾 Save", command=self._save_named_recipe).pack(
             side="left", padx=2)
         self._recipe_active_lbl = ttk.Label(name_row, text="(no recipe saved yet)",
                                             foreground="#6b7280")
@@ -717,36 +720,83 @@ class NanoZPanel(ttk.Frame):
         self._run_recipe_name_cb.config(values=names)
         self._recipe_name_var.set(self._current_recipe_name or "")
         active_text = (f"active: {self._current_recipe_name}" if self._current_recipe_name
-                      else "(unsaved — 💾 Save As… to keep this recipe)")
+                      else "(unsaved — ＋ New to save this recipe)")
         self._recipe_active_lbl.config(text=active_text)
         self._run_recipe_active_lbl.config(text=active_text)
 
-    def _save_recipe_as(self):
+    # -- New / Rename / Save / Delete - same three-way split the normal
+    # (non-NanoZ) Recipe tab uses: New always asks for a name and starts a
+    # fresh saved recipe (a copy of whatever's currently loaded, same as
+    # RecipePanel._new_recipe); Rename changes the CURRENT recipe's name in
+    # place, keeping its content; Save persists the current shots/touchdowns
+    # under whatever name is already active, with no prompt at all - same
+    # as RecipePanel._save(). Previously this was one "Save As..." button
+    # that always prompted, whether you were naming a brand new recipe or
+    # just persisting an edit to one that already had a name.
+    def _new_named_recipe(self):
         folder = self._nanoz_ata_folder
         if not folder:
             messagebox.showerror("No ATA Folder",
                                  "Load an ATA folder from the toolbar first.")
             return
-        if not self._shots:
-            messagebox.showinfo("No Shots", "Add or import some shots before saving a recipe.")
-            return
-        name = simpledialog.askstring(
-            "Save Recipe", "Recipe name:",
-            initialvalue=self._current_recipe_name or "", parent=self)
+        name = simpledialog.askstring("New Recipe", "Recipe name:", parent=self)
         if not name:
             return
         name = name.strip()
         if not name:
             return
-        if name in nzb.list_recipe_names(folder) and not messagebox.askyesno(
-            "Overwrite Recipe", f"A recipe named '{name}' already exists — overwrite it?"):
+        if name in nzb.list_recipe_names(folder):
+            messagebox.showerror("Duplicate", f"Recipe '{name}' already exists.")
             return
         nzb.save_named_recipe(folder, name, self._shots, wafer_plan_path=self._wafer_plan_path,
                               touchdowns=self._touchdowns)
         self._current_recipe_name = name
+        nzb.set_active_recipe(folder, name)
         self._refresh_recipe_name_cb()
-        self._log_main(f"Recipe saved as '{name}' — {len(self._shots)} shot(s). "
-                       "Will auto-load next time this ATA folder is opened.")
+        self._log_main(f"Created recipe '{name}' — {len(self._shots)} shot(s)"
+                       + (" (copy of whatever was loaded)." if self._shots else "."))
+
+    def _rename_named_recipe(self):
+        folder = self._nanoz_ata_folder
+        old_name = self._current_recipe_name
+        if not folder or not old_name:
+            messagebox.showerror("No Recipe Loaded",
+                                 "Load (or ＋ New) a recipe first — there is nothing "
+                                 "named yet to rename.")
+            return
+        new_name = simpledialog.askstring("Rename Recipe", "New recipe name:",
+                                          initialvalue=old_name, parent=self)
+        if not new_name or new_name == old_name:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            return
+        if new_name in nzb.list_recipe_names(folder):
+            messagebox.showerror("Duplicate", f"Recipe '{new_name}' already exists.")
+            return
+        nzb.save_named_recipe(folder, new_name, self._shots, wafer_plan_path=self._wafer_plan_path,
+                              touchdowns=self._touchdowns)
+        nzb.delete_named_recipe(folder, old_name)
+        self._current_recipe_name = new_name
+        nzb.set_active_recipe(folder, new_name)
+        self._refresh_recipe_name_cb()
+        self._log_main(f"Renamed '{old_name}' -> '{new_name}'.")
+
+    def _save_named_recipe(self):
+        folder = self._nanoz_ata_folder
+        if not folder:
+            messagebox.showerror("No ATA Folder",
+                                 "Load an ATA folder from the toolbar first.")
+            return
+        if not self._current_recipe_name:
+            # Nothing named yet to save into - same starting point as the
+            # normal tab always having at least "(unsaved)" to name via New.
+            self._new_named_recipe()
+            return
+        nzb.save_named_recipe(folder, self._current_recipe_name, self._shots,
+                              wafer_plan_path=self._wafer_plan_path, touchdowns=self._touchdowns)
+        self._refresh_recipe_name_cb()
+        self._log_main(f"Saved '{self._current_recipe_name}' — {len(self._shots)} shot(s).")
 
     def _load_named_recipe(self, name: str | None = None):
         folder = self._nanoz_ata_folder
@@ -986,7 +1036,7 @@ class NanoZPanel(ttk.Frame):
         # behavior the normal (non-NanoZ) Recipe tab's own Take from map
         # selection button already has. Only a brand new, never-yet-named
         # recipe is left unsaved, since there is no name to write to until
-        # the operator picks one via Save As...
+        # the operator picks one via ＋ New.
         active_name = self._current_recipe_name
         if active_name:
             self._persist_recipe()
@@ -996,7 +1046,7 @@ class NanoZPanel(ttk.Frame):
         self._log_main(
             f"Compute Recipe: built {len(shots)} shot(s) from {len(sites)} selected die(s)"
             + (f" and saved to '{active_name}'." if active_name
-               else " — not saved yet, use Save As… on the Recipe tab to keep this."))
+               else " — not saved yet, use ＋ New on the Recipe tab to keep this."))
 
     # -- touchdown list -----------------------------------------------------
     #
@@ -1034,7 +1084,7 @@ class NanoZPanel(ttk.Frame):
         self._log_main(
             f"Touchdown list {verb} {len(touchdowns)} die(s)"
             + (f" — saved to '{self._current_recipe_name}'." if self._current_recipe_name
-               else " — not saved yet, use Save As… to keep this."))
+               else " — not saved yet, use ＋ New on the Recipe tab to keep this."))
 
     def _nz_td_from_map(self):
         picks = list(self.wafer_map.get_picked())
