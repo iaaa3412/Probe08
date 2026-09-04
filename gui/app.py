@@ -735,7 +735,7 @@ class AtomicaDashboard(tk.Tk):
         # and this keeps it out of _find_other_instance_window's title match.
         splash.overrideredirect(True)
         splash.configure(bg="#374558")
-        w, h = 420, 220
+        w, h = 420, 280
         sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
         splash.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
         try:
@@ -747,15 +747,19 @@ class AtomicaDashboard(tk.Tk):
         if os.path.exists(logo_path):
             try:
                 from PIL import Image, ImageTk
-                pil_img = Image.open(logo_path)
-                target_h = 90
+                pil_img = Image.open(logo_path).convert("RGBA")
+                target_h = 150
                 scale = target_h / pil_img.height
                 pil_img = pil_img.resize(
                     (max(1, int(pil_img.width * scale)), target_h))
                 img = ImageTk.PhotoImage(pil_img)
-                lbl_img = tk.Label(splash, image=img, bg="#374558")
+                # bg matches the splash background exactly - the PNG's own
+                # transparent areas are the same colour, so this makes the
+                # edges disappear instead of showing a mismatched box.
+                lbl_img = tk.Label(splash, image=img, bg="#374558", bd=0,
+                                   highlightthickness=0)
                 lbl_img.image = img
-                lbl_img.pack(pady=(30, 12))
+                lbl_img.pack(pady=(20, 8))
             except Exception:
                 pass
         tk.Label(splash, text="Electrical Prober", bg="#374558", fg="#f0a020",
@@ -823,21 +827,27 @@ class AtomicaDashboard(tk.Tk):
         hdr.grid_propagate(False)
         # Atomica logo first (left), Otto logo right after it - two
         # separate files (logo2.jpg / logo_otto.jpg) since the splash
-        # screen only shows the Otto one.
-        for filename, pad in (("logo2.jpg", (10, 4)), ("logo_otto.jpg", (0, 6))):
+        # screen only shows the Otto one. Otto's is a transparent PNG
+        # made to match this bar's own background colour, so the label
+        # bg has to match exactly (#374558, not the old #0E0E0F) for the
+        # transparent edges to actually disappear instead of showing a
+        # mismatched box - and it's sized larger than Atomica's, up near
+        # the 48px header bar's own height.
+        for filename, target_h, pad in (("logo2.jpg", 36, (10, 4)),
+                                        ("logo_otto.jpg", 46, (0, 6))):
             logo_path = os.path.join(os.path.dirname(__file__), filename)
             if not os.path.exists(logo_path):
                 continue
             try:
                 from PIL import Image, ImageTk
-                pil_img = Image.open(logo_path)
-                target_h = 36
+                pil_img = Image.open(logo_path).convert("RGBA")
                 scale = target_h / pil_img.height
                 pil_img = pil_img.resize((max(1, int(pil_img.width * scale)), target_h))
                 img = ImageTk.PhotoImage(pil_img)
-                lbl_img = tk.Label(hdr, image=img, bg="#0E0E0F")
+                lbl_img = tk.Label(hdr, image=img, bg="#374558", bd=0,
+                                   highlightthickness=0)
                 lbl_img.image = img
-                lbl_img.pack(side="left", padx=pad, pady=4)
+                lbl_img.pack(side="left", padx=pad, pady=1)
             except Exception:
                 pass
         tk.Label(hdr, text="Electrical Prober",
