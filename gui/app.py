@@ -735,7 +735,7 @@ class AtomicaDashboard(tk.Tk):
         # and this keeps it out of _find_other_instance_window's title match.
         splash.overrideredirect(True)
         splash.configure(bg="#374558")
-        w, h = 420, 280
+        w, h = 420, 340
         sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
         splash.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
         try:
@@ -748,7 +748,7 @@ class AtomicaDashboard(tk.Tk):
             try:
                 from PIL import Image, ImageTk
                 pil_img = Image.open(logo_path).convert("RGBA")
-                target_h = 150
+                target_h = 210
                 scale = target_h / pil_img.height
                 pil_img = pil_img.resize(
                     (max(1, int(pil_img.width * scale)), target_h))
@@ -822,19 +822,24 @@ class AtomicaDashboard(tk.Tk):
                 pass
 
     def _build_brand_header(self):
-        hdr = tk.Frame(self, bg="#374558", height=48)
+        # Grown from 48 to fit Otto's logo bigger - it was already close
+        # to the old bar height with no room left to grow.
+        hdr = tk.Frame(self, bg="#374558", height=64)
         hdr.grid(row=0, column=0, sticky="ew")
         hdr.grid_propagate(False)
         # Atomica logo first (left), Otto logo right after it - two
         # separate files (logo2.jpg / logo_otto.jpg) since the splash
-        # screen only shows the Otto one. Otto's is a transparent PNG
-        # made to match this bar's own background colour, so the label
-        # bg has to match exactly (#374558, not the old #0E0E0F) for the
-        # transparent edges to actually disappear instead of showing a
-        # mismatched box - and it's sized larger than Atomica's, up near
-        # the 48px header bar's own height.
+        # screen only shows the Otto one. Otto's own file is pre-cropped
+        # to its actual content (gui/logo_otto.jpg, cropped from
+        # references/ottologo3.png's mostly-empty 960x720 canvas down to
+        # its ~496x496 bounding box) so scaling it to a given height
+        # shows a visibly bigger mark instead of mostly resizing blank
+        # margin. Otto's label bg has to match this bar's own background
+        # colour exactly (#374558, not the old #0E0E0F) for its
+        # transparent PNG edges to actually disappear instead of showing
+        # a mismatched box.
         for filename, target_h, pad in (("logo2.jpg", 36, (10, 4)),
-                                        ("logo_otto.jpg", 46, (0, 6))):
+                                        ("logo_otto.jpg", 58, (0, 6))):
             logo_path = os.path.join(os.path.dirname(__file__), filename)
             if not os.path.exists(logo_path):
                 continue
