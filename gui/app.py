@@ -743,7 +743,7 @@ class AtomicaDashboard(tk.Tk):
         except Exception:
             pass
 
-        logo_path = os.path.join(os.path.dirname(__file__), "logo2.jpg")
+        logo_path = os.path.join(os.path.dirname(__file__), "logo_otto.jpg")
         if os.path.exists(logo_path):
             try:
                 from PIL import Image, ImageTk
@@ -821,8 +821,13 @@ class AtomicaDashboard(tk.Tk):
         hdr = tk.Frame(self, bg="#374558", height=48)
         hdr.grid(row=0, column=0, sticky="ew")
         hdr.grid_propagate(False)
-        logo_path = os.path.join(os.path.dirname(__file__), "logo2.jpg")
-        if os.path.exists(logo_path):
+        # Atomica logo first (left), Otto logo right after it - two
+        # separate files (logo2.jpg / logo_otto.jpg) since the splash
+        # screen only shows the Otto one.
+        for filename, pad in (("logo2.jpg", (10, 4)), ("logo_otto.jpg", (0, 6))):
+            logo_path = os.path.join(os.path.dirname(__file__), filename)
+            if not os.path.exists(logo_path):
+                continue
             try:
                 from PIL import Image, ImageTk
                 pil_img = Image.open(logo_path)
@@ -832,7 +837,7 @@ class AtomicaDashboard(tk.Tk):
                 img = ImageTk.PhotoImage(pil_img)
                 lbl_img = tk.Label(hdr, image=img, bg="#0E0E0F")
                 lbl_img.image = img
-                lbl_img.pack(side="left", padx=(10, 6), pady=4)
+                lbl_img.pack(side="left", padx=pad, pady=4)
             except Exception:
                 pass
         tk.Label(hdr, text="Electrical Prober",
