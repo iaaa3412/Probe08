@@ -735,7 +735,7 @@ class AtomicaDashboard(tk.Tk):
         # and this keeps it out of _find_other_instance_window's title match.
         splash.overrideredirect(True)
         splash.configure(bg="#374558")
-        w, h = 420, 340
+        w, h = 420, 260
         sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
         splash.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
         try:
@@ -765,7 +765,7 @@ class AtomicaDashboard(tk.Tk):
         tk.Label(splash, text="Electrical Prober", bg="#374558", fg="#f0a020",
                  font=("Arial", 16)).pack()
         msg_lbl = tk.Label(splash, text=message, bg="#374558", fg="#cbd5e1",
-                           font=("Arial", 9))
+                           font=("Arial", 12))
         msg_lbl.pack(pady=(14, 0))
         splash._msg_label = msg_lbl
         splash.update()
