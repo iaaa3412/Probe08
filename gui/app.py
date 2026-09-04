@@ -748,7 +748,7 @@ class AtomicaDashboard(tk.Tk):
             try:
                 from PIL import Image, ImageTk
                 pil_img = Image.open(logo_path).convert("RGBA")
-                target_h = 210
+                target_h = 140
                 scale = target_h / pil_img.height
                 pil_img = pil_img.resize(
                     (max(1, int(pil_img.width * scale)), target_h))
