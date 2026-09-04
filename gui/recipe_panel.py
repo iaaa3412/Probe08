@@ -830,6 +830,11 @@ def recipes_to_rows(recipes: dict) -> list:
                      # instruments.keithley2400.set_source_clear_auto. Off by
                      # default, opt IN per recipe, same as shortcut above.
                      "fast_current_settle": "1" if rec.get("fast_current_settle") else "",
+                     # Manual mode: see RecipePanel._on_manual_mode_toggle /
+                     # instruments.keithley2400.measure_resistance. Off by
+                     # default, opt IN per recipe, same as shortcut/
+                     # fast_current_settle above.
+                     "manual_mode": "1" if rec.get("manual_mode") else "",
                      "shot_origin_x": "" if origin is None else str(origin[0]),
                      "shot_origin_y": "" if origin is None else str(origin[1])})
         for i, step in enumerate(rec.get("steps", []), 1):
@@ -864,6 +869,7 @@ def rows_to_recipes(rows: list) -> dict:
         recipes.setdefault(name, {"steps": [], "sites": [], "bench": "",
                                   "minor_moves": False, "shortcut": False,
                                   "fast_current_settle": False,
+                                  "manual_mode": False,
                                   "shot_origin": None})
         if kind == "RECIPE":
             bench = (row.get("bench") or "").strip()
@@ -873,6 +879,7 @@ def rows_to_recipes(rows: list) -> dict:
             recipes[name]["shortcut"] = (row.get("shortcut") or "").strip() == "1"
             recipes[name]["fast_current_settle"] = (
                 row.get("fast_current_settle") or "").strip() == "1"
+            recipes[name]["manual_mode"] = (row.get("manual_mode") or "").strip() == "1"
             ox = (row.get("shot_origin_x") or "").strip()
             oy = (row.get("shot_origin_y") or "").strip()
             if ox and oy:
@@ -988,6 +995,19 @@ class RecipePanel(ttk.Frame):
         # own current-measure step genuinely needs auto-clear ON) without
         # being verified on the bench first.
         self._fast_current_settle_var = tk.BooleanVar(value=False)
+
+        # Manual mode: which resistance-measurement mode the Keithley 2400's
+        # measure_resistance() uses - see instruments.keithley2400's own
+        # comment. AUTO (this box unchecked, the default) is correct for
+        # every recipe that has no preceding Force Current step reusing the
+        # same pins (10340/10341, any standalone resistance check) - MANUAL
+        # reuses whatever current was last forced, which is 0 with nothing
+        # forced first, and that was the direct-wiring 0-ohm bug. Off by
+        # default and opt-in PER RECIPE, same reasoning as Shortcut/Skip
+        # auto-clear above - only Maddy TL's Kelvin Resistance step (forces
+        # a current, then reads ohms off the same pins) actually needs it
+        # checked.
+        self._manual_mode_var = tk.BooleanVar(value=False)
 
         self.rowconfigure(2, weight=1)
         self.columnconfigure(0, weight=1)
@@ -1283,6 +1303,24 @@ class RecipePanel(ttk.Frame):
         whether a repeat-config send can be skipped at all. False (the
         safe default) for any recipe that has never had this box checked."""
         return self._shortcut_var.get()
+
+    def _on_manual_mode_toggle(self):
+        rec = self._recipes.get(self._current)
+        if rec is not None:
+            rec["manual_mode"] = self._manual_mode_var.get()
+            card = self._get_active_card()
+            if card:
+                self._save_recipes(card, self._recipes)
+
+    def is_manual_mode(self) -> bool:
+        """Whether the CURRENTLY LOADED recipe has Manual mode checked - read
+        by instrument_panel's resistance-step handler to decide whether the
+        Keithley 2400's measure_resistance() reuses the last-forced current
+        (MANUAL) instead of the instrument's own auto-ranged current source
+        (AUTO). False (the safe default) for any recipe that has never had
+        this box checked - see instruments.keithley2400.measure_resistance's
+        own comment for why AUTO, not MANUAL, is the correct default."""
+        return self._manual_mode_var.get()
 
     def _on_fast_current_settle_toggle(self):
         rec = self._recipes.get(self._current)
@@ -1952,16 +1990,26 @@ class RecipePanel(ttk.Frame):
             variable=self._shortcut_var, command=self._on_shortcut_toggle)
         self._shortcut_chk.grid(row=6, column=3, columnspan=4, sticky="w",
                                 padx=(6, 2), pady=(2, 0))
+        # Manual mode: see this class's own _manual_mode_var comment /
+        # instruments.keithley2400.measure_resistance. Unchecked (AUTO) is
+        # correct for almost every recipe - only check this for one that
+        # forces a specific current then reads ohms off the same pins in
+        # the same step (Maddy TL's Kelvin Resistance).
+        self._manual_mode_chk = ttk.Checkbutton(
+            editor, text="Manual mode (reuse forced current for Ω, Keithley 2400)",
+            variable=self._manual_mode_var, command=self._on_manual_mode_toggle)
+        self._manual_mode_chk.grid(row=6, column=7, columnspan=7, sticky="w",
+                                   padx=(6, 2), pady=(2, 0))
         self._minor_moves_chk = ttk.Checkbutton(
             editor, text="Minor moves (multi-die shot)",
             variable=self._minor_moves_var, command=self._on_minor_moves_toggle)
-        self._minor_moves_chk.grid(row=6, column=7, columnspan=3, sticky="w",
+        self._minor_moves_chk.grid(row=8, column=0, columnspan=3, sticky="w",
                                    padx=(6, 2), pady=(2, 0))
         self._fast_current_settle_chk = ttk.Checkbutton(
             editor, text="Skip auto-clear on Force Current (Keithley 2400 only)",
             variable=self._fast_current_settle_var,
             command=self._on_fast_current_settle_toggle)
-        self._fast_current_settle_chk.grid(row=6, column=10, columnspan=4, sticky="w",
+        self._fast_current_settle_chk.grid(row=8, column=3, columnspan=4, sticky="w",
                                            padx=(6, 2), pady=(2, 0))
         _lbl(4, 6, "Die #:")
         # Which die of the shot this measurement belongs to (Wafer Builder
@@ -3208,6 +3256,7 @@ class RecipePanel(ttk.Frame):
         self._minor_moves_var.set(bool(rec.get("minor_moves")))
         self._shortcut_var.set(bool(rec.get("shortcut")))
         self._fast_current_settle_var.set(bool(rec.get("fast_current_settle")))
+        self._manual_mode_var.set(bool(rec.get("manual_mode")))
         self._shot_origin_btn.config(
             state="normal" if self._minor_moves_var.get() else "disabled")
         self._refresh_shot_origin_label()
@@ -3244,6 +3293,7 @@ class RecipePanel(ttk.Frame):
             self._minor_moves_var.set(False)
             self._shortcut_var.set(False)
             self._fast_current_settle_var.set(False)
+            self._manual_mode_var.set(False)
             self._shot_origin_btn.config(state="disabled")
             self._shot_origin_status_var.set("")
         self._update_default_label()
@@ -3703,6 +3753,7 @@ class RecipePanel(ttk.Frame):
                                     # what was actually saved.
                                     "shortcut": bool(rec.get("shortcut")),
                                     "fast_current_settle": bool(rec.get("fast_current_settle")),
+                                    "manual_mode": bool(rec.get("manual_mode")),
                                     "shot_origin": rec.get("shot_origin")}
                               for name, rec in recipes.items()}
             visible = self._visible_recipe_names()

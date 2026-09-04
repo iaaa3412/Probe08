@@ -229,18 +229,23 @@ class Keithley2400(GPIBInstrument):
         raw = self.query(":READ?")
         return _read_element(raw, 1), _read_element(raw, 0)
 
-    def measure_resistance(self, channel):
-        # MANUAL, not the 2400's own AUTO ohms - AUTO uses the instrument's
-        # OWN internal current source (auto-ranged) instead of whatever
-        # SOUR:CURR was just forced by set_current(), silently ignoring a
-        # recipe's actual current level for a Kelvin/4-wire measurement
-        # like Maddy TL's. Confirmed on the bench as part of the exact
-        # per-die command sequence that measures correctly - omitting this
-        # is the most likely reason a die driven this way read compliance-
-        # clamped garbage (V pinned near the instrument's own default
-        # ceiling, not the recipe's configured voltage limit) starting
-        # from whichever die this was never sent before.
-        self.write(":SENS:RES:MODE MANUAL")
+    def measure_resistance(self, channel, manual=False):
+        # AUTO is the safe default - it uses the instrument's OWN internal
+        # current source (auto-ranged) for the ohms reading, independent of
+        # whatever SOUR:CURR happens to be sitting in the instrument. MANUAL
+        # instead reuses whatever SOUR:CURR was last forced by set_current()
+        # - correct ONLY for a recipe that deliberately forces a specific
+        # current and then immediately reads ohms off the same pins with
+        # this same call (Maddy TL's Kelvin Resistance step, confirmed on
+        # the bench). For every other recipe - anything with no preceding
+        # Force Current step, e.g. a standalone resistance check - SOUR:CURR
+        # is whatever was last left behind (often 0 from *RST), so MANUAL
+        # mode reads a manufactured 0 ohm every time regardless of the
+        # actual pin. That was the direct-wiring 0-ohm bug: this call used
+        # to hardcode MANUAL unconditionally. Now opt-in per recipe (Recipe
+        # tab's "Manual mode" checkbox, RecipePanel.is_manual_mode()) -
+        # blank/unset means AUTO, matching every recipe except Maddy TL.
+        self.write(f":SENS:RES:MODE {'MANUAL' if manual else 'AUTO'}")
         self.write(":SENS:FUNC 'RESISTANCE'")
         self.write(":FORM:ELEM RES")
         return _read_element(self.query(":READ?"), 0)

@@ -6322,9 +6322,23 @@ class MainLayout(ttk.Frame):
                         if not sim and drv and drv.inst:
                             if do_cfg and nplc is not None:
                                 drv.set_nplc(smu_ch, nplc)
+                        # Manual mode (Recipe tab checkbox, off by default -
+                        # see recipe_panel.is_manual_mode): only the
+                        # Keithley 2400 has an AUTO/MANUAL ohms distinction
+                        # (see instruments.keithley2400.measure_resistance's
+                        # own comment) - hasattr(drv, "set_terminals") is
+                        # the same 2400-only marker _exec2_apply_terminals
+                        # already uses, so a 2636B step's call shape is
+                        # untouched.
+                        manual_mode = bool(getattr(self, "recipe_panel", None)
+                                           and self.recipe_panel.is_manual_mode())
+                        def _read_smu_r(_drv=drv, _ch=smu_ch, _manual=manual_mode):
+                            if hasattr(_drv, "set_terminals"):
+                                return _drv.measure_resistance(_ch, manual=_manual)
+                            return _drv.measure_resistance(_ch)
                         read_one = ((lambda: abs(random.gauss(50, 15)))
                                    if sim or not (drv and drv.inst)
-                                   else (lambda: drv.measure_resistance(smu_ch)))
+                                   else _read_smu_r)
                     else:
                         read_one = ((lambda: abs(random.gauss(50, 15)))
                                    if sim or not (drv and drv.inst)
