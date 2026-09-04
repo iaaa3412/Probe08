@@ -6039,6 +6039,27 @@ class MainLayout(ttk.Frame):
         drv = self.controller.drivers.get(key)
         return drv if drv is not None else fallback_driver
 
+    def _exec2_apply_terminals(self, s: dict, drv, sim: bool):
+        """s["terminals"] ("FRONT"/"REAR", set on the Recipe tab only when
+        the step is direct-wired - see recipe_panel._apply_route_state)
+        applied once at the top of this step, before it sources or
+        measures anything. Blank (every step saved before this field
+        existed, and every switch-routed step - the UI disables the
+        control for those) does nothing, same as always. A driver with
+        no set_terminals (anything but Keithley2400 today) just logs and
+        moves on rather than raising - this is a convenience for
+        instruments that support it, not a requirement every driver has
+        to implement."""
+        which = (s.get("terminals") or "").strip().upper()
+        if not which or sim or not drv or not drv.inst:
+            return
+        if not hasattr(drv, "set_terminals"):
+            return
+        try:
+            drv.set_terminals(which)
+        except Exception as e:
+            self._exec2_log(f"[MEASURE]    ⚠ could not set terminals to {which}: {e}")
+
     def _exec2_run_steps_once(self, steps: list = None) -> bool:
         """Run the loaded recipe's steps once, top to bottom, against
         wherever the chuck currently sits.
@@ -6296,6 +6317,7 @@ class MainLayout(ttk.Frame):
                     drv = self._exec2_resolve_instrument(
                         s, "smu" if instrument == "SMU" else "dmm",
                         smu if instrument == "SMU" else dmm)
+                    self._exec2_apply_terminals(s, drv, sim)
                     if instrument == "SMU":
                         if not sim and drv and drv.inst:
                             if do_cfg and nplc is not None:
@@ -6340,6 +6362,7 @@ class MainLayout(ttk.Frame):
                     drv = self._exec2_resolve_instrument(
                         s, "smu" if instrument == "SMU" else "dmm",
                         smu if instrument == "SMU" else dmm)
+                    self._exec2_apply_terminals(s, drv, sim)
                     if instrument == "SMU":
                         if not sim and drv and drv.inst:
                             if do_cfg and nplc is not None:
@@ -6509,6 +6532,7 @@ class MainLayout(ttk.Frame):
                     drv = self._exec2_resolve_instrument(
                         s, "smu" if instrument == "SMU" else "dmm",
                         smu if instrument == "SMU" else dmm)
+                    self._exec2_apply_terminals(s, drv, sim)
                     if instrument == "SMU":
                         if not sim and drv and drv.inst:
                             nplc = self._exec2_nplc_spec(s)

@@ -76,7 +76,18 @@ _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", 
                   # 'instrument' has always meant" - see
                   # instrument_panel._exec2_run_steps_once's
                   # _exec2_resolve_instrument.
-                  "instrument_key")
+                  "instrument_key",
+                  # "" (default - send nothing, every recipe saved before
+                  # this existed), "FRONT", or "REAR" - which physical
+                  # terminals to source/measure from, for an instrument
+                  # that supports switching (Keithley2400.set_terminals;
+                  # see that driver's own comment - a switch-matrix-
+                  # routed probe card is wired to REAR, a direct-wired
+                  # one is typically hand-clipped to FRONT instead).
+                  # Applied once at the top of this step, before it
+                  # sources/measures anything - see
+                  # instrument_panel._exec2_run_steps_once.
+                  "terminals")
 
 # A step is either routed through the switch matrix (pins name the crosspoints
 # / relay channels to close) or wired straight to the probe card by hand. The
@@ -1915,6 +1926,20 @@ class RecipePanel(ttk.Frame):
             variable=self._direct_var, command=self._on_route_toggle)
         self._direct_chk.grid(row=6, column=0, columnspan=3, sticky="w",
                               padx=(6, 2), pady=(2, 0))
+        # Front/Rear terminal select - blank (the default) sends nothing,
+        # same as every recipe saved before this existed. Only meaningful
+        # for an instrument whose driver actually supports switching
+        # (Keithley2400.set_terminals) - harmless no-op logged, not an
+        # error, if the step's resolved driver doesn't have one (see
+        # instrument_panel._exec2_run_steps_once).
+        term_row = ttk.Frame(editor)
+        term_row.grid(row=7, column=0, columnspan=3, sticky="w",
+                      padx=(6, 2), pady=(2, 0))
+        ttk.Label(term_row, text="Terminals:").pack(side="left")
+        self._terminals_cb = ttk.Combobox(
+            term_row, textvariable=self._ed_vars["terminals"],
+            values=("", "FRONT", "REAR"), state="readonly", width=7)
+        self._terminals_cb.pack(side="left", padx=(4, 0))
         # Per-RECIPE toggles (not per-step, unlike everything else in this
         # editor) - moved down here next to Direct Wiring, on the same row,
         # so every checkbox on the tab lives in one place at the bottom
@@ -2364,6 +2389,17 @@ class RecipePanel(ttk.Frame):
         for btn in (getattr(self, "_btn_conn", None),):
             if btn is not None:
                 btn.config(state="disabled" if direct else "normal")
+        # Terminals (Front/Rear) only makes sense for a direct-wired
+        # step - a switch-routed one's physical connection point is
+        # whatever the switch matrix wiring is, not a front/rear panel
+        # choice. Cleared (not just disabled) going back to switch, so a
+        # step doesn't carry a stale FRONT/REAR into a mode it no longer
+        # applies to.
+        term_cb = getattr(self, "_terminals_cb", None)
+        if term_cb is not None:
+            term_cb.config(state="readonly" if direct else "disabled")
+            if not direct:
+                self._ed_vars["terminals"].set("")
 
     def _on_route_toggle(self):
         self._ed_vars["route"].set(
