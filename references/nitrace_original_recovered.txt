@@ -1,0 +1,2254 @@
+1	NI Spy 17.0 Capture File
+2	viWrite
+3	GPIB0::10::INSTRdummyses
+4	status.reset()buf
+5	retCnt
+6	*retCnt
+7	viWrite
+8	GPIB0::10::INSTRdummyses
+9	smua.reset() smub.reset()buf
+10	retCnt
+11	*retCnt
+12	viWrite
+13	GPIB0::10::INSTRdummyses
+14	smub.source.func = smub.OUTPUT_DCAMPSbuf
+15	retCnt
+16	*retCnt
+17	viWrite
+18	GPIB0::10::INSTRdummyses
+19	smub.source.limitv = 7.000000buf
+20	retCnt
+21	*retCnt
+22	viWrite
+23	GPIB0::10::INSTRdummyses
+24	smub.measure.lowrangei = 1.000000E-5buf
+25	retCnt
+26	*retCnt
+27	viWrite
+28	GPIB0::10::INSTRdummyses
+29	smub.measure.lowrangev = 0.010000buf
+30	retCnt
+31	*retCnt
+32	viWrite
+33	GPIB0::10::INSTRdummyses
+34	smub.measure.nplc = 10.000000buf
+35	retCnt
+36	*retCnt
+37	viWrite
+38	GPIB0::10::INSTRdummyses
+39	smub.source.autorangei = 1buf
+40	retCnt
+41	*retCnt
+42	viWrite
+43	GPIB0::10::INSTRdummyses
+44	smub.source.leveli = 0.010000buf
+45	retCnt
+46	*retCnt
+47	viGetAttribute
+48	GPIB0::5::INSTRdummyses
+49	?attributeID
+50	viWriteAsync
+51	GPIB0::5::INSTRdummyses
+52	JY-069X-009
+53	jobId
+54	*jobId
+55	viWaitOnEvent
+56	GPIB0::5::INSTRdummyses
+57	?inEventType
+58	timeout
+59	outEventType
+60	outContext
+61	?*outEventType
+62	*outContext
+63	Completing viWriteAsync
+64	GPIB0::5::INSTRdummyses
+65	jobId
+66	count
+67	JY-069X-009
+68	viGetAttribute
+69	GPIB0::5::INSTR Eventdummyses
+70	?attributeID
+71	viGetAttribute
+72	GPIB0::5::INSTR Eventdummyses
+73	?attributeID
+74	viClose
+75	GPIB0::5::INSTR Eventdummyses
+76	viReadSTB
+77	GPIB0::5::INSTRdummyses
+78	status
+79	*status
+80	viGetAttribute
+81	GPIB0::5::INSTRdummyses
+82	?attributeID
+83	viWriteAsync
+84	GPIB0::5::INSTRdummyses
+85	JY0069X0009
+86	jobId
+87	*jobId
+88	viWaitOnEvent
+89	GPIB0::5::INSTRdummyses
+90	?inEventType
+91	timeout
+92	outEventType
+93	outContext
+94	?*outEventType
+95	*outContext
+96	Completing viWriteAsync
+97	GPIB0::5::INSTRdummyses
+98	jobId
+99	count
+100	JY0069X0009
+101	viGetAttribute
+102	GPIB0::5::INSTR Eventdummyses
+103	?attributeID
+104	viGetAttribute
+105	GPIB0::5::INSTR Eventdummyses
+106	?attributeID
+107	viClose
+108	GPIB0::5::INSTR Eventdummyses
+109	pt:5<bi
+110	viReadSTB
+111	GPIB0::5::INSTRdummyses
+112	status
+113	pt:5<bi
+114	*status
+115	viGetAttribute
+116	GPIB0::5::INSTRdummyses
+117	?attributeID
+118	viWriteAsync
+119	GPIB0::5::INSTRdummyses
+120	jobId
+121	*jobId
+122	viWaitOnEvent
+123	GPIB0::5::INSTRdummyses
+124	?inEventType
+125	timeout
+126	outEventType
+127	outContext
+128	?*outEventType
+129	*outContext
+130	Completing viWriteAsync
+131	GPIB0::5::INSTRdummyses
+132	jobId
+133	count
+134	viGetAttribute
+135	GPIB0::5::INSTR Eventdummyses
+136	?attributeID
+137	viGetAttribute
+138	GPIB0::5::INSTR Eventdummyses
+139	?attributeID
+140	viClose
+141	GPIB0::5::INSTR Eventdummyses
+142	viReadSTB
+143	GPIB0::5::INSTRdummyses
+144	status
+145	*status
+146	viGetAttribute
+147	GPIB0::5::INSTRdummyses
+148	?attributeID
+149	viWriteAsync
+150	GPIB0::5::INSTRdummyses
+151	jobId
+152	*jobId
+153	viWaitOnEvent
+154	GPIB0::5::INSTRdummyses
+155	?inEventType
+156	timeout
+157	outEventType
+158	outContext
+159	?*outEventType
+160	*outContext
+161	Completing viWriteAsync
+162	GPIB0::5::INSTRdummyses
+163	jobId
+164	count
+165	viGetAttribute
+166	GPIB0::5::INSTR Eventdummyses
+167	?attributeID
+168	viGetAttribute
+169	GPIB0::5::INSTR Eventdummyses
+170	?attributeID
+171	viClose
+172	GPIB0::5::INSTR Eventdummyses
+173	viReadSTB
+174	GPIB0::5::INSTRdummyses
+175	status
+176	*status
+177	viGetAttribute
+178	GPIB0::5::INSTRdummyses
+179	?attributeID
+180	viWriteAsync
+181	GPIB0::5::INSTRdummyses
+182	jobId
+183	*jobId
+184	viWaitOnEvent
+185	GPIB0::5::INSTRdummyses
+186	?inEventType
+187	timeout
+188	outEventType
+189	outContext
+190	?*outEventType
+191	*outContext
+192	Completing viWriteAsync
+193	GPIB0::5::INSTRdummyses
+194	jobId
+195	count
+196	viGetAttribute
+197	GPIB0::5::INSTR Eventdummyses
+198	?attributeID
+199	viGetAttribute
+200	GPIB0::5::INSTR Eventdummyses
+201	?attributeID
+202	viClose
+203	GPIB0::5::INSTR Eventdummyses
+204	viGetAttribute
+205	GPIB0::5::INSTRdummyses
+206	?attributeID
+207	viReadAsync
+208	GPIB0::5::INSTRdummyses
+209	jobId
+210	*jobId
+211	viWaitOnEvent
+212	GPIB0::5::INSTRdummyses
+213	?inEventType
+214	timeout
+215	outEventType
+216	outContext
+217	?*outEventType
+218	*outContext
+219	Completing viReadAsync
+220	GPIB0::5::INSTRdummyses
+221	jobId
+222	count
+223	S1Z0W1A1
+224	viGetAttribute
+225	GPIB0::5::INSTR Eventdummyses
+226	?attributeID
+227	viGetAttribute
+228	GPIB0::5::INSTR Eventdummyses
+229	?attributeID
+230	viClose
+231	GPIB0::5::INSTR Eventdummyses
+232	viGetAttribute
+233	GPIB0::5::INSTRdummyses
+234	?attributeID
+235	viWriteAsync
+236	GPIB0::5::INSTRdummyses
+237	jobId
+238	*jobId
+239	viWaitOnEvent
+240	GPIB0::5::INSTRdummyses
+241	?inEventType
+242	timeout
+243	outEventType
+244	outContext
+245	?*outEventType
+246	*outContext
+247	Completing viWriteAsync
+248	GPIB0::5::INSTRdummyses
+249	jobId
+250	count
+251	viGetAttribute
+252	GPIB0::5::INSTR Eventdummyses
+253	?attributeID
+254	viGetAttribute
+255	GPIB0::5::INSTR Eventdummyses
+256	?attributeID
+257	viClose
+258	GPIB0::5::INSTR Eventdummyses
+259	viReadSTB
+260	GPIB0::5::INSTRdummyses
+261	status
+262	*status
+263	viGetAttribute
+264	GPIB0::5::INSTRdummyses
+265	?attributeID
+266	viWriteAsync
+267	GPIB0::5::INSTRdummyses
+268	jobId
+269	*jobId
+270	viWaitOnEvent
+271	GPIB0::5::INSTRdummyses
+272	?inEventType
+273	timeout
+274	outEventType
+275	outContext
+276	?*outEventType
+277	*outContext
+278	Completing viWriteAsync
+279	GPIB0::5::INSTRdummyses
+280	jobId
+281	count
+282	viGetAttribute
+283	GPIB0::5::INSTR Eventdummyses
+284	?attributeID
+285	viGetAttribute
+286	GPIB0::5::INSTR Eventdummyses
+287	?attributeID
+288	viClose
+289	GPIB0::5::INSTR Eventdummyses
+290	viReadSTB
+291	GPIB0::5::INSTRdummyses
+292	status
+293	*status
+294	viGetAttribute
+295	GPIB0::5::INSTRdummyses
+296	?attributeID
+297	viWriteAsync
+298	GPIB0::5::INSTRdummyses
+299	jobId
+300	*jobId
+301	viWaitOnEvent
+302	GPIB0::5::INSTRdummyses
+303	?inEventType
+304	timeout
+305	outEventType
+306	outContext
+307	?*outEventType
+308	*outContext
+309	Completing viWriteAsync
+310	GPIB0::5::INSTRdummyses
+311	jobId
+312	count
+313	viGetAttribute
+314	GPIB0::5::INSTR Eventdummyses
+315	?attributeID
+316	viGetAttribute
+317	GPIB0::5::INSTR Eventdummyses
+318	?attributeID
+319	viClose
+320	GPIB0::5::INSTR Eventdummyses
+321	viGetAttribute
+322	GPIB0::5::INSTRdummyses
+323	?attributeID
+324	viReadAsync
+325	GPIB0::5::INSTRdummyses
+326	jobId
+327	*jobId
+328	viWaitOnEvent
+329	GPIB0::5::INSTRdummyses
+330	?inEventType
+331	timeout
+332	outEventType
+333	outContext
+334	*outEventType
+335	*outContext
+336	viWaitOnEvent
+337	GPIB0::5::INSTRdummyses
+338	?inEventType
+339	timeout
+340	outEventType
+341	outContext
+342	*outEventType
+343	*outContext
+344	viWaitOnEvent
+345	GPIB0::5::INSTRdummyses
+346	?inEventType
+347	timeout
+348	outEventType
+349	outContext
+350	*outEventType
+351	*outContext
+352	viWaitOnEvent
+353	GPIB0::5::INSTRdummyses
+354	?inEventType
+355	timeout
+356	outEventType
+357	outContext
+358	*outEventType
+359	*outContext
+360	viWaitOnEvent
+361	GPIB0::5::INSTRdummyses
+362	?inEventType
+363	timeout
+364	outEventType
+365	outContext
+366	*outEventType
+367	*outContext
+368	viWaitOnEvent
+369	GPIB0::5::INSTRdummyses
+370	?inEventType
+371	timeout
+372	outEventType
+373	outContext
+374	*outEventType
+375	*outContext
+376	viWaitOnEvent
+377	GPIB0::5::INSTRdummyses
+378	?inEventType
+379	timeout
+380	outEventType
+381	outContext
+382	*outEventType
+383	*outContext
+384	viWaitOnEvent
+385	GPIB0::5::INSTRdummyses
+386	?inEventType
+387	timeout
+388	outEventType
+389	outContext
+390	*outEventType
+391	*outContext
+392	viWaitOnEvent
+393	GPIB0::5::INSTRdummyses
+394	?inEventType
+395	timeout
+396	outEventType
+397	outContext
+398	?*outEventType
+399	*outContext
+400	Completing viReadAsync
+401	GPIB0::5::INSTRdummyses
+402	jobId
+403	count
+404	S1Z0W1A1
+405	viGetAttribute
+406	GPIB0::5::INSTR Eventdummyses
+407	?attributeID
+408	viGetAttribute
+409	GPIB0::5::INSTR Eventdummyses
+410	?attributeID
+411	viClose
+412	GPIB0::5::INSTR Eventdummyses
+413	viGetAttribute
+414	GPIB0::5::INSTRdummyses
+415	?attributeID
+416	viWriteAsync
+417	GPIB0::5::INSTRdummyses
+418	jobId
+419	*jobId
+420	viWaitOnEvent
+421	GPIB0::5::INSTRdummyses
+422	?inEventType
+423	timeout
+424	outEventType
+425	outContext
+426	?*outEventType
+427	*outContext
+428	Completing viWriteAsync
+429	GPIB0::5::INSTRdummyses
+430	jobId
+431	count
+432	viGetAttribute
+433	GPIB0::5::INSTR Eventdummyses
+434	?attributeID
+435	viGetAttribute
+436	GPIB0::5::INSTR Eventdummyses
+437	?attributeID
+438	viClose
+439	GPIB0::5::INSTR Eventdummyses
+440	viReadSTB
+441	GPIB0::5::INSTRdummyses
+442	status
+443	*status
+444	viGetAttribute
+445	GPIB0::5::INSTRdummyses
+446	?attributeID
+447	viWriteAsync
+448	GPIB0::5::INSTRdummyses
+449	jobId
+450	*jobId
+451	viWaitOnEvent
+452	GPIB0::5::INSTRdummyses
+453	?inEventType
+454	timeout
+455	outEventType
+456	outContext
+457	?*outEventType
+458	*outContext
+459	Completing viWriteAsync
+460	GPIB0::5::INSTRdummyses
+461	jobId
+462	count
+463	viGetAttribute
+464	GPIB0::5::INSTR Eventdummyses
+465	?attributeID
+466	viGetAttribute
+467	GPIB0::5::INSTR Eventdummyses
+468	?attributeID
+469	viClose
+470	GPIB0::5::INSTR Eventdummyses
+471	viReadSTB
+472	GPIB0::5::INSTRdummyses
+473	status
+474	*status
+475	viGetAttribute
+476	GPIB0::5::INSTRdummyses
+477	?attributeID
+478	viWriteAsync
+479	GPIB0::5::INSTRdummyses
+480	jobId
+481	*jobId
+482	viWaitOnEvent
+483	GPIB0::5::INSTRdummyses
+484	?inEventType
+485	timeout
+486	outEventType
+487	outContext
+488	?*outEventType
+489	*outContext
+490	Completing viWriteAsync
+491	GPIB0::5::INSTRdummyses
+492	jobId
+493	count
+494	viGetAttribute
+495	GPIB0::5::INSTR Eventdummyses
+496	?attributeID
+497	viGetAttribute
+498	GPIB0::5::INSTR Eventdummyses
+499	?attributeID
+500	viClose
+501	GPIB0::5::INSTR Eventdummyses
+502	viGetAttribute
+503	GPIB0::5::INSTRdummyses
+504	?attributeID
+505	viReadAsync
+506	GPIB0::5::INSTRdummyses
+507	jobId
+508	*jobId
+509	viWaitOnEvent
+510	GPIB0::5::INSTRdummyses
+511	?inEventType
+512	timeout
+513	outEventType
+514	outContext
+515	*outEventType
+516	*outContext
+517	viWaitOnEvent
+518	GPIB0::5::INSTRdummyses
+519	?inEventType
+520	timeout
+521	outEventType
+522	outContext
+523	*outEventType
+524	*outContext
+525	viWaitOnEvent
+526	GPIB0::5::INSTRdummyses
+527	?inEventType
+528	timeout
+529	outEventType
+530	outContext
+531	*outEventType
+532	*outContext
+533	viWaitOnEvent
+534	GPIB0::5::INSTRdummyses
+535	?inEventType
+536	timeout
+537	outEventType
+538	outContext
+539	*outEventType
+540	*outContext
+541	viWaitOnEvent
+542	GPIB0::5::INSTRdummyses
+543	?inEventType
+544	timeout
+545	outEventType
+546	outContext
+547	*outEventType
+548	*outContext
+549	viWaitOnEvent
+550	GPIB0::5::INSTRdummyses
+551	?inEventType
+552	timeout
+553	outEventType
+554	outContext
+555	*outEventType
+556	*outContext
+557	viWaitOnEvent
+558	GPIB0::5::INSTRdummyses
+559	?inEventType
+560	timeout
+561	outEventType
+562	outContext
+563	*outEventType
+564	*outContext
+565	viWaitOnEvent
+566	GPIB0::5::INSTRdummyses
+567	?inEventType
+568	timeout
+569	outEventType
+570	outContext
+571	*outEventType
+572	*outContext
+573	viWaitOnEvent
+574	GPIB0::5::INSTRdummyses
+575	?inEventType
+576	timeout
+577	outEventType
+578	outContext
+579	*outEventType
+580	*outContext
+581	viWaitOnEvent
+582	GPIB0::5::INSTRdummyses
+583	?inEventType
+584	timeout
+585	outEventType
+586	outContext
+587	*outEventType
+588	*outContext
+589	viWaitOnEvent
+590	GPIB0::5::INSTRdummyses
+591	?inEventType
+592	timeout
+593	outEventType
+594	outContext
+595	*outEventType
+596	*outContext
+597	viWaitOnEvent
+598	GPIB0::5::INSTRdummyses
+599	?inEventType
+600	timeout
+601	outEventType
+602	outContext
+603	*outEventType
+604	*outContext
+605	viWaitOnEvent
+606	GPIB0::5::INSTRdummyses
+607	?inEventType
+608	timeout
+609	outEventType
+610	outContext
+611	*outEventType
+612	*outContext
+613	viWaitOnEvent
+614	GPIB0::5::INSTRdummyses
+615	?inEventType
+616	timeout
+617	outEventType
+618	outContext
+619	?*outEventType
+620	*outContext
+621	Completing viReadAsync
+622	GPIB0::5::INSTRdummyses
+623	jobId
+624	count
+625	S1Z1W1A1
+626	viGetAttribute
+627	GPIB0::5::INSTR Eventdummyses
+628	?attributeID
+629	viGetAttribute
+630	GPIB0::5::INSTR Eventdummyses
+631	?attributeID
+632	viClose
+633	GPIB0::5::INSTR Eventdummyses
+634	viWrite
+635	GPIB0::16::INSTRdummyses
+636	channel.open("allslots")buf
+637	retCnt
+638	*retCnt
+639	viWrite
+640	GPIB0::16::INSTRdummyses
+641	channel.close("2C11, 4D11, 2E12, 2F01")buf
+642	retCnt
+643	Z<a.N
+644	*retCnt
+645	Z<a.N
+646	viWrite
+647	GPIB0::10::INSTRdummyses
+648	smub.source.output = 1buf
+649	retCnt
+650	*retCnt
+651	viWrite
+652	GPIB0::10::INSTRdummyses
+653	printnumber(smub.measure.v())buf
+654	retCnt
+655	*retCnt
+656	viRead
+657	GPIB0::10::INSTRdummyses
+658	retCnt
+659	7.00061e+00
+660	*retCnt
+661	viWrite
+662	GPIB0::10::INSTRdummyses
+663	printnumber(smub.measure.i())buf
+664	retCnt
+665	*retCnt
+666	viRead
+667	GPIB0::10::INSTRdummyses
+668	retCnt
+669	2.23756e-06
+670	*retCnt
+671	viWrite
+672	GPIB0::10::INSTRdummyses
+673	printnumber(smub.measure.r())buf
+674	retCnt
+675	*retCnt
+676	viRead
+677	GPIB0::10::INSTRdummyses
+678	retCnt
+679	3.13703e+06
+680	*retCnt
+681	viGetAttribute
+682	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+683	?attributeID
+684	viWriteAsync
+685	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+686	MEAS:VOLT?buf
+687	jobId
+688	*jobId
+689	viWaitOnEvent
+690	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+691	?inEventType
+692	timeout
+693	outEventType
+694	outContext
+695	?*outEventType
+696	*outContext
+697	Completing viWriteAsync
+698	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+699	jobId
+700	count
+701	MEAS:VOLT?buf
+702	viGetAttribute
+703	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+704	?attributeID
+705	viGetAttribute
+706	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+707	?attributeID
+708	viClose
+709	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+710	viGetAttribute
+711	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+712	?attributeID
+713	viReadAsync
+714	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+715	jobId
+716	*jobId
+717	viWaitOnEvent
+718	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+719	?inEventType
+720	timeout
+721	outEventType
+722	outContext
+723	?*outEventType
+724	*outContext
+725	Completing viReadAsync
+726	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+727	jobId
+728	count
+729	-2.55945952E-04
+730	viGetAttribute
+731	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+732	?attributeID
+733	viGetAttribute
+734	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+735	?attributeID
+736	viClose
+737	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+738	viGetAttribute
+739	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+740	?attributeID
+741	viWriteAsync
+742	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+743	:SYST:ERR?buf
+744	jobId
+745	*jobId
+746	viWaitOnEvent
+747	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+748	?inEventType
+749	timeout
+750	outEventType
+751	outContext
+752	?*outEventType
+753	*outContext
+754	Completing viWriteAsync
+755	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+756	jobId
+757	count
+758	:SYST:ERR?buf
+759	viGetAttribute
+760	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+761	?attributeID
+762	viGetAttribute
+763	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+764	?attributeID
+765	viClose
+766	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+767	viGetAttribute
+768	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+769	?attributeID
+770	viReadAsync
+771	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+772	jobId
+773	*jobId
+774	viWaitOnEvent
+775	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+776	?inEventType
+777	timeout
+778	outEventType
+779	outContext
+780	?*outEventType
+781	*outContext
+782	Completing viReadAsync
+783	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+784	jobId
+785	count
+786	+0,"No error"
+787	viGetAttribute
+788	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+789	?attributeID
+790	viGetAttribute
+791	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+792	?attributeID
+793	viClose
+794	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+795	viGetAttribute
+796	GPIB0::10::INSTRdummyses
+797	?attributeID
+798	viEnableEvent
+799	GPIB0::10::INSTRdummyses
+800	?eventType
+801	context
+802	viWriteAsync
+803	GPIB0::10::INSTRdummyses
+804	print(smub.source.compliance)buf
+805	jobId
+806	*jobId
+807	viWaitOnEvent
+808	GPIB0::10::INSTRdummyses
+809	?inEventType
+810	timeout
+811	outEventType
+812	outContext
+813	?*outEventType
+814	*outContext
+815	Completing viWriteAsync
+816	GPIB0::10::INSTRdummyses
+817	jobId
+818	count
+819	print(smub.source.compliance)buf
+820	viGetAttribute
+821	GPIB0::10::INSTR Eventdummyses
+822	?attributeID
+823	viGetAttribute
+824	GPIB0::10::INSTR Eventdummyses
+825	?attributeID
+826	viClose
+827	GPIB0::10::INSTR Eventdummyses
+828	viGetAttribute
+829	GPIB0::10::INSTRdummyses
+830	?attributeID
+831	viSetAttribute
+832	GPIB0::10::INSTRdummyses
+833	?attributeID
+834	value
+835	viGetAttribute
+836	GPIB0::10::INSTRdummyses
+837	?attributeID
+838	viReadAsync
+839	GPIB0::10::INSTRdummyses
+840	jobId
+841	*jobId
+842	viWaitOnEvent
+843	GPIB0::10::INSTRdummyses
+844	?inEventType
+845	timeout
+846	outEventType
+847	outContext
+848	?*outEventType
+849	*outContext
+850	Completing viReadAsync
+851	GPIB0::10::INSTRdummyses
+852	jobId
+853	count
+854	viGetAttribute
+855	GPIB0::10::INSTR Eventdummyses
+856	?attributeID
+857	viGetAttribute
+858	GPIB0::10::INSTR Eventdummyses
+859	?attributeID
+860	viClose
+861	GPIB0::10::INSTR Eventdummyses
+862	viSetAttribute
+863	GPIB0::10::INSTRdummyses
+864	?attributeID
+865	value
+866	viWrite
+867	GPIB0::10::INSTRdummyses
+868	smub.source.output = 0buf
+869	retCnt
+870	*retCnt
+871	viWrite
+872	GPIB0::16::INSTRdummyses
+873	channel.open("allslots")buf
+874	retCnt
+875	*retCnt
+876	viGetAttribute
+877	GPIB0::5::INSTRdummyses
+878	?attributeID
+879	viWriteAsync
+880	GPIB0::5::INSTRdummyses
+881	jobId
+882	*jobId
+883	viWaitOnEvent
+884	GPIB0::5::INSTRdummyses
+885	?inEventType
+886	timeout
+887	outEventType
+888	outContext
+889	?*outEventType
+890	*outContext
+891	Completing viWriteAsync
+892	GPIB0::5::INSTRdummyses
+893	jobId
+894	count
+895	viGetAttribute
+896	GPIB0::5::INSTR Eventdummyses
+897	?attributeID
+898	viGetAttribute
+899	GPIB0::5::INSTR Eventdummyses
+900	?attributeID
+901	viClose
+902	GPIB0::5::INSTR Eventdummyses
+903	viReadSTB
+904	GPIB0::5::INSTRdummyses
+905	status
+906	*status
+907	viGetAttribute
+908	GPIB0::5::INSTRdummyses
+909	?attributeID
+910	viWriteAsync
+911	GPIB0::5::INSTRdummyses
+912	JY0069X0008
+913	jobId
+914	*jobId
+915	viWaitOnEvent
+916	GPIB0::5::INSTRdummyses
+917	?inEventType
+918	timeout
+919	outEventType
+920	outContext
+921	?*outEventType
+922	*outContext
+923	Completing viWriteAsync
+924	GPIB0::5::INSTRdummyses
+925	jobId
+926	count
+927	JY0069X0008
+928	viGetAttribute
+929	GPIB0::5::INSTR Eventdummyses
+930	?attributeID
+931	viGetAttribute
+932	GPIB0::5::INSTR Eventdummyses
+933	?attributeID
+934	viClose
+935	GPIB0::5::INSTR Eventdummyses
+936	viReadSTB
+937	GPIB0::5::INSTRdummyses
+938	status
+939	*status
+940	viGetAttribute
+941	GPIB0::5::INSTRdummyses
+942	?attributeID
+943	viWriteAsync
+944	GPIB0::5::INSTRdummyses
+945	jobId
+946	*jobId
+947	viWaitOnEvent
+948	GPIB0::5::INSTRdummyses
+949	?inEventType
+950	timeout
+951	outEventType
+952	outContext
+953	?*outEventType
+954	*outContext
+955	Completing viWriteAsync
+956	GPIB0::5::INSTRdummyses
+957	jobId
+958	count
+959	viGetAttribute
+960	GPIB0::5::INSTR Eventdummyses
+961	?attributeID
+962	viGetAttribute
+963	GPIB0::5::INSTR Eventdummyses
+964	?attributeID
+965	viClose
+966	GPIB0::5::INSTR Eventdummyses
+967	viReadSTB
+968	GPIB0::5::INSTRdummyses
+969	status
+970	*status
+971	viGetAttribute
+972	GPIB0::5::INSTRdummyses
+973	?attributeID
+974	viWriteAsync
+975	GPIB0::5::INSTRdummyses
+976	jobId
+977	*jobId
+978	viWaitOnEvent
+979	GPIB0::5::INSTRdummyses
+980	?inEventType
+981	timeout
+982	outEventType
+983	outContext
+984	?*outEventType
+985	*outContext
+986	Completing viWriteAsync
+987	GPIB0::5::INSTRdummyses
+988	jobId
+989	count
+990	viGetAttribute
+991	GPIB0::5::INSTR Eventdummyses
+992	?attributeID
+993	viGetAttribute
+994	GPIB0::5::INSTR Eventdummyses
+995	?attributeID
+996	viClose
+997	GPIB0::5::INSTR Eventdummyses
+998	viReadSTB
+999	GPIB0::5::INSTRdummyses
+1000	status
+1001	*status
+1002	viGetAttribute
+1003	GPIB0::5::INSTRdummyses
+1004	?attributeID
+1005	viWriteAsync
+1006	GPIB0::5::INSTRdummyses
+1007	jobId
+1008	*jobId
+1009	viWaitOnEvent
+1010	GPIB0::5::INSTRdummyses
+1011	?inEventType
+1012	timeout
+1013	outEventType
+1014	outContext
+1015	?*outEventType
+1016	*outContext
+1017	Completing viWriteAsync
+1018	GPIB0::5::INSTRdummyses
+1019	jobId
+1020	count
+1021	viGetAttribute
+1022	GPIB0::5::INSTR Eventdummyses
+1023	?attributeID
+1024	viGetAttribute
+1025	GPIB0::5::INSTR Eventdummyses
+1026	?attributeID
+1027	viClose
+1028	GPIB0::5::INSTR Eventdummyses
+1029	viGetAttribute
+1030	GPIB0::5::INSTRdummyses
+1031	?attributeID
+1032	viReadAsync
+1033	GPIB0::5::INSTRdummyses
+1034	jobId
+1035	*jobId
+1036	viWaitOnEvent
+1037	GPIB0::5::INSTRdummyses
+1038	?inEventType
+1039	timeout
+1040	outEventType
+1041	outContext
+1042	?*outEventType
+1043	*outContext
+1044	Completing viReadAsync
+1045	GPIB0::5::INSTRdummyses
+1046	jobId
+1047	count
+1048	S1Z0W1A1
+1049	viGetAttribute
+1050	GPIB0::5::INSTR Eventdummyses
+1051	?attributeID
+1052	viGetAttribute
+1053	GPIB0::5::INSTR Eventdummyses
+1054	?attributeID
+1055	viClose
+1056	GPIB0::5::INSTR Eventdummyses
+1057	viGetAttribute
+1058	GPIB0::5::INSTRdummyses
+1059	?attributeID
+1060	viWriteAsync
+1061	GPIB0::5::INSTRdummyses
+1062	jobId
+1063	*jobId
+1064	viWaitOnEvent
+1065	GPIB0::5::INSTRdummyses
+1066	?inEventType
+1067	timeout
+1068	outEventType
+1069	outContext
+1070	?*outEventType
+1071	*outContext
+1072	Completing viWriteAsync
+1073	GPIB0::5::INSTRdummyses
+1074	jobId
+1075	count
+1076	viGetAttribute
+1077	GPIB0::5::INSTR Eventdummyses
+1078	?attributeID
+1079	viGetAttribute
+1080	GPIB0::5::INSTR Eventdummyses
+1081	?attributeID
+1082	viClose
+1083	GPIB0::5::INSTR Eventdummyses
+1084	viReadSTB
+1085	GPIB0::5::INSTRdummyses
+1086	status
+1087	*status
+1088	viGetAttribute
+1089	GPIB0::5::INSTRdummyses
+1090	?attributeID
+1091	viWriteAsync
+1092	GPIB0::5::INSTRdummyses
+1093	jobId
+1094	*jobId
+1095	viWaitOnEvent
+1096	GPIB0::5::INSTRdummyses
+1097	?inEventType
+1098	timeout
+1099	outEventType
+1100	outContext
+1101	?*outEventType
+1102	*outContext
+1103	Completing viWriteAsync
+1104	GPIB0::5::INSTRdummyses
+1105	jobId
+1106	count
+1107	viGetAttribute
+1108	GPIB0::5::INSTR Eventdummyses
+1109	?attributeID
+1110	viGetAttribute
+1111	GPIB0::5::INSTR Eventdummyses
+1112	?attributeID
+1113	viClose
+1114	GPIB0::5::INSTR Eventdummyses
+1115	viReadSTB
+1116	GPIB0::5::INSTRdummyses
+1117	status
+1118	*status
+1119	viGetAttribute
+1120	GPIB0::5::INSTRdummyses
+1121	?attributeID
+1122	viWriteAsync
+1123	GPIB0::5::INSTRdummyses
+1124	jobId
+1125	*jobId
+1126	viWaitOnEvent
+1127	GPIB0::5::INSTRdummyses
+1128	?inEventType
+1129	timeout
+1130	outEventType
+1131	outContext
+1132	?*outEventType
+1133	*outContext
+1134	Completing viWriteAsync
+1135	GPIB0::5::INSTRdummyses
+1136	jobId
+1137	count
+1138	viGetAttribute
+1139	GPIB0::5::INSTR Eventdummyses
+1140	?attributeID
+1141	viGetAttribute
+1142	GPIB0::5::INSTR Eventdummyses
+1143	?attributeID
+1144	viClose
+1145	GPIB0::5::INSTR Eventdummyses
+1146	viGetAttribute
+1147	GPIB0::5::INSTRdummyses
+1148	?attributeID
+1149	viReadAsync
+1150	GPIB0::5::INSTRdummyses
+1151	jobId
+1152	*jobId
+1153	viWaitOnEvent
+1154	GPIB0::5::INSTRdummyses
+1155	?inEventType
+1156	timeout
+1157	outEventType
+1158	outContext
+1159	*outEventType
+1160	*outContext
+1161	viWaitOnEvent
+1162	GPIB0::5::INSTRdummyses
+1163	?inEventType
+1164	timeout
+1165	outEventType
+1166	outContext
+1167	*outEventType
+1168	*outContext
+1169	viWaitOnEvent
+1170	GPIB0::5::INSTRdummyses
+1171	?inEventType
+1172	timeout
+1173	outEventType
+1174	outContext
+1175	*outEventType
+1176	*outContext
+1177	viWaitOnEvent
+1178	GPIB0::5::INSTRdummyses
+1179	?inEventType
+1180	timeout
+1181	outEventType
+1182	outContext
+1183	*outEventType
+1184	*outContext
+1185	viWaitOnEvent
+1186	GPIB0::5::INSTRdummyses
+1187	?inEventType
+1188	timeout
+1189	outEventType
+1190	outContext
+1191	*outEventType
+1192	*outContext
+1193	viWaitOnEvent
+1194	GPIB0::5::INSTRdummyses
+1195	?inEventType
+1196	timeout
+1197	outEventType
+1198	outContext
+1199	*outEventType
+1200	*outContext
+1201	viWaitOnEvent
+1202	GPIB0::5::INSTRdummyses
+1203	?inEventType
+1204	timeout
+1205	outEventType
+1206	outContext
+1207	*outEventType
+1208	*outContext
+1209	viWaitOnEvent
+1210	GPIB0::5::INSTRdummyses
+1211	?inEventType
+1212	timeout
+1213	outEventType
+1214	outContext
+1215	*outEventType
+1216	*outContext
+1217	viWaitOnEvent
+1218	GPIB0::5::INSTRdummyses
+1219	?inEventType
+1220	timeout
+1221	outEventType
+1222	outContext
+1223	*outEventType
+1224	*outContext
+1225	viWaitOnEvent
+1226	GPIB0::5::INSTRdummyses
+1227	?inEventType
+1228	timeout
+1229	outEventType
+1230	outContext
+1231	*outEventType
+1232	*outContext
+1233	viWaitOnEvent
+1234	GPIB0::5::INSTRdummyses
+1235	?inEventType
+1236	timeout
+1237	outEventType
+1238	outContext
+1239	*outEventType
+1240	*outContext
+1241	viWaitOnEvent
+1242	GPIB0::5::INSTRdummyses
+1243	?inEventType
+1244	timeout
+1245	outEventType
+1246	outContext
+1247	*outEventType
+1248	*outContext
+1249	viWaitOnEvent
+1250	GPIB0::5::INSTRdummyses
+1251	?inEventType
+1252	timeout
+1253	outEventType
+1254	outContext
+1255	*outEventType
+1256	*outContext
+1257	viWaitOnEvent
+1258	GPIB0::5::INSTRdummyses
+1259	?inEventType
+1260	timeout
+1261	outEventType
+1262	outContext
+1263	?*outEventType
+1264	*outContext
+1265	Completing viReadAsync
+1266	GPIB0::5::INSTRdummyses
+1267	jobId
+1268	count
+1269	S1Z1W1A1
+1270	viGetAttribute
+1271	GPIB0::5::INSTR Eventdummyses
+1272	?attributeID
+1273	viGetAttribute
+1274	GPIB0::5::INSTR Eventdummyses
+1275	?attributeID
+1276	viClose
+1277	GPIB0::5::INSTR Eventdummyses
+1278	viWrite
+1279	GPIB0::16::INSTRdummyses
+1280	channel.open("allslots")buf
+1281	retCnt
+1282	*retCnt
+1283	viWrite
+1284	GPIB0::16::INSTRdummyses
+1285	channel.close("2C11, 4D11, 2E12, 2F01")buf
+1286	retCnt
+1287	*retCnt
+1288	viWrite
+1289	GPIB0::10::INSTRdummyses
+1290	smub.source.output = 1buf
+1291	retCnt
+1292	*retCnt
+1293	viWrite
+1294	GPIB0::10::INSTRdummyses
+1295	printnumber(smub.measure.v())buf
+1296	retCnt
+1297	*retCnt
+1298	viRead
+1299	GPIB0::10::INSTRdummyses
+1300	retCnt
+1301	7.00081e+00
+1302	*retCnt
+1303	viWrite
+1304	GPIB0::10::INSTRdummyses
+1305	printnumber(smub.measure.i())buf
+1306	retCnt
+1307	*retCnt
+1308	viRead
+1309	GPIB0::10::INSTRdummyses
+1310	retCnt
+1311	2.21968e-06
+1312	*retCnt
+1313	viWrite
+1314	GPIB0::10::INSTRdummyses
+1315	printnumber(smub.measure.r())buf
+1316	retCnt
+1317	*retCnt
+1318	viRead
+1319	GPIB0::10::INSTRdummyses
+1320	retCnt
+1321	3.15052e+06
+1322	*retCnt
+1323	viGetAttribute
+1324	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1325	?attributeID
+1326	viWriteAsync
+1327	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1328	MEAS:VOLT?buf
+1329	jobId
+1330	*jobId
+1331	viWaitOnEvent
+1332	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1333	?inEventType
+1334	timeout
+1335	outEventType
+1336	outContext
+1337	?*outEventType
+1338	*outContext
+1339	Completing viWriteAsync
+1340	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1341	jobId
+1342	count
+1343	MEAS:VOLT?buf
+1344	viGetAttribute
+1345	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1346	?attributeID
+1347	viGetAttribute
+1348	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1349	?attributeID
+1350	viClose
+1351	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1352	viGetAttribute
+1353	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1354	?attributeID
+1355	viReadAsync
+1356	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1357	jobId
+1358	*jobId
+1359	viWaitOnEvent
+1360	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1361	?inEventType
+1362	timeout
+1363	outEventType
+1364	outContext
+1365	?*outEventType
+1366	*outContext
+1367	Completing viReadAsync
+1368	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1369	jobId
+1370	count
+1371	-4.74731868E-05
+1372	viGetAttribute
+1373	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1374	?attributeID
+1375	viGetAttribute
+1376	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1377	?attributeID
+1378	viClose
+1379	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1380	viGetAttribute
+1381	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1382	?attributeID
+1383	viWriteAsync
+1384	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1385	:SYST:ERR?buf
+1386	jobId
+1387	*jobId
+1388	viWaitOnEvent
+1389	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1390	?inEventType
+1391	timeout
+1392	outEventType
+1393	outContext
+1394	?*outEventType
+1395	*outContext
+1396	Completing viWriteAsync
+1397	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1398	jobId
+1399	count
+1400	:SYST:ERR?buf
+1401	viGetAttribute
+1402	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1403	?attributeID
+1404	viGetAttribute
+1405	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1406	?attributeID
+1407	viClose
+1408	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1409	viGetAttribute
+1410	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1411	?attributeID
+1412	viReadAsync
+1413	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1414	jobId
+1415	*jobId
+1416	viWaitOnEvent
+1417	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1418	?inEventType
+1419	timeout
+1420	outEventType
+1421	outContext
+1422	?*outEventType
+1423	*outContext
+1424	Completing viReadAsync
+1425	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1426	jobId
+1427	count
+1428	+0,"No error"
+1429	viGetAttribute
+1430	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1431	?attributeID
+1432	viGetAttribute
+1433	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1434	?attributeID
+1435	viClose
+1436	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1437	viGetAttribute
+1438	GPIB0::10::INSTRdummyses
+1439	?attributeID
+1440	viWriteAsync
+1441	GPIB0::10::INSTRdummyses
+1442	print(smub.source.compliance)buf
+1443	jobId
+1444	*jobId
+1445	viWaitOnEvent
+1446	GPIB0::10::INSTRdummyses
+1447	?inEventType
+1448	timeout
+1449	outEventType
+1450	outContext
+1451	?*outEventType
+1452	*outContext
+1453	Completing viWriteAsync
+1454	GPIB0::10::INSTRdummyses
+1455	jobId
+1456	count
+1457	print(smub.source.compliance)buf
+1458	viGetAttribute
+1459	GPIB0::10::INSTR Eventdummyses
+1460	?attributeID
+1461	viGetAttribute
+1462	GPIB0::10::INSTR Eventdummyses
+1463	?attributeID
+1464	viClose
+1465	GPIB0::10::INSTR Eventdummyses
+1466	viGetAttribute
+1467	GPIB0::10::INSTRdummyses
+1468	?attributeID
+1469	viSetAttribute
+1470	GPIB0::10::INSTRdummyses
+1471	?attributeID
+1472	value
+1473	viGetAttribute
+1474	GPIB0::10::INSTRdummyses
+1475	?attributeID
+1476	viReadAsync
+1477	GPIB0::10::INSTRdummyses
+1478	jobId
+1479	*jobId
+1480	viWaitOnEvent
+1481	GPIB0::10::INSTRdummyses
+1482	?inEventType
+1483	timeout
+1484	outEventType
+1485	outContext
+1486	?*outEventType
+1487	*outContext
+1488	Completing viReadAsync
+1489	GPIB0::10::INSTRdummyses
+1490	jobId
+1491	count
+1492	viGetAttribute
+1493	GPIB0::10::INSTR Eventdummyses
+1494	?attributeID
+1495	viGetAttribute
+1496	GPIB0::10::INSTR Eventdummyses
+1497	?attributeID
+1498	viClose
+1499	GPIB0::10::INSTR Eventdummyses
+1500	viSetAttribute
+1501	GPIB0::10::INSTRdummyses
+1502	?attributeID
+1503	value
+1504	viWrite
+1505	GPIB0::10::INSTRdummyses
+1506	smub.source.output = 0buf
+1507	retCnt
+1508	*retCnt
+1509	viWrite
+1510	GPIB0::16::INSTRdummyses
+1511	channel.open("allslots")buf
+1512	retCnt
+1513	*retCnt
+1514	viGetAttribute
+1515	GPIB0::5::INSTRdummyses
+1516	?attributeID
+1517	viWriteAsync
+1518	GPIB0::5::INSTRdummyses
+1519	jobId
+1520	*jobId
+1521	viWaitOnEvent
+1522	GPIB0::5::INSTRdummyses
+1523	?inEventType
+1524	timeout
+1525	outEventType
+1526	outContext
+1527	?*outEventType
+1528	*outContext
+1529	Completing viWriteAsync
+1530	GPIB0::5::INSTRdummyses
+1531	jobId
+1532	count
+1533	viGetAttribute
+1534	GPIB0::5::INSTR Eventdummyses
+1535	?attributeID
+1536	viGetAttribute
+1537	GPIB0::5::INSTR Eventdummyses
+1538	?attributeID
+1539	viClose
+1540	GPIB0::5::INSTR Eventdummyses
+1541	viReadSTB
+1542	GPIB0::5::INSTRdummyses
+1543	status
+1544	*status
+1545	viGetAttribute
+1546	GPIB0::5::INSTRdummyses
+1547	?attributeID
+1548	viWriteAsync
+1549	GPIB0::5::INSTRdummyses
+1550	JY0069X0000
+1551	jobId
+1552	*jobId
+1553	viWaitOnEvent
+1554	GPIB0::5::INSTRdummyses
+1555	?inEventType
+1556	timeout
+1557	outEventType
+1558	outContext
+1559	?*outEventType
+1560	*outContext
+1561	Completing viWriteAsync
+1562	GPIB0::5::INSTRdummyses
+1563	jobId
+1564	count
+1565	JY0069X0000
+1566	viGetAttribute
+1567	GPIB0::5::INSTR Eventdummyses
+1568	?attributeID
+1569	viGetAttribute
+1570	GPIB0::5::INSTR Eventdummyses
+1571	?attributeID
+1572	viClose
+1573	GPIB0::5::INSTR Eventdummyses
+1574	viReadSTB
+1575	GPIB0::5::INSTRdummyses
+1576	status
+1577	*status
+1578	viGetAttribute
+1579	GPIB0::5::INSTRdummyses
+1580	?attributeID
+1581	viWriteAsync
+1582	GPIB0::5::INSTRdummyses
+1583	jobId
+1584	*jobId
+1585	viWaitOnEvent
+1586	GPIB0::5::INSTRdummyses
+1587	?inEventType
+1588	timeout
+1589	outEventType
+1590	outContext
+1591	?*outEventType
+1592	*outContext
+1593	Completing viWriteAsync
+1594	GPIB0::5::INSTRdummyses
+1595	jobId
+1596	count
+1597	viGetAttribute
+1598	GPIB0::5::INSTR Eventdummyses
+1599	?attributeID
+1600	viGetAttribute
+1601	GPIB0::5::INSTR Eventdummyses
+1602	?attributeID
+1603	viClose
+1604	GPIB0::5::INSTR Eventdummyses
+1605	viReadSTB
+1606	GPIB0::5::INSTRdummyses
+1607	status
+1608	*status
+1609	viGetAttribute
+1610	GPIB0::5::INSTRdummyses
+1611	?attributeID
+1612	viWriteAsync
+1613	GPIB0::5::INSTRdummyses
+1614	jobId
+1615	*jobId
+1616	viWaitOnEvent
+1617	GPIB0::5::INSTRdummyses
+1618	?inEventType
+1619	timeout
+1620	outEventType
+1621	outContext
+1622	?*outEventType
+1623	*outContext
+1624	Completing viWriteAsync
+1625	GPIB0::5::INSTRdummyses
+1626	jobId
+1627	count
+1628	viGetAttribute
+1629	GPIB0::5::INSTR Eventdummyses
+1630	?attributeID
+1631	viGetAttribute
+1632	GPIB0::5::INSTR Eventdummyses
+1633	?attributeID
+1634	viClose
+1635	GPIB0::5::INSTR Eventdummyses
+1636	viReadSTB
+1637	GPIB0::5::INSTRdummyses
+1638	status
+1639	*status
+1640	viGetAttribute
+1641	GPIB0::5::INSTRdummyses
+1642	?attributeID
+1643	viWriteAsync
+1644	GPIB0::5::INSTRdummyses
+1645	jobId
+1646	*jobId
+1647	viWaitOnEvent
+1648	GPIB0::5::INSTRdummyses
+1649	?inEventType
+1650	timeout
+1651	outEventType
+1652	outContext
+1653	?*outEventType
+1654	*outContext
+1655	Completing viWriteAsync
+1656	GPIB0::5::INSTRdummyses
+1657	jobId
+1658	count
+1659	viGetAttribute
+1660	GPIB0::5::INSTR Eventdummyses
+1661	?attributeID
+1662	viGetAttribute
+1663	GPIB0::5::INSTR Eventdummyses
+1664	?attributeID
+1665	viClose
+1666	GPIB0::5::INSTR Eventdummyses
+1667	viGetAttribute
+1668	GPIB0::5::INSTRdummyses
+1669	?attributeID
+1670	viReadAsync
+1671	GPIB0::5::INSTRdummyses
+1672	jobId
+1673	*jobId
+1674	viWaitOnEvent
+1675	GPIB0::5::INSTRdummyses
+1676	?inEventType
+1677	timeout
+1678	outEventType
+1679	outContext
+1680	?*outEventType
+1681	*outContext
+1682	Completing viReadAsync
+1683	GPIB0::5::INSTRdummyses
+1684	jobId
+1685	count
+1686	S1Z0W1A1
+1687	viGetAttribute
+1688	GPIB0::5::INSTR Eventdummyses
+1689	?attributeID
+1690	viGetAttribute
+1691	GPIB0::5::INSTR Eventdummyses
+1692	?attributeID
+1693	viClose
+1694	GPIB0::5::INSTR Eventdummyses
+1695	viGetAttribute
+1696	GPIB0::5::INSTRdummyses
+1697	?attributeID
+1698	viWriteAsync
+1699	GPIB0::5::INSTRdummyses
+1700	jobId
+1701	*jobId
+1702	viWaitOnEvent
+1703	GPIB0::5::INSTRdummyses
+1704	?inEventType
+1705	timeout
+1706	outEventType
+1707	outContext
+1708	?*outEventType
+1709	*outContext
+1710	Completing viWriteAsync
+1711	GPIB0::5::INSTRdummyses
+1712	jobId
+1713	count
+1714	viGetAttribute
+1715	GPIB0::5::INSTR Eventdummyses
+1716	?attributeID
+1717	viGetAttribute
+1718	GPIB0::5::INSTR Eventdummyses
+1719	?attributeID
+1720	viClose
+1721	GPIB0::5::INSTR Eventdummyses
+1722	viReadSTB
+1723	GPIB0::5::INSTRdummyses
+1724	status
+1725	*status
+1726	viGetAttribute
+1727	GPIB0::5::INSTRdummyses
+1728	?attributeID
+1729	viWriteAsync
+1730	GPIB0::5::INSTRdummyses
+1731	jobId
+1732	*jobId
+1733	viWaitOnEvent
+1734	GPIB0::5::INSTRdummyses
+1735	?inEventType
+1736	timeout
+1737	outEventType
+1738	outContext
+1739	?*outEventType
+1740	*outContext
+1741	Completing viWriteAsync
+1742	GPIB0::5::INSTRdummyses
+1743	jobId
+1744	count
+1745	viGetAttribute
+1746	GPIB0::5::INSTR Eventdummyses
+1747	?attributeID
+1748	viGetAttribute
+1749	GPIB0::5::INSTR Eventdummyses
+1750	?attributeID
+1751	viClose
+1752	GPIB0::5::INSTR Eventdummyses
+1753	viReadSTB
+1754	GPIB0::5::INSTRdummyses
+1755	status
+1756	*status
+1757	viGetAttribute
+1758	GPIB0::5::INSTRdummyses
+1759	?attributeID
+1760	viWriteAsync
+1761	GPIB0::5::INSTRdummyses
+1762	jobId
+1763	*jobId
+1764	viWaitOnEvent
+1765	GPIB0::5::INSTRdummyses
+1766	?inEventType
+1767	timeout
+1768	outEventType
+1769	outContext
+1770	?*outEventType
+1771	*outContext
+1772	Completing viWriteAsync
+1773	GPIB0::5::INSTRdummyses
+1774	jobId
+1775	count
+1776	viGetAttribute
+1777	GPIB0::5::INSTR Eventdummyses
+1778	?attributeID
+1779	viGetAttribute
+1780	GPIB0::5::INSTR Eventdummyses
+1781	?attributeID
+1782	viClose
+1783	GPIB0::5::INSTR Eventdummyses
+1784	viGetAttribute
+1785	GPIB0::5::INSTRdummyses
+1786	?attributeID
+1787	viReadAsync
+1788	GPIB0::5::INSTRdummyses
+1789	jobId
+1790	*jobId
+1791	viWaitOnEvent
+1792	GPIB0::5::INSTRdummyses
+1793	?inEventType
+1794	timeout
+1795	outEventType
+1796	outContext
+1797	*outEventType
+1798	*outContext
+1799	viWaitOnEvent
+1800	GPIB0::5::INSTRdummyses
+1801	?inEventType
+1802	timeout
+1803	outEventType
+1804	outContext
+1805	*outEventType
+1806	*outContext
+1807	viWaitOnEvent
+1808	GPIB0::5::INSTRdummyses
+1809	?inEventType
+1810	timeout
+1811	outEventType
+1812	outContext
+1813	*outEventType
+1814	*outContext
+1815	viWaitOnEvent
+1816	GPIB0::5::INSTRdummyses
+1817	?inEventType
+1818	timeout
+1819	outEventType
+1820	outContext
+1821	*outEventType
+1822	*outContext
+1823	viWaitOnEvent
+1824	GPIB0::5::INSTRdummyses
+1825	?inEventType
+1826	timeout
+1827	outEventType
+1828	outContext
+1829	*outEventType
+1830	*outContext
+1831	viWaitOnEvent
+1832	GPIB0::5::INSTRdummyses
+1833	?inEventType
+1834	timeout
+1835	outEventType
+1836	outContext
+1837	*outEventType
+1838	*outContext
+1839	viWaitOnEvent
+1840	GPIB0::5::INSTRdummyses
+1841	?inEventType
+1842	timeout
+1843	outEventType
+1844	outContext
+1845	*outEventType
+1846	*outContext
+1847	viWaitOnEvent
+1848	GPIB0::5::INSTRdummyses
+1849	?inEventType
+1850	timeout
+1851	outEventType
+1852	outContext
+1853	*outEventType
+1854	*outContext
+1855	viWaitOnEvent
+1856	GPIB0::5::INSTRdummyses
+1857	?inEventType
+1858	timeout
+1859	outEventType
+1860	outContext
+1861	*outEventType
+1862	*outContext
+1863	viWaitOnEvent
+1864	GPIB0::5::INSTRdummyses
+1865	?inEventType
+1866	timeout
+1867	outEventType
+1868	outContext
+1869	*outEventType
+1870	*outContext
+1871	viWaitOnEvent
+1872	GPIB0::5::INSTRdummyses
+1873	?inEventType
+1874	timeout
+1875	outEventType
+1876	outContext
+1877	*outEventType
+1878	*outContext
+1879	viWaitOnEvent
+1880	GPIB0::5::INSTRdummyses
+1881	?inEventType
+1882	timeout
+1883	outEventType
+1884	outContext
+1885	*outEventType
+1886	*outContext
+1887	viWaitOnEvent
+1888	GPIB0::5::INSTRdummyses
+1889	?inEventType
+1890	timeout
+1891	outEventType
+1892	outContext
+1893	*outEventType
+1894	*outContext
+1895	viWaitOnEvent
+1896	GPIB0::5::INSTRdummyses
+1897	?inEventType
+1898	timeout
+1899	outEventType
+1900	outContext
+1901	*outEventType
+1902	*outContext
+1903	viWaitOnEvent
+1904	GPIB0::5::INSTRdummyses
+1905	?inEventType
+1906	timeout
+1907	outEventType
+1908	outContext
+1909	?*outEventType
+1910	*outContext
+1911	Completing viReadAsync
+1912	GPIB0::5::INSTRdummyses
+1913	jobId
+1914	count
+1915	S1Z1W1A1
+1916	viGetAttribute
+1917	GPIB0::5::INSTR Eventdummyses
+1918	?attributeID
+1919	viGetAttribute
+1920	GPIB0::5::INSTR Eventdummyses
+1921	?attributeID
+1922	viClose
+1923	GPIB0::5::INSTR Eventdummyses
+1924	viWrite
+1925	GPIB0::16::INSTRdummyses
+1926	channel.open("allslots")buf
+1927	retCnt
+1928	*retCnt
+1929	viWrite
+1930	GPIB0::16::INSTRdummyses
+1931	channel.close("2C11, 4D11, 2E12, 2F01")buf
+1932	retCnt
+1933	*retCnt
+1934	viWrite
+1935	GPIB0::10::INSTRdummyses
+1936	smub.source.output = 1buf
+1937	retCnt
+1938	*retCnt
+1939	viWrite
+1940	GPIB0::10::INSTRdummyses
+1941	printnumber(smub.measure.v())buf
+1942	retCnt
+1943	*retCnt
+1944	viRead
+1945	GPIB0::10::INSTRdummyses
+1946	retCnt
+1947	7.00085e+00
+1948	*retCnt
+1949	viWrite
+1950	GPIB0::10::INSTRdummyses
+1951	printnumber(smub.measure.i())buf
+1952	retCnt
+1953	*retCnt
+1954	viRead
+1955	GPIB0::10::INSTRdummyses
+1956	retCnt
+1957	2.23160e-06
+1958	*retCnt
+1959	viWrite
+1960	GPIB0::10::INSTRdummyses
+1961	printnumber(smub.measure.r())buf
+1962	retCnt
+1963	*retCnt
+1964	viRead
+1965	GPIB0::10::INSTRdummyses
+1966	retCnt
+1967	3.14716e+06
+1968	*retCnt
+1969	viGetAttribute
+1970	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1971	?attributeID
+1972	viWriteAsync
+1973	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1974	MEAS:VOLT?buf
+1975	jobId
+1976	*jobId
+1977	viWaitOnEvent
+1978	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1979	?inEventType
+1980	timeout
+1981	outEventType
+1982	outContext
+1983	?*outEventType
+1984	*outContext
+1985	Completing viWriteAsync
+1986	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+1987	jobId
+1988	count
+1989	MEAS:VOLT?buf
+1990	viGetAttribute
+1991	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1992	?attributeID
+1993	viGetAttribute
+1994	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1995	?attributeID
+1996	viClose
+1997	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+1998	viGetAttribute
+1999	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2000	?attributeID
+2001	viReadAsync
+2002	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2003	jobId
+2004	*jobId
+2005	viWaitOnEvent
+2006	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2007	?inEventType
+2008	timeout
+2009	outEventType
+2010	outContext
+2011	?*outEventType
+2012	*outContext
+2013	Completing viReadAsync
+2014	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2015	jobId
+2016	count
+2017	+1.07940839E-04
+2018	viGetAttribute
+2019	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2020	?attributeID
+2021	viGetAttribute
+2022	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2023	?attributeID
+2024	viClose
+2025	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2026	viGetAttribute
+2027	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2028	?attributeID
+2029	viWriteAsync
+2030	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2031	:SYST:ERR?buf
+2032	jobId
+2033	*jobId
+2034	viWaitOnEvent
+2035	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2036	?inEventType
+2037	timeout
+2038	outEventType
+2039	outContext
+2040	?*outEventType
+2041	*outContext
+2042	Completing viWriteAsync
+2043	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2044	jobId
+2045	count
+2046	:SYST:ERR?buf
+2047	viGetAttribute
+2048	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2049	?attributeID
+2050	viGetAttribute
+2051	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2052	?attributeID
+2053	viClose
+2054	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2055	viGetAttribute
+2056	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2057	?attributeID
+2058	viReadAsync
+2059	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2060	jobId
+2061	*jobId
+2062	viWaitOnEvent
+2063	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2064	?inEventType
+2065	timeout
+2066	outEventType
+2067	outContext
+2068	?*outEventType
+2069	*outContext
+2070	Completing viReadAsync
+2071	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2072	jobId
+2073	count
+2074	+0,"No error"
+2075	viGetAttribute
+2076	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2077	?attributeID
+2078	viGetAttribute
+2079	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2080	?attributeID
+2081	viClose
+2082	USB0::0x2A8D::0x1301::MY57216618::INSTR Eventdummyses
+2083	viGetAttribute
+2084	GPIB0::10::INSTRdummyses
+2085	?attributeID
+2086	viWriteAsync
+2087	GPIB0::10::INSTRdummyses
+2088	print(smub.source.compliance)buf
+2089	jobId
+2090	*jobId
+2091	viWaitOnEvent
+2092	GPIB0::10::INSTRdummyses
+2093	?inEventType
+2094	timeout
+2095	outEventType
+2096	outContext
+2097	?*outEventType
+2098	*outContext
+2099	Completing viWriteAsync
+2100	GPIB0::10::INSTRdummyses
+2101	jobId
+2102	count
+2103	print(smub.source.compliance)buf
+2104	viGetAttribute
+2105	GPIB0::10::INSTR Eventdummyses
+2106	?attributeID
+2107	viGetAttribute
+2108	GPIB0::10::INSTR Eventdummyses
+2109	?attributeID
+2110	viClose
+2111	GPIB0::10::INSTR Eventdummyses
+2112	viGetAttribute
+2113	GPIB0::10::INSTRdummyses
+2114	?attributeID
+2115	viSetAttribute
+2116	GPIB0::10::INSTRdummyses
+2117	?attributeID
+2118	value
+2119	viGetAttribute
+2120	GPIB0::10::INSTRdummyses
+2121	?attributeID
+2122	viReadAsync
+2123	GPIB0::10::INSTRdummyses
+2124	jobId
+2125	*jobId
+2126	viWaitOnEvent
+2127	GPIB0::10::INSTRdummyses
+2128	?inEventType
+2129	timeout
+2130	outEventType
+2131	outContext
+2132	?*outEventType
+2133	*outContext
+2134	Completing viReadAsync
+2135	GPIB0::10::INSTRdummyses
+2136	jobId
+2137	count
+2138	viGetAttribute
+2139	GPIB0::10::INSTR Eventdummyses
+2140	?attributeID
+2141	viGetAttribute
+2142	GPIB0::10::INSTR Eventdummyses
+2143	?attributeID
+2144	viClose
+2145	GPIB0::10::INSTR Eventdummyses
+2146	viSetAttribute
+2147	GPIB0::10::INSTRdummyses
+2148	?attributeID
+2149	value
+2150	viWrite
+2151	GPIB0::10::INSTRdummyses
+2152	smub.source.output = 0buf
+2153	retCnt
+2154	*retCnt
+2155	viWrite
+2156	GPIB0::16::INSTRdummyses
+2157	channel.open("allslots")buf
+2158	retCnt
+2159	*retCnt
+2160	viGetAttribute
+2161	GPIB0::5::INSTRdummyses
+2162	?attributeID
+2163	viWriteAsync
+2164	GPIB0::5::INSTRdummyses
+2165	jobId
+2166	*jobId
+2167	viWaitOnEvent
+2168	GPIB0::5::INSTRdummyses
+2169	?inEventType
+2170	timeout
+2171	outEventType
+2172	outContext
+2173	?*outEventType
+2174	*outContext
+2175	Completing viWriteAsync
+2176	GPIB0::5::INSTRdummyses
+2177	jobId
+2178	count
+2179	viGetAttribute
+2180	GPIB0::5::INSTR Eventdummyses
+2181	?attributeID
+2182	viGetAttribute
+2183	GPIB0::5::INSTR Eventdummyses
+2184	?attributeID
+2185	viClose
+2186	GPIB0::5::INSTR Eventdummyses
+2187	viReadSTB
+2188	GPIB0::5::INSTRdummyses
+2189	status
+2190	*status
+2191	viGetAttribute
+2192	?attributeID
+2193	viSetAttribute
+2194	?attributeID
+2195	value
+2196	viFindRsrc
+2197	rmSesn
+2198	?*exp
+2199	findList
+2200	retcount
+2201	rsrcName
+2202	*findList
+2203	*retcount
+2204	PXI0::MEMACCrsrcName
+2205	viFindNext
+2206	findList
+2207	rsrcName
+2208	USB0::0x2A8D::0x1301::MY57216618::INSTRrsrcName
+2209	viFindNext
+2210	findList
+2211	rsrcName
+2212	ASRL1::INSTRrsrcName
+2213	viFindNext
+2214	findList
+2215	rsrcName
+2216	ASRL2::INSTRrsrcName
+2217	viFindNext
+2218	findList
+2219	rsrcName
+2220	ASRL3::INSTRrsrcName
+2221	viFindNext
+2222	findList
+2223	rsrcName
+2224	GPIB0::INTFCrsrcName
+2225	viFindNext
+2226	findList
+2227	rsrcName
+2228	GPIB0::5::INSTRrsrcName
+2229	viFindNext
+2230	findList
+2231	rsrcName
+2232	GPIB0::10::INSTRrsrcName
+2233	viFindNext
+2234	findList
+2235	rsrcName
+2236	GPIB0::12::INSTRrsrcName
+2237	viFindNext
+2238	findList
+2239	rsrcName
+2240	GPIB0::16::INSTRrsrcName
+2241	viClose
+2242	viSetAttribute
+2243	?attributeID
+2244	value
+2245	viClose
+2246	USB0::0x2A8D::0x1301::MY57216618::INSTRdummyses
+2247	viClose
+2248	GPIB0::5::INSTRdummyses
+2249	viClose
+2250	GPIB0::10::INSTRdummyses
+2251	viClose
+2252	GPIB0::16::INSTRdummyses
+2253	viClose
+2254	
