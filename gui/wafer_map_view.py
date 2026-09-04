@@ -1916,6 +1916,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                        "minor_moves": bool(rec.get("minor_moves")),
                        "shortcut": bool(rec.get("shortcut")),
                        "fast_current_settle": bool(rec.get("fast_current_settle")),
+                       "manual_mode": bool(rec.get("manual_mode")),
                        "shot_origin": rec.get("shot_origin")}
                 for name, rec in self._card_recipes.get(self._current, {}).items()}
 
@@ -1947,6 +1948,7 @@ class ProbeCardWiringFrame(ttk.LabelFrame):
                    # reload (a restart, a different PC opening the same
                    # ATA folder, ...) came back unchecked.
                    "fast_current_settle": bool(rec.get("fast_current_settle")),
+                   "manual_mode": bool(rec.get("manual_mode")),
                    "shot_origin": rec.get("shot_origin")}
             for name, rec in recipes.items()}
         path = self._card_src.get(card)
