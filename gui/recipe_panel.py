@@ -65,7 +65,18 @@ _STEP_FIELDS   = ("name", "type", "mode", "instrument", "chan", "target", "hi", 
                   # hand, bypassing the switchbox entirely - so it closes no
                   # channels and needs no pin numbers, because the pins are
                   # not what routes it. See ROUTE_DIRECT.
-                  "route")
+                  "route",
+                  # Which SPECIFIC fitted slot to use when more than one
+                  # instrument of "instrument"'s family (SMU/DMM) is fitted
+                  # at once (a second SMU added via Setup tab's + Add
+                  # Instrument, or Electroglas's 3458A + E1326B VXI both
+                  # fitted) - the controller.drivers key, e.g. "smu_2" or
+                  # "dmm_vxi". Blank (the default, and every recipe saved
+                  # before this field existed) means "whichever slot
+                  # 'instrument' has always meant" - see
+                  # instrument_panel._exec2_run_steps_once's
+                  # _exec2_resolve_instrument.
+                  "instrument_key")
 
 # A step is either routed through the switch matrix (pins name the crosspoints
 # / relay channels to close) or wired straight to the probe card by hand. The
@@ -303,6 +314,7 @@ def _normalize_step(step: dict) -> dict:
         step["his"] = step["los"] = ""
     if t == "delay":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
+        step["instrument_key"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
@@ -311,6 +323,7 @@ def _normalize_step(step: dict) -> dict:
         return step
     if t == "open":
         step["mode"] = step["chan"] = step["instrument"] = ""
+        step["instrument_key"] = ""
         step["hi"] = step["lo"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
@@ -319,6 +332,7 @@ def _normalize_step(step: dict) -> dict:
         return step
     if t == "passfail":
         step["mode"] = step["chan"] = step["instrument"] = ""
+        step["instrument_key"] = ""
         step["hi"] = step["lo"] = step["conn"] = ""
         step["level"] = step["limit"] = step["shape"] = step["freq"] = ""
         step["avg_count"] = step["avg_delay"] = step["nplc"] = step["settle_delay"] = ""
@@ -326,6 +340,7 @@ def _normalize_step(step: dict) -> dict:
         return step
     if t == "picture":
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
+        step["instrument_key"] = ""
         step["hi"] = step["lo"] = step["conn"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
@@ -336,6 +351,7 @@ def _normalize_step(step: dict) -> dict:
         # Die # is the one field that matters - see _STEP_TYPES - everything
         # else here routes/measures nothing.
         step["mode"] = step["chan"] = step["target"] = step["instrument"] = ""
+        step["instrument_key"] = ""
         step["hi"] = step["lo"] = step["conn"] = step["level"] = ""
         step["limit"] = step["shape"] = step["freq"] = ""
         step["min"] = step["max"] = ""
@@ -375,6 +391,11 @@ def _normalize_step(step: dict) -> dict:
     # would silently reintroduce the unavailable instrument.
     if step["instrument"] and step["instrument"] not in options:
         step["instrument"] = _default_instrument(t, step["mode"])
+        # A specific-slot pick only ever makes sense for the family it
+        # was picked under - once that family itself was invalid and got
+        # reset, a leftover instrument_key would silently point at the
+        # WRONG family's slot instead of just falling back cleanly.
+        step["instrument_key"] = ""
     instrument = step["instrument"]
 
     if t == "wave":
@@ -1773,10 +1794,21 @@ class RecipePanel(ttk.Frame):
         self._mode_cb.grid(row=0, column=5, sticky="w")
         self._mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
         _lbl(0, 6, "Instr:")
-        self._instr_cb = ttk.Combobox(editor, textvariable=self._ed_vars["instrument"],
-                                      values=self._instrument_choices, state="readonly", width=6)
+        # Displays "SMU (Keithley2636B)" etc, and - only when more than one
+        # instrument of a family is actually fitted at once - one entry per
+        # slot so a step can target a specific one. Purely a display layer:
+        # the combobox is NOT bound to _ed_vars["instrument"] directly, that
+        # stays the real stored family string exactly as before (every
+        # other reader of _ed_vars["instrument"]/step["instrument"] is
+        # unaffected) - see _refresh_instrument_dropdown/
+        # _on_instrument_display_selected.
+        self._instr_label_map: dict = {}
+        self._instr_display_var = tk.StringVar()
+        self._instr_cb = ttk.Combobox(editor, textvariable=self._instr_display_var,
+                                      values=(), state="readonly", width=26)
         self._instr_cb.grid(row=0, column=7, sticky="w")
-        self._instr_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_type_change())
+        self._instr_cb.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_instrument_display_selected())
 
         _lbl(1, 0, "Chan:")
         self._chan_cb = ttk.Combobox(editor, textvariable=self._ed_vars["chan"],
@@ -2068,6 +2100,8 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["mode"].set("")
             self._ed_vars["chan"].set("")
             self._ed_vars["instrument"].set("")
+            self._ed_vars["instrument_key"].set("")
+            self._instr_display_var.set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
             self._update_target_calc_hint()
@@ -2076,6 +2110,8 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["mode"].set("")
             self._ed_vars["chan"].set("")
             self._ed_vars["instrument"].set("")
+            self._ed_vars["instrument_key"].set("")
+            self._instr_display_var.set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets, "disabled")
             if not self._ed_vars["level"].get():
@@ -2086,6 +2122,8 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["mode"].set("")
             self._ed_vars["chan"].set("")
             self._ed_vars["instrument"].set("")
+            self._ed_vars["instrument_key"].set("")
+            self._instr_display_var.set("")
             self._mode_cb.config(state="disabled")
             _set(self._pin_widgets + self._conn_widgets + [self._level_ent], "disabled")
             self._update_target_calc_hint()
@@ -2094,6 +2132,8 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["mode"].set("")
             self._ed_vars["chan"].set("")
             self._ed_vars["instrument"].set("")
+            self._ed_vars["instrument_key"].set("")
+            self._instr_display_var.set("")
             self._mode_cb.config(state="disabled")
             self._target_cb.config(state="normal")
             self._refresh_target_values()
@@ -2104,6 +2144,8 @@ class RecipePanel(ttk.Frame):
             self._ed_vars["mode"].set("")
             self._ed_vars["chan"].set("")
             self._ed_vars["instrument"].set("")
+            self._ed_vars["instrument_key"].set("")
+            self._instr_display_var.set("")
             self._mode_cb.config(state="disabled")
             self._target_cb.config(state="normal")
             self._refresh_target_values()
@@ -2128,10 +2170,14 @@ class RecipePanel(ttk.Frame):
         options = tuple(o for o in _instrument_options(t, mode) if o in self._instrument_choices)
         if t == "wave":
             self._ed_vars["instrument"].set("WGEN")
+            self._instr_cb.config(state="readonly")
+            self._refresh_instrument_dropdown(("WGEN",))
         else:
-            self._instr_cb.config(state="readonly", values=options)
+            self._instr_cb.config(state="readonly")
             if self._ed_vars["instrument"].get() not in options:
                 self._ed_vars["instrument"].set(_default_instrument(t, mode))
+                self._ed_vars["instrument_key"].set("")
+            self._refresh_instrument_dropdown(options)
         instrument = self._ed_vars["instrument"].get()
 
         if t == "wave":
@@ -2199,6 +2245,67 @@ class RecipePanel(ttk.Frame):
             self._route_defaulted_for = instrument
         self._apply_route_state()
         self._update_target_calc_hint()
+
+    def _refresh_instrument_dropdown(self, options):
+        """Rebuild self._instr_cb's displayed choices from `options` (the
+        valid instrument FAMILIES for the step's current type/mode, e.g.
+        ("SMU", "DMM")) - each shown with its model name, and, only when a
+        family has more than one instrument fitted at once (a second SMU
+        added via Setup tab's + Add Instrument, or Electroglas's 3458A +
+        E1326B VXI both fitted), one entry per slot so a step can target a
+        specific one.
+
+        Purely a display layer - self._ed_vars["instrument"] (the family)
+        is unaffected and every other reader of it still sees exactly what
+        it always has. self._ed_vars["instrument_key"] only ever gets a
+        non-blank value here when the operator actually picks one of the
+        per-slot entries below; a family with a single fitted instrument
+        never sets it, so every recipe saved on a single-instrument bench
+        looks identical to one saved before this feature existed. See
+        controller.slots_for_family (app.py) for what builds `options`'
+        per-family (key, model, display) list."""
+        self._instr_label_map = {}
+        labels = []
+        for family in options:
+            try:
+                slots = self.controller.slots_for_family(family)
+            except Exception:
+                slots = []
+            if not slots:
+                label = family
+                self._instr_label_map[label] = (family, "")
+                labels.append(label)
+            elif len(slots) == 1:
+                _drv_key, model, _display = slots[0]
+                label = f"{family} ({model})"
+                self._instr_label_map[label] = (family, "")
+                labels.append(label)
+            else:
+                for drv_key, model, _display in slots:
+                    label = f"{family} ({model}) — {drv_key}"
+                    self._instr_label_map[label] = (family, drv_key)
+                    labels.append(label)
+        self._instr_cb.config(values=labels)
+
+        want_family = self._ed_vars["instrument"].get()
+        want_key = self._ed_vars["instrument_key"].get()
+        match = next((lbl for lbl, (fam, key) in self._instr_label_map.items()
+                     if fam == want_family and key == want_key), None)
+        if match is None:
+            # A saved instrument_key that no longer matches any currently-
+            # fitted slot (bench reconfigured since) - fall back to any
+            # label for the same family rather than showing nothing.
+            match = next((lbl for lbl, (fam, _key) in self._instr_label_map.items()
+                         if fam == want_family), None)
+        self._instr_display_var.set(match or "")
+
+    def _on_instrument_display_selected(self):
+        label = self._instr_display_var.get()
+        family, key = self._instr_label_map.get(label, ("", ""))
+        if family:
+            self._ed_vars["instrument"].set(family)
+        self._ed_vars["instrument_key"].set(key)
+        self._on_type_change()
 
     # ------------------------------------------------------------------
     # DIRECT vs SWITCH

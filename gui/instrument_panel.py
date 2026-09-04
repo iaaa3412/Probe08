@@ -1634,6 +1634,35 @@ class MainLayout(ttk.Frame):
         except (OSError, csv.Error):
             return None
 
+    # Same as _card_recipe_names, but grouped by the RECIPE row's own
+    # "bench" column instead of flattened - so a card shared between two
+    # benches (e.g. probe08 vs probe08old, or probe02 vs probe03) shows
+    # which recipes actually apply to which one instead of one undifferentiated
+    # list. A recipe saved before "bench" existed - or one deliberately left
+    # blank because it's not bench-specific - comes back under "" (any
+    # bench), same as RecipePanel's own bench-tag filtering treats it.
+    @staticmethod
+    def _card_recipes_by_bench(card_dir: str, base: str, system: str):
+        path = recipe_file_path(card_dir, base, system)
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as f:
+                by_bench: dict = {}
+                for row in csv.DictReader(f):
+                    if (row.get("kind", "").strip().upper() != "RECIPE"):
+                        continue
+                    name = row.get("recipe", "").strip()
+                    if not name:
+                        continue
+                    bench = (row.get("bench") or "").strip()
+                    by_bench.setdefault(bench, set()).add(name)
+        except (OSError, csv.Error):
+            return None
+        if not by_bench:
+            return None
+        return {bench: sorted(names) for bench, names in by_bench.items()}
+
     def _build_internal_tree(self, folder_path: str):
         """Everything the ATA Folder tab used to split across a flat file
         list plus a wafer map (which every other tab already shows), as one
@@ -1691,21 +1720,31 @@ class MainLayout(ttk.Frame):
                                      open=True, tags=("found",))
                 self._ata_tree_meta[card_id] = {"kind": "probe_card", "base": base}
                 for system in ("accretech", "electroglas"):
-                    names = self._card_recipe_names(cards_dir, base, system)
+                    by_bench = self._card_recipes_by_bench(cards_dir, base, system)
                     label = system.capitalize()
-                    if names is None:
+                    if by_bench is None:
                         tree.insert(card_id, "end", text=label,
                                    values=("–", "no recipes file for this system"),
                                    tags=("missing",))
                         continue
+                    total = sum(len(names) for names in by_bench.values())
                     sys_id = tree.insert(card_id, "end", text=label, open=True,
-                                        values=("✔", f"{len(names)} recipe(s)"),
+                                        values=("✔", f"{total} recipe(s)"),
                                         tags=("found",))
-                    for name in names:
-                        recipe_item = tree.insert(sys_id, "end", text=name, tags=("found",))
-                        self._ata_tree_meta[recipe_item] = {
-                            "kind": "recipe", "card_base": base,
-                            "system": system, "name": name}
+                    # Blank bench ("any bench") sorts last - it's the
+                    # catch-all, not a specific bench worth leading with.
+                    for bench in sorted(by_bench, key=lambda b: (b == "", b)):
+                        names = by_bench[bench]
+                        bench_label = bench or "(any bench)"
+                        bench_id = tree.insert(
+                            sys_id, "end", text=bench_label, open=True,
+                            values=("✔", f"{len(names)} recipe(s)"), tags=("found",))
+                        for name in names:
+                            recipe_item = tree.insert(bench_id, "end", text=name,
+                                                     tags=("found",))
+                            self._ata_tree_meta[recipe_item] = {
+                                "kind": "recipe", "card_base": base,
+                                "system": system, "name": name}
         else:
             tree.insert(cards_id, "end", text="(none yet)",
                        values=("–", "create one on the Probe Card tab"),
@@ -5833,6 +5872,25 @@ class MainLayout(ttk.Frame):
         dv, du = derived
         return dv, du, f"  -> R = {dv:.6g} Ω  (combined with '{tgt}')"
 
+    def _exec2_resolve_instrument(self, s: dict, family_default_key: str, fallback_driver):
+        """Which driver object a step's SMU/DMM branch should actually use.
+
+        `s["instrument_key"]`, when set (see recipe_panel._refresh_
+        instrument_dropdown - only ever non-blank when the operator picked
+        a SPECIFIC slot from more than one fitted instrument of that
+        family), names a controller.drivers key directly. Blank (every
+        recipe saved before this field existed, and every bench with only
+        one instrument of the family - the overwhelming common case)
+        resolves to `family_default_key` instead, i.e. exactly the fixed
+        "smu"/"dmm" key this method's callers already used before this
+        existed - so a step with no instrument_key behaves byte-for-byte
+        as it always has. `fallback_driver` is that same already-resolved
+        default object, used if the key (whichever one applies) simply
+        is not a currently-connected driver."""
+        key = s.get("instrument_key") or family_default_key
+        drv = self.controller.drivers.get(key)
+        return drv if drv is not None else fallback_driver
+
     def _exec2_run_steps_once(self, steps: list = None) -> bool:
         """Run the loaded recipe's steps once, top to bottom, against
         wherever the chuck currently sits.
@@ -6087,20 +6145,23 @@ class MainLayout(ttk.Frame):
                     nplc = self._exec2_nplc_spec(s)
                     do_cfg = self._exec2_should_configure(
                         s, ("resistance", instrument, smu_ch, nplc))
+                    drv = self._exec2_resolve_instrument(
+                        s, "smu" if instrument == "SMU" else "dmm",
+                        smu if instrument == "SMU" else dmm)
                     if instrument == "SMU":
-                        if not sim and smu and smu.inst:
+                        if not sim and drv and drv.inst:
                             if do_cfg and nplc is not None:
-                                smu.set_nplc(smu_ch, nplc)
+                                drv.set_nplc(smu_ch, nplc)
                         read_one = ((lambda: abs(random.gauss(50, 15)))
-                                   if sim or not (smu and smu.inst)
-                                   else (lambda: smu.measure_resistance(smu_ch)))
+                                   if sim or not (drv and drv.inst)
+                                   else (lambda: drv.measure_resistance(smu_ch)))
                     else:
                         read_one = ((lambda: abs(random.gauss(50, 15)))
-                                   if sim or not (dmm and dmm.inst)
-                                   else (lambda: dmm.measure_resistance()))
+                                   if sim or not (drv and drv.inst)
+                                   else (lambda: drv.measure_resistance()))
                     self._exec2_settle(s, name, i)
                     r_raw = self._exec2_maybe_abs(s, self._exec2_measure_averaged(
-                        smu if instrument == "SMU" else dmm, smu_ch,
+                        drv, smu_ch,
                         read_one, avg_count, avg_delay, "Ω"))
                     r, r_unit, note = self._exec2_apply_target(s, r_raw, "ohm", readings_by_name)
                     self._exec2_log(f"[MEASURE]    R = {r_raw:.4g} Ω  (via {instrument})"
@@ -6128,20 +6189,23 @@ class MainLayout(ttk.Frame):
                     nplc = self._exec2_nplc_spec(s)
                     do_cfg = self._exec2_should_configure(
                         s, ("voltage_measure", instrument, smu_ch, nplc))
+                    drv = self._exec2_resolve_instrument(
+                        s, "smu" if instrument == "SMU" else "dmm",
+                        smu if instrument == "SMU" else dmm)
                     if instrument == "SMU":
-                        if not sim and smu and smu.inst:
+                        if not sim and drv and drv.inst:
                             if do_cfg and nplc is not None:
-                                smu.set_nplc(smu_ch, nplc)
+                                drv.set_nplc(smu_ch, nplc)
                         read_one = ((lambda: random.gauss(3.3, 0.1))
-                                   if sim or not (smu and smu.inst)
-                                   else (lambda: smu.measure_voltage(smu_ch)))
+                                   if sim or not (drv and drv.inst)
+                                   else (lambda: drv.measure_voltage(smu_ch)))
                     else:
                         read_one = ((lambda: random.gauss(3.3, 0.1))
-                                   if sim or not (dmm and dmm.inst)
-                                   else (lambda: dmm.measure_voltage_dc()))
+                                   if sim or not (drv and drv.inst)
+                                   else (lambda: drv.measure_voltage_dc()))
                     self._exec2_settle(s, name, i)
                     v_raw = self._exec2_maybe_abs(s, self._exec2_measure_averaged(
-                        smu if instrument == "SMU" else dmm, smu_ch,
+                        drv, smu_ch,
                         read_one, avg_count, avg_delay, "V"))
                     v, v_unit, note = self._exec2_apply_target(s, v_raw, "V", readings_by_name)
                     self._exec2_log(f"[MEASURE]    V = {v_raw:.4g} V  (via {instrument})"
@@ -6294,8 +6358,11 @@ class MainLayout(ttk.Frame):
                     # through however many later steps until something else
                     # happens to target it.
                     did_bias = False
+                    drv = self._exec2_resolve_instrument(
+                        s, "smu" if instrument == "SMU" else "dmm",
+                        smu if instrument == "SMU" else dmm)
                     if instrument == "SMU":
-                        if not sim and smu and smu.inst:
+                        if not sim and drv and drv.inst:
                             nplc = self._exec2_nplc_spec(s)
                             mrange = (s.get("mrange") or "").strip()
                             # See _exec2_should_configure's own docstring -
@@ -6310,9 +6377,9 @@ class MainLayout(ttk.Frame):
                                    s.get("nplc"), mrange, avg_delay))
                             if lvl:
                                 if do_cfg:
-                                    smu.set_voltage(smu_ch, float(lvl))
+                                    drv.set_voltage(smu_ch, float(lvl))
                                     if limit:
-                                        smu.set_current_limit(smu_ch, float(limit))
+                                        drv.set_current_limit(smu_ch, float(limit))
                                         # NOT reading the limit back here anymore -
                                         # see references/HANDOFF_lampaccr_
                                         # compliance_investigation.md's "GPIB
@@ -6337,12 +6404,12 @@ class MainLayout(ttk.Frame):
                                 # actually be (re)asserted on it every time
                                 # even when the LEVEL it's set to hasn't
                                 # changed since the last touchdown.
-                                smu.turn_output_on(smu_ch)
+                                drv.turn_output_on(smu_ch)
                                 last_set_voltage_by_ch[smu_ch] = float(lvl)
                                 did_bias = True
                             if do_cfg:
                                 if nplc is not None:
-                                    smu.set_nplc(smu_ch, nplc)
+                                    drv.set_nplc(smu_ch, nplc)
                                 # Confirmed on the bench: the single biggest
                                 # remaining per-touchdown cost after the
                                 # combined-read fix (~1644ms -> ~931ms at
@@ -6353,15 +6420,15 @@ class MainLayout(ttk.Frame):
                                 # been evaluated with auto-zero off, and a
                                 # 2636B-backed recipe has no such method at
                                 # all.
-                                if hasattr(smu, "set_auto_zero"):
-                                    smu.set_auto_zero(False)
+                                if hasattr(drv, "set_auto_zero"):
+                                    drv.set_auto_zero(False)
                                 # LaMP's MeterRange, carried from the .PMA. Pinned
                                 # rather than autoranged, so a different PMA
                                 # reconfigures the meter on LOAD ALL instead of
                                 # inheriting whatever the last recipe left set.
-                                if mrange and hasattr(smu, "set_current_range"):
+                                if mrange and hasattr(drv, "set_current_range"):
                                     try:
-                                        smu.set_current_range(smu_ch, float(mrange))
+                                        drv.set_current_range(smu_ch, float(mrange))
                                     except (TypeError, ValueError) as e:
                                         self._exec2_log(f"[MEASURE]    ignoring bad "
                                                         f"meter range {mrange!r}: {e}")
@@ -6373,29 +6440,29 @@ class MainLayout(ttk.Frame):
                                 # the original LaMP data shows sub-nanoamp. This is
                                 # LaMP's MeterDelay, carried on the step as
                                 # avg_delay (ms).
-                                if avg_delay and hasattr(smu, "set_source_delay"):
-                                    smu.set_source_delay(avg_delay / 1000.0)
-                            if hasattr(smu, "measure_current_and_voltage"):
+                                if avg_delay and hasattr(drv, "set_source_delay"):
+                                    drv.set_source_delay(avg_delay / 1000.0)
+                            if hasattr(drv, "measure_current_and_voltage"):
                                 def read_one():
-                                    i_val, v_val = smu.measure_current_and_voltage(smu_ch)
+                                    i_val, v_val = drv.measure_current_and_voltage(smu_ch)
                                     _combined_reading["v"] = v_val
                                     return i_val
                             else:
-                                read_one = lambda: smu.measure_current(smu_ch)
+                                read_one = lambda: drv.measure_current(smu_ch)
                         else:
                             read_one = lambda: abs(random.gauss(4e-7, 2e-7))
                         bias_txt = f"  (bias {lvl} V via SMU)" if lvl else "  (via SMU)"
                         set_voltage = last_set_voltage_by_ch.get(smu_ch)
                     else:
                         read_one = ((lambda: abs(random.gauss(4e-7, 2e-7)))
-                                   if sim or not (dmm and dmm.inst)
-                                   else (lambda: dmm.measure_current_dc()))
+                                   if sim or not (drv and drv.inst)
+                                   else (lambda: drv.measure_current_dc()))
                         bias_txt = "  (via DMM)"
                     self._exec2_settle(s, name, i)
                     i_raw = self._exec2_maybe_abs(s, self._exec2_measure_averaged(
-                        smu if instrument == "SMU" else dmm, smu_ch,
+                        drv, smu_ch,
                         read_one, avg_count, avg_delay, "A"))
-                    if instrument == "SMU" and not sim and smu and smu.inst:
+                    if instrument == "SMU" and not sim and drv and drv.inst:
                         if "v" in _combined_reading:
                             # read_one() above already captured this as part
                             # of the same acquisition that produced i_raw -
@@ -6406,7 +6473,7 @@ class MainLayout(ttk.Frame):
                             actual_voltage = _combined_reading["v"]
                         else:
                             try:
-                                actual_voltage = smu.measure_voltage(smu_ch)
+                                actual_voltage = drv.measure_voltage(smu_ch)
                             except Exception:
                                 actual_voltage = None
                     # Diagnostic only - read while the output is still on
@@ -6416,15 +6483,15 @@ class MainLayout(ttk.Frame):
                     # this asks the instrument directly instead of guessing
                     # from the number.
                     in_compliance = False
-                    if instrument == "SMU" and not sim and smu and smu.inst \
-                            and hasattr(smu, "in_compliance"):
+                    if instrument == "SMU" and not sim and drv and drv.inst \
+                            and hasattr(drv, "in_compliance"):
                         try:
-                            in_compliance = smu.in_compliance(smu_ch)
+                            in_compliance = drv.in_compliance(smu_ch)
                         except Exception:
                             in_compliance = False
                     if did_bias:
                         try:
-                            smu.turn_output_off(smu_ch)
+                            drv.turn_output_off(smu_ch)
                         except Exception as e:
                             self._exec2_log(f"[MEASURE]    ⚠ could not turn off SMU "
                                             f"{s.get('chan') or 'A'} after measuring: {e}")
@@ -7096,8 +7163,7 @@ class MainLayout(ttk.Frame):
 
         ttk.Label(
             export_frame,
-            text="Output filename:  <Lot ID>_<Wafer ID>_results.csv  "
-                 "(Wafer ID omitted if blank)"
+            text="Output filename:  <Lot ID>_<Wafer ID>_results.csv"
         ).pack(anchor="w", padx=10, pady=(8, 4))
 
         file_row = ttk.Frame(export_frame)

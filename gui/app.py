@@ -70,6 +70,17 @@ _ACCRETECH_MODELS = {
 _ALL_ACCRETECH_MODEL_FACTORIES = {}
 for _slot_models in _ACCRETECH_MODELS.values():
     _ALL_ACCRETECH_MODEL_FACTORIES.update(_slot_models)
+
+# A recipe step's "instrument" field ("SMU"/"DMM"/"WGEN" - see
+# recipe_panel._INSTRUMENTS) -> the _ACCRETECH_MODELS family key it maps
+# to. Used by AtomicaDashboard.slots_for_family, not by init_hardware
+# itself (which already has its own per-slot model lookup).
+_ACCRETECH_FAMILY_KEYS = {"SMU": "smu", "DMM": "dmm", "WGEN": "wave_gen"}
+
+# Same idea for Electroglas, in AtomicaDashboard._EG_DRIVERS profile-key
+# terms - a DMM step can already be satisfied by either the 3458A or the
+# E1326B VXI on a bench that has both fitted.
+_EG_FAMILY_KEYS = {"SMU": ("smu_eg",), "DMM": ("dmm_eg", "dmm_vxi_eg")}
 # (display label, controller.drivers key) per slot - the drivers-dict key is
 # an app-internal name unrelated to instruments.yaml's own key naming
 # (switch_matrix has always been "switch" here, everywhere else in the GUI
@@ -1098,6 +1109,62 @@ class AtomicaDashboard(tk.Tk):
         finally:
             self._startup_done = True
             self._dismiss_splash_screen()
+
+    def slots_for_family(self, family: str) -> list:
+        """Every currently-fitted slot (on whichever system is active)
+        whose model belongs to `family` ("SMU"/"DMM"/"WGEN") -
+        (drivers_dict_key, model_name, display_label) tuples, in profile
+        order. Feeds the Recipe tab's Instrument dropdown so a step can
+        target a SPECIFIC instrument when more than one of the same
+        family is fitted (a second SMU added via Setup tab's + Add
+        Instrument on Accretech, or Electroglas's existing dual-DMM case
+        - 3458A and E1326B VXI can both be fitted on the same bench). A
+        bench with exactly one instrument of a family still returns
+        exactly one entry - same shape either way, nothing downstream
+        has to special-case "only one."""
+        if self.active_system == "electroglas":
+            try:
+                fitted = set(eg_profiles.fitted_keys())
+            except Exception:
+                return []
+            out = []
+            for prof_key in _EG_FAMILY_KEYS.get(family, ()):
+                if prof_key not in fitted:
+                    continue
+                entry = self._EG_DRIVERS.get(prof_key)
+                if not entry:
+                    continue
+                display, drv_key, _factory = entry
+                out.append((drv_key, display, display))
+            return out
+
+        family_key = _ACCRETECH_FAMILY_KEYS.get(family)
+        if not family_key:
+            return []
+        bench = accretech_profiles.active_name()
+        try:
+            fitted = accretech_profiles.fitted_keys(bench)
+            profile_instruments = accretech_profiles.instruments(bench)
+        except Exception:
+            return []
+        family_models = set(_ACCRETECH_MODELS.get(family_key, {}).keys())
+        out = []
+        for key in fitted:
+            entry = profile_instruments.get(key) or {}
+            model = entry.get("model") or accretech_profiles.DEFAULT_MODEL.get(
+                key, accretech_profiles.GENERIC_MODEL)
+            # The core slot itself always counts toward its own family,
+            # whatever model happens to be registered there - a custom
+            # slot only counts if its model is one of this family's
+            # known models (see _ACCRETECH_MODELS).
+            if key != family_key and model not in family_models:
+                continue
+            if key in _ACCRETECH_SLOT_INFO:
+                display, drv_key = _ACCRETECH_SLOT_INFO[key]
+            else:
+                display, drv_key = entry.get("name") or key, key
+            out.append((drv_key, model, display))
+        return out
 
     def init_hardware(self):
         self._connected_systems.add("accretech")
