@@ -134,6 +134,34 @@ class AtomicaDashboard(tk.Tk):
         super().__init__()
         self.title("Electrical Prober")
         self.geometry("1400x800")
+        # Taskbar/title-bar icon - a live Tk window property, separate
+        # from the exe's own embedded icon (see AtomicaATA.spec's EXE
+        # icon=). Without this call the window (and so the taskbar
+        # button/preview, which some Windows builds source from the
+        # window itself rather than the exe resource) falls back to Tk's
+        # own default feather icon, no matter what the exe file's icon
+        # is set to.
+        #
+        # iconphoto(), not iconbitmap() - iconbitmap() on Windows hands
+        # Tk a single .ico and Tk picks (or Windows scales) one baked-in
+        # bitmap from it, which came out blurry at taskbar/preview size
+        # on the bench. iconphoto() instead gets several real, freshly-
+        # resampled PhotoImages and Windows chooses the sharpest one for
+        # whatever context it's rendering (small taskbar button vs large
+        # Alt-Tab preview) - True applies it to every Toplevel this root
+        # spawns too, not just the root window.
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "app_icon.png")
+            if os.path.exists(icon_path):
+                from PIL import Image, ImageTk
+                master = Image.open(icon_path).convert("RGBA")
+                self._app_icon_images = [
+                    ImageTk.PhotoImage(master.resize((sz, sz), Image.LANCZOS))
+                    for sz in (16, 24, 32, 48, 64, 128, 256)
+                ]
+                self.iconphoto(True, *self._app_icon_images)
+        except Exception:
+            pass
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
         self._check_machine_config_folder()
         # Self-healing, independent of the dialog above: accretech_probers.yaml

@@ -982,7 +982,6 @@ class RecipePanel(ttk.Frame):
         self.columnconfigure(0, weight=1)
 
         self._build_toolbar()
-        self._build_minor_moves_bar()
         self._build_body()
         self._refresh_picker()
         self._update_connections()
@@ -1221,33 +1220,32 @@ class RecipePanel(ttk.Frame):
                                         bg="#e2e8f0", fg="#1d4ed8",
                                         font=("Segoe UI", 8))
 
-    def _build_minor_moves_bar(self):
-        bar = tk.Frame(self, bg="#e2e8f0", relief="flat", bd=1)
-        bar.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
+    def _build_shot_origin_controls(self, parent):
+        """Accretech gets its shot origin from Wafer Builder's own Overlay
+        sub-tab (its confirmed row/col offset IS the translation between
+        Wafer Builder's logical die grid and real absolute die coordinates
+        - nothing to capture here, just a label to refresh). Electroglas
+        has no Overlay yet, so it still needs the manual capture button.
 
-        # The Shortcut/Minor Moves/Skip-auto-clear checkboxes used to live
-        # here - moved down next to Direct Wiring in the step editor (see
-        # _build_steps) so every per-recipe toggle lives in one place at
-        # the bottom of the tab instead of split between here and there.
-        # Accretech gets its origin from Wafer Builder's own Overlay sub-tab
-        # (its confirmed row/col offset IS the translation between Wafer
-        # Builder's logical die grid and real absolute die coordinates -
-        # nothing to capture here). Electroglas has no Overlay yet, so it
-        # still needs the manual capture button.
+        Was its own bar above the step list - moved down here, next to
+        Validate, so every button on this tab lives in one row instead of
+        split across two."""
         if self._system == "accretech":
             self._shot_origin_btn = ttk.Button(
-                bar, text="↻ Refresh", state="disabled",
+                parent, text="↻ Refresh", state="disabled",
                 command=self._refresh_shot_origin_label)
-            self._shot_origin_btn.pack(side="left", padx=(0, 8), pady=4)
         else:
             self._shot_origin_btn = ttk.Button(
-                bar, text="📍 Set Shot Origin", state="disabled",
+                parent, text="📍 Set Shot Origin", state="disabled",
                 command=self._set_shot_origin)
-            self._shot_origin_btn.pack(side="left", padx=(0, 8), pady=4)
+        self._shot_origin_btn.pack(side="left", padx=(10, 2))
 
-        tk.Label(bar, textvariable=self._shot_origin_status_var, bg="#e2e8f0",
-                 fg="#6b7280", font=("Segoe UI", 8, "italic")).pack(
-                 side="left", padx=(0, 8))
+        # ttk.Label (not tk.Label) - this now sits in the ttk.Frame button
+        # bar, not the old bar's own tk.Frame(bg="#e2e8f0"); a plain
+        # tk.Label's hardcoded bg would fight the themed frame behind it.
+        ttk.Label(parent, textvariable=self._shot_origin_status_var,
+                 foreground="#6b7280", font=("Segoe UI", 8, "italic")).pack(
+                 side="left", padx=(2, 8))
 
     def _on_minor_moves_toggle(self):
         rec = self._recipes.get(self._current)
@@ -1375,19 +1373,18 @@ class RecipePanel(ttk.Frame):
     # saved list can be checked against the map it was taken from.
 
     def _build_sites(self, parent):
-        sf = ttk.LabelFrame(parent, text="Touchdowns (which dies this recipe probes)",
-                            padding=6)
+        sf = ttk.LabelFrame(parent, text="Touchdown List", padding=6)
         parent.add(sf, weight=2)
-        sf.rowconfigure(2, weight=1)
+        sf.rowconfigure(1, weight=1)
         sf.columnconfigure(0, weight=1)
 
+        # Still tracked (see _refresh_sites) even with no label showing it -
+        # only the grey description text was removed, not the underlying
+        # touchdown-count bookkeeping.
         self._sites_var = tk.StringVar(value="No touchdowns — the run walks every die")
-        ttk.Label(sf, textvariable=self._sites_var, font=("Arial", 8),
-                  foreground="#555", justify="left", wraplength=760).grid(
-                  row=0, column=0, columnspan=2, sticky="w")
 
         bar = ttk.Frame(sf)
-        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(4, 4))
         ttk.Button(bar, text="⬅ Take from map selection",
                    command=self._sites_from_map).pack(side="left")
         ttk.Button(bar, text="🏷 Take die IDs",
@@ -1420,9 +1417,9 @@ class RecipePanel(ttk.Frame):
             self._site_tree.heading(cid, text=text)
             self._site_tree.column(cid, width=width, anchor=anchor,
                                    stretch=(cid == "die_id"))
-        self._site_tree.grid(row=2, column=0, sticky="nsew")
+        self._site_tree.grid(row=1, column=0, sticky="nsew")
         sb = ttk.Scrollbar(sf, orient="vertical", command=self._site_tree.yview)
-        sb.grid(row=2, column=1, sticky="ns")
+        sb.grid(row=1, column=1, sticky="ns")
         self._site_tree.configure(yscrollcommand=sb.set)
 
     def _run_panel(self):
@@ -1982,6 +1979,7 @@ class RecipePanel(ttk.Frame):
             self._btn_recompute.pack(side="left", padx=2)
         ttk.Button(btns, text="✓ Validate",
                    command=self._validate_clicked).pack(side="left", padx=(10, 2))
+        self._build_shot_origin_controls(btns)
 
     def _refresh_pin_values(self, cb):
         tokens = []

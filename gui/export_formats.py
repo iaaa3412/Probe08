@@ -709,6 +709,22 @@ def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
                    lot_id: str, wafer_id: str, folder: str = "") -> List[Dict[str, Any]]:
     context = {"lot_id": lot_id, "wafer_id": wafer_id,
               "test_serial": compute_test_serial(lot_id, wafer_id)}
+    # per_step: opt-in, off by default (every format saved before this
+    # existed has no such key, so it keeps exactly today's one-row-per-die
+    # behavior below). group_results_by_die picks only the FIRST
+    # current-type and FIRST resistance-type reading it finds per die -
+    # correct for a recipe with one measurement per die, but silently
+    # drops every other reading on a recipe like Peanut's FULL that runs
+    # several differently-named tests per die. per_step instead emits one
+    # row per raw measurement (same uncollapsed rows an "sql" format
+    # already uses via rows_for_format), so a column can read the row's
+    # own "step"/"type"/"value"/"unit" directly and nothing gets dropped.
+    if fmt.get("per_step"):
+        out = []
+        for r in rows_for_format(fmt, results_data):
+            r = apply_lookup(fmt, folder, r)
+            out.append({c["field"]: resolve_column_value(c, r, context) for c in fmt["columns"]})
+        return out
     out = []
     for g in group_results_by_die(results_data):
         if not g["current"] and not g["resistance"]:
@@ -720,6 +736,8 @@ def build_csv_rows(fmt: Dict[str, Any], results_data: List[Dict[str, Any]],
 
 def has_data_for_format(fmt: Dict[str, Any], results_data: List[Dict[str, Any]]) -> bool:
     if fmt.get("type") == "csv":
+        if fmt.get("per_step"):
+            return bool(rows_for_format(fmt, results_data))
         return any(g["current"] or g["resistance"]
                   for g in group_results_by_die(results_data))
     return bool(rows_for_format(fmt, results_data))

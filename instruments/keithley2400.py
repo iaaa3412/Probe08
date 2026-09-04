@@ -68,6 +68,31 @@ class Keithley2400(GPIBInstrument):
     def use_measurement_terminals(self):
         self.write(f":ROUT:TERM {self.TERMINALS}")
 
+    def set_terminals(self, which: str):
+        """Override which physical terminals this instance uses, live -
+        TERMINALS above is a class-level DEFAULT (REAR, because that's how
+        Peanut's original switch-matrix-routed probe cards were cabled),
+        not something every project should be stuck with. A direct-wired
+        recipe (see PeanutATA's probe08 bench, 2026-09) is typically
+        hand-clipped to the FRONT panel instead, so needs to flip this
+        without a code change every time. Setting self.TERMINALS (not the
+        class attribute) shadows the class default for just this
+        instance - use_measurement_terminals() reads self.TERMINALS
+        either way, so every later set_voltage/set_current call picks up
+        the override automatically, same as it already picks up the
+        class default today. Applied immediately too, not just queued for
+        the next source call, so an idle instrument reflects the change
+        right away.
+        """
+        which = (which or "").strip().upper()
+        if which not in ("FRONT", "REAR"):
+            raise ValueError(f"terminals must be FRONT or REAR, got {which!r}")
+        self.TERMINALS = which
+        self.write(f":ROUT:TERM {self.TERMINALS}")
+
+    def get_terminals(self) -> str:
+        return self.TERMINALS
+
     def configure_for_measurement(self):
         self.use_measurement_terminals()
         for cmd in self._FIXED_SETUP:

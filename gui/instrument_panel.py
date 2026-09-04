@@ -506,8 +506,44 @@ class MainLayout(ttk.Frame):
     def _tab_instruments(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Instruments")
-        tab.rowconfigure(2, weight=1)
+        tab.rowconfigure(0, weight=1)
         tab.columnconfigure(0, weight=1)
+
+        # Scrollable - the SMU section (2636B card + the Keithley 2400
+        # card below it) plus DMM/WGEN/addresses run taller than the
+        # window on a lot of real screens, and this tab had no scrollbar
+        # at all before, so anything past the visible area was simply
+        # unreachable. Canvas + Scrollbar is the standard Tk pattern (ttk
+        # has no built-in scrollable frame) - `inner` is NOT stretched to
+        # the canvas's own height (only its width, via the <Configure>
+        # binding below), so it - and the PanedWindow inside it - size
+        # to their natural content height and the canvas scrolls the
+        # difference, instead of the PanedWindow being squashed into
+        # whatever the tab's own fixed height happened to be.
+        canvas = tk.Canvas(tab, highlightthickness=0)
+        vsb = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        inner = ttk.Frame(canvas)
+        inner.columnconfigure(0, weight=1)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        inner.bind("<Configure>",
+                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                   lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        def _on_mousewheel(evt):
+            canvas.yview_scroll(int(-1 * (evt.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+
+        tab = inner  # everything below this point was already written
+                    # against `tab` - redirect it into the scrollable
+                    # inner frame instead of the (now just a scrollbar
+                    # mount) outer one, with no other lines to touch.
 
         rst = tk.Frame(tab, bg="#7f1d1d")
         rst.grid(row=0, column=0, sticky="ew")
@@ -562,6 +598,7 @@ class MainLayout(ttk.Frame):
 
         self._build_dmm_card(dmm_pane)
         self._build_smu_card(smu_pane)
+        self._build_smu2400_card(smu_pane)
         self._build_wavegen_card(wg_pane)
 
         # Ping/address section - a diagnostic, not the first thing an
@@ -826,8 +863,89 @@ class MainLayout(ttk.Frame):
         ttk.Separator(card, orient="horizontal").pack(fill="x", padx=6, pady=6)
         self._scpi_row(card, "smu")
 
-    def _build_smu_channel(self, parent, ch: str, col: int):
-        lf = ttk.LabelFrame(parent, text=f"{ch.upper()}  ○ OFF", padding=(8, 6))
+    def _build_smu2400_card(self, parent):
+        """Single-channel manual-control card for a Keithley 2400 - was
+        missing entirely; the only SMU section here was hardcoded to the
+        2636B (dual-channel, TSP-scripted). Shares the same "smu" driver
+        slot the 2636B card above targets (only one physical SMU is ever
+        really plugged into a given bench at a time), reusing
+        _build_smu_channel with its own state key so the two cards'
+        widgets/dicts don't collide - see that method's own docstring."""
+        card = ttk.LabelFrame(parent, text="Keithley 2400  (SMU)")
+        card.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        card.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            card, text="Uses the same “smu” slot as the 2636B card above "
+                       "— only one is really connected at a time.",
+            foreground="gray", font=("Consolas", 8), wraplength=380, justify="left"
+        ).pack(anchor="w", padx=8, pady=(4, 4))
+
+        # Front/Rear terminal select - only meaningful for a driver that
+        # actually has set_terminals (Keithley2400 does; see that
+        # driver's own comment). A switch-matrix-routed probe card is
+        # wired to REAR; a hand-clipped DIRECT-wired one (e.g. Peanut's
+        # probe08, 2026-09) is typically FRONT instead - this used to be
+        # a fixed class constant with no way to flip it without editing
+        # code, which is exactly backwards for a recipe set that's
+        # switching between the two.
+        term_row = ttk.Frame(card)
+        term_row.pack(fill="x", padx=8, pady=(0, 6))
+        ttk.Label(term_row, text="Terminals:").pack(side="left")
+        term_status = tk.StringVar(value="—")
+        ttk.Label(term_row, textvariable=term_status, font=("Consolas", 9, "bold"),
+                 foreground="#374151", width=6).pack(side="left", padx=(4, 8))
+
+        def _set_terminals(which):
+            drv = self.controller.drivers.get("smu")
+            if not drv or not drv.inst:
+                self.controller.log("[SMU 2400] terminals: not connected")
+                return
+            if not hasattr(drv, "set_terminals"):
+                self.controller.log(
+                    "[SMU 2400] the instrument in the 'smu' slot right now has no "
+                    "FRONT/REAR terminal switch")
+                return
+            try:
+                drv.set_terminals(which)
+                term_status.set(which)
+                self.controller.log(f"[SMU 2400] terminals -> {which}")
+            except Exception as e:
+                self.controller.log(f"[SMU 2400] set_terminals error: {e}")
+
+        ttk.Button(term_row, text="Front", width=7,
+                  command=lambda: _set_terminals("FRONT")).pack(side="left", padx=2)
+        ttk.Button(term_row, text="Rear", width=7,
+                  command=lambda: _set_terminals("REAR")).pack(side="left", padx=2)
+
+        ch_frame = ttk.Frame(card)
+        ch_frame.pack(fill="both", expand=True, padx=6)
+        ch_frame.columnconfigure(0, weight=1)
+        self._smu_last["smu2400"] = {"I": None, "V": None, "R": None}
+        self._build_smu_channel(ch_frame, "smu2400", col=0,
+                                drv_channel="smua", title="Keithley 2400")
+
+    def _build_smu_channel(self, parent, ch: str, col: int,
+                           drv_channel: str = None, title: str = None):
+        """ch is this panel's own STATE key - what indexes
+        _smu_output_lf/_smu_level_vars/_smu_cont_active/_smu_last, and
+        what shows up in log lines. drv_channel is what actually gets
+        passed to the driver's set_voltage()/measure_current()/etc, and
+        defaults to ch when not given.
+
+        These have to be allowed to differ: the Keithley 2400 card (see
+        _build_smu2400_card) reuses this same builder with its own state
+        key ("smu2400") so it doesn't collide with the 2636B card's
+        "smua"/"smub" dict entries above it, but still has to pass a
+        LITERAL "smua"/"smub" as drv_channel - a 2636B driver interpolates
+        that string directly into a TSP command (channel.source.func =
+        ...), so anything else sent to one would be a bad command,
+        whereas a 2400 driver ignores the channel argument entirely and
+        so accepts any string here safely.
+        """
+        drv_channel = drv_channel or ch
+        title = title or ch.upper()
+        lf = ttk.LabelFrame(parent, text=f"{title}  ○ OFF", padding=(8, 6))
         lf.grid(row=0, column=col, sticky="nsew",
                 padx=(0 if col == 0 else 6, 0), pady=0)
         lf.columnconfigure(1, weight=1)
@@ -944,18 +1062,18 @@ class MainLayout(ttk.Frame):
                 comp = parse_engineering(comp_var.get())
                 nplc = float(nplc_var.get())
                 if src == "Voltage":
-                    drv.set_voltage(ch, lvl)
-                    drv.set_current_limit(ch, comp)
+                    drv.set_voltage(drv_channel, lvl)
+                    drv.set_current_limit(drv_channel, comp)
                 else:
-                    drv.set_current(ch, lvl)
-                    drv.set_voltage_limit(ch, comp)
+                    drv.set_current(drv_channel, lvl)
+                    drv.set_voltage_limit(drv_channel, comp)
                 try:
-                    drv.set_nplc(ch, nplc)
+                    drv.set_nplc(drv_channel, nplc)
                 except Exception:
                     pass
-                drv.turn_output_on(ch)
+                drv.turn_output_on(drv_channel)
                 self.controller.log(f"[SMU] {ch} ON — {src}={lvl}, comp={comp}, NPLC={nplc}")
-                lf.config(text=f"{ch.upper()}  ● ON")
+                lf.config(text=f"{title}  ● ON")
             except Exception as e:
                 self.controller.log(f"[SMU] {ch} set_on error: {e}")
 
@@ -964,9 +1082,9 @@ class MainLayout(ttk.Frame):
             if not drv:
                 return
             try:
-                drv.turn_output_off(ch)
+                drv.turn_output_off(drv_channel)
                 self.controller.log(f"[SMU] {ch} output OFF")
-                lf.config(text=f"{ch.upper()}  ○ OFF")
+                lf.config(text=f"{title}  ○ OFF")
             except Exception as e:
                 self.controller.log(f"[SMU] {ch} off error: {e}")
 
@@ -976,17 +1094,17 @@ class MainLayout(ttk.Frame):
                 return
             try:
                 if what == "I":
-                    val = drv.measure_current(ch)
+                    val = drv.measure_current(drv_channel)
                     reading_vars["I"].set(format_engineering(val, "A"))
                     self._smu_last[ch]["I"] = val
                     self.controller.log(f"[SMU] {ch} I = {format_engineering(val, 'A')}")
                 elif what == "V":
-                    val = drv.measure_voltage(ch)
+                    val = drv.measure_voltage(drv_channel)
                     reading_vars["V"].set(format_engineering(val, "V"))
                     self._smu_last[ch]["V"] = val
                     self.controller.log(f"[SMU] {ch} V = {format_engineering(val, 'V')}")
                 elif what == "R":
-                    val = drv.measure_resistance(ch)
+                    val = drv.measure_resistance(drv_channel)
                     reading_vars["R"].set(format_engineering(val, "Ω"))
                     self._smu_last[ch]["R"] = val
                     self.controller.log(f"[SMU] {ch} R = {format_engineering(val, 'Ω')}")
@@ -1090,6 +1208,20 @@ class MainLayout(ttk.Frame):
                         lf.config(text=f"{ch.upper()}  ○ OFF")
                     except Exception:
                         pass
+            # The Keithley 2400 card's own widgets - the hardware output
+            # is already off from the "smua" pass above (it shares the
+            # same physical channel, see _build_smu2400_card), this just
+            # brings that card's displayed level/label back in sync with
+            # it instead of leaving them showing stale ON/nonzero state.
+            lv = self._smu_level_vars.get("smu2400")
+            if lv:
+                lv.set("0.0")
+            lf = self._smu_output_lf.get("smu2400")
+            if lf:
+                try:
+                    lf.config(text="Keithley 2400  ○ OFF")
+                except Exception:
+                    pass
                 sv = self._inst_status_vars.get(ch)
                 if sv:
                     sv.set(f"{ch.upper()}: ○ OFF  0 V")
@@ -1367,17 +1499,18 @@ class MainLayout(ttk.Frame):
         ttk.Label(resp_row, textvariable=resp_var, foreground="#0055aa",
                   font=("Consolas", 9)).pack(side="left", padx=4)
 
-    def _build_default_prober_row(self, tab):
+    def _build_default_prober_row(self, parent):
         """Which prober the GUI comes up on, across BOTH systems.
 
         Deliberately not per-system: the point is to decide whether the app
         starts on Accretech or Electroglas at all, so one list spans both and
         picking an entry sets the system as well as the bench.
         """
-        lf = ttk.LabelFrame(tab, text="Default prober (used at startup)", padding=6)
-        lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        lf = ttk.Frame(parent)
+        lf.pack(fill="x", pady=(0, 4))
 
-        ttk.Label(lf, text="Start the GUI on:").pack(side="left", padx=(0, 4))
+        ttk.Label(lf, text="Default prober (used at startup) — Start the GUI on:").pack(
+            side="left", padx=(0, 4))
         self._default_prober_var = tk.StringVar()
         self._default_prober_cb = ttk.Combobox(
             lf, textvariable=self._default_prober_var, state="readonly", width=32,
@@ -1394,7 +1527,7 @@ class MainLayout(ttk.Frame):
         self._refresh_default_prober_choices()
         self._update_default_prober_label()
 
-    def _build_default_yield_row(self, tab):
+    def _build_default_yield_row(self, parent):
         """Same setting as the Cassette tab's own "Pass yield >= ...%"
         Entry (cassette_panel.CassettePanel) - a per-ATA-folder default,
         not per-machine (see save_yield_threshold's own comment: different
@@ -1407,11 +1540,11 @@ class MainLayout(ttk.Frame):
         the same value, not a second source of truth for it. Accretech
         only - Electroglas has no Cassette tab at all.
         """
-        lf = ttk.LabelFrame(tab, text="Cassette pass-yield default (per ATA folder)",
-                            padding=6)
-        lf.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 4))
+        lf = ttk.Frame(parent)
+        lf.pack(fill="x", pady=(0, 4))
 
-        ttk.Label(lf, text="Pass yield ≥").pack(side="left", padx=(0, 2))
+        ttk.Label(lf, text="Cassette pass-yield default (per ATA folder) — "
+                          "Pass yield ≥").pack(side="left", padx=(0, 2))
         self._default_yield_var = tk.StringVar(value="0")
         ttk.Entry(lf, textvariable=self._default_yield_var, width=5).pack(
             side="left", padx=(0, 2))
@@ -1504,6 +1637,36 @@ class MainLayout(ttk.Frame):
         self._update_default_prober_label()
         self.controller.log("[SYSTEM] Default prober cleared.")
 
+    def _build_working_dir_row(self, parent):
+        """Where ATA folders are looked for/created - was previously the
+        first thing in the toolbar row, now grouped with the other
+        startup/default settings below it in one Settings section instead
+        of living apart from them."""
+        lf = ttk.Frame(parent)
+        lf.pack(fill="x", pady=(0, 4))
+
+        ttk.Label(lf, text="Working Directory:").pack(side="left", padx=(0, 4))
+        # Preset picker (automationproject / proberautomation) - the Entry
+        # next to it still shows/accepts the full path either way (a preset
+        # just fills it in), so a one-off custom path via Browse still works.
+        import workdir as _workdir
+        self._workdir_preset_var = tk.StringVar(value="")
+        preset_box = ttk.Combobox(
+            lf, textvariable=self._workdir_preset_var, state="readonly",
+            width=16, values=list(_workdir.PRESETS.keys()))
+        preset_box.pack(side="left", padx=(0, 4))
+        preset_box.bind("<<ComboboxSelected>>",
+                        lambda _e: self.controller.cmd_pick_working_dir_preset(
+                            self._workdir_preset_var.get()))
+        ttk.Entry(lf, textvariable=self.working_dir_var, width=26).pack(
+            side="left", padx=(0, 4))
+        ttk.Button(
+            lf, text="Browse...", command=self.controller.cmd_browse_working_dir
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            lf, text="⭐ Set Default", command=self.controller.cmd_set_default_working_dir
+        ).pack(side="left", padx=(0, 10))
+
     def _tab_wafer_map(self, nb):
         tab = ttk.Frame(nb)
         nb.add(tab, text="Internal")
@@ -1523,28 +1686,6 @@ class MainLayout(ttk.Frame):
         ttk.Button(ctrl, text="↻ Refresh",
                   command=self.controller.cmd_refresh_ata).pack(side="left", padx=(0, 10))
 
-        ttk.Label(ctrl, text="Working Directory:").pack(side="left", padx=(0, 4))
-        # Preset picker (automationproject / proberautomation) - the Entry
-        # next to it still shows/accepts the full path either way (a preset
-        # just fills it in), so a one-off custom path via Browse still works.
-        import workdir as _workdir
-        self._workdir_preset_var = tk.StringVar(value="")
-        preset_box = ttk.Combobox(
-            ctrl, textvariable=self._workdir_preset_var, state="readonly",
-            width=16, values=list(_workdir.PRESETS.keys()))
-        preset_box.pack(side="left", padx=(0, 4))
-        preset_box.bind("<<ComboboxSelected>>",
-                        lambda _e: self.controller.cmd_pick_working_dir_preset(
-                            self._workdir_preset_var.get()))
-        ttk.Entry(ctrl, textvariable=self.working_dir_var, width=26).pack(
-            side="left", padx=(0, 4))
-        ttk.Button(
-            ctrl, text="Browse...", command=self.controller.cmd_browse_working_dir
-        ).pack(side="left", padx=(0, 4))
-        ttk.Button(
-            ctrl, text="⭐ Set Default", command=self.controller.cmd_set_default_working_dir
-        ).pack(side="left", padx=(0, 10))
-
         self._ata_path_lbl = ttk.Label(ctrl, text="No folder selected", foreground="gray")
         self._ata_path_lbl.pack(side="left", padx=10)
 
@@ -1553,9 +1694,16 @@ class MainLayout(ttk.Frame):
         self._default_ata_lbl.pack(side="left", padx=(0, 10))
         self._update_default_ata_label()
 
-        self._build_default_prober_row(tab)
+        # One Settings section instead of three separate LabelFrames
+        # (Default prober / Cassette pass-yield / Working Directory used
+        # to each get their own row) - same settings, just grouped under
+        # one heading.
+        settings_lf = ttk.LabelFrame(tab, text="Settings", padding=6)
+        settings_lf.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        self._build_working_dir_row(settings_lf)
+        self._build_default_prober_row(settings_lf)
         if self._system == "accretech":
-            self._build_default_yield_row(tab)
+            self._build_default_yield_row(settings_lf)
 
         # Same fix as the Run tab's _exec2_map_source_var: Electroglas has no
         # hardware-extracted map of its own - the legacy "Electroglas" source
@@ -7791,6 +7939,21 @@ class MainLayout(ttk.Frame):
         ttk.Radiobutton(type_row, text="CSV (one row per die, merged)",
                        variable=type_var, value="csv",
                        command=lambda: _on_type_change()).pack(side="left", padx=(12, 0))
+        # CSV-only, off by default (a format saved before this existed has
+        # no such key, so it keeps its exact current one-row-per-die
+        # behavior - see export_formats.build_csv_rows's own per_step
+        # comment). Checked, a CSV format switches to the SAME raw,
+        # uncollapsed rows an SQL format already sees (one row per
+        # measurement) instead of group_results_by_die's one-row-per-die
+        # merge - for a recipe like Peanut's FULL that runs several
+        # differently-named tests per die, the merged version silently
+        # keeps only the first current/first resistance reading and drops
+        # the rest.
+        per_step_var = tk.BooleanVar(value=(existing_fmt or {}).get("per_step", False))
+        per_step_chk = ttk.Checkbutton(
+            type_row, text="One row per test, not per die (e.g. Peanut's FULL)",
+            variable=per_step_var, command=lambda: _on_type_change())
+        per_step_chk.pack(side="left", padx=(12, 0))
         append_date_var = tk.BooleanVar(value=(existing_fmt or {}).get("append_date", False))
         ttk.Checkbutton(type_row, text="📅 Append date to filename (_YYYYMMDD)",
                        variable=append_date_var).pack(side="left", padx=(20, 0))
@@ -7953,6 +8116,13 @@ class MainLayout(ttk.Frame):
             return "_".join(_NICE.get(p, p.capitalize()) for p in source.split("_"))
 
         def _fields_for_type():
+            # per_step csv reads the SAME raw, uncollapsed rows an sql
+            # format does (see export_formats.build_csv_rows), so its
+            # available fields are the sql field list (step/type/value/
+            # unit/...), not the die-grouped csv one (resistance/current/
+            # chip_id/...) - those don't exist on a raw row.
+            if type_var.get() == "csv" and per_step_var.get():
+                return xfmt.SQL_SOURCE_FIELDS
             return xfmt.SOURCE_FIELDS_BY_TYPE.get(type_var.get(), {})
 
         def _populate_available():
@@ -7963,7 +8133,7 @@ class MainLayout(ttk.Frame):
             if source_var.get() not in fields:
                 source_var.set(next(iter(fields), ""))
             results = self.controller.results_data
-            if type_var.get() == "csv":
+            if type_var.get() == "csv" and not per_step_var.get():
                 populated = {"lot_id", "wafer_id", "test_serial"}
                 for g in xfmt.group_results_by_die(results):
                     for k, v in g.items():
@@ -7980,23 +8150,35 @@ class MainLayout(ttk.Frame):
                     avail_list.insert("end", f"{source}  —  {desc}")
                     avail_sources.append(source)
                 if kinds:
+                    row_desc = ("row" if type_var.get() == "sql"
+                               else "CSV row (one row per test, not merged by die)")
                     detect_hint.set(
                         "Reading kinds detected in current Results: " +
                         ", ".join(k["label"] for k in kinds) +
-                        ".  Each SQL row is ONE reading — to merge several reading "
-                        "kinds into one row per die, use a CSV format instead.")
+                        f".  Each {row_desc} is ONE reading — turn off \"One row per "
+                        "test\" to merge them into one row per die instead.")
                 else:
                     detect_hint.set(
                         "No results captured yet — run a recipe first, or pick "
                         "sources manually below.")
 
         def _on_type_change():
-            if type_var.get() == "csv":
-                only_pma_chk.grid_remove()
+            is_csv = type_var.get() == "csv"
+            if is_csv:
+                per_step_chk.pack(side="left", padx=(12, 0))
                 quote_chk.pack_forget()
             else:
-                only_pma_chk.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 8))
+                per_step_chk.pack_forget()
                 quote_chk.pack(side="left")
+            # "Only include readings that have a die ID" filters the SAME
+            # raw rows_for_format rows an sql format uses - meaningful for
+            # sql, and for a per_step csv format (which reads that same
+            # raw list), but not for the die-grouped csv path, which
+            # doesn't consult it at all.
+            if is_csv and not per_step_var.get():
+                only_pma_chk.grid_remove()
+            else:
+                only_pma_chk.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 8))
             _populate_available()
 
         def _add_from_available(_evt=None):
@@ -8130,6 +8312,7 @@ class MainLayout(ttk.Frame):
             fmt = {"name": name, "table": table, "type": type_var.get(),
                   "requires_die_id": only_pma_var.get(), "append_date": append_date_var.get(),
                   "append_time": append_time_var.get(), "append_recipe": append_recipe_var.get(),
+                  "per_step": per_step_var.get() if type_var.get() == "csv" else False,
                   "columns": columns}
             wafer_join = wafer_join_var.get()
             if wafer_join and wafer_join != "_":

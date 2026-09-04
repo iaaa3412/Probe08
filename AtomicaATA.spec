@@ -77,6 +77,19 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(GUI_DIR, "logo2.jpg"), "."),
+        # app.py's splash screen and header bar both also load
+        # logo_otto.jpg (the Otto wordmark) at runtime - missing here
+        # meant a built exe's os.path.exists() check on it silently came
+        # back False and the logo just never rendered anywhere, no error.
+        (os.path.join(GUI_DIR, "logo_otto.jpg"), "."),
+        # app_icon.png: bundled so app.py can call self.iconphoto() with
+        # it at startup (see AtomicaDashboard.__init__) - the EXE's OWN
+        # embedded icon (app_icon.ico, used below) only ever covers the
+        # Explorer/file icon; the taskbar/title-bar icon is a live Tk
+        # window property that has to be set in code or it falls back to
+        # Tk's own default feather icon, regardless of what's embedded
+        # in the exe.
+        (os.path.join(GUI_DIR, "app_icon.png"), "."),
         (os.path.join(ROOT, "gds", "*.py"), "gds"),
     ] + copy_metadata("pyvisa-py"),
     hiddenimports=hidden_gui + hidden_instruments + hidden_extra,
@@ -111,4 +124,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Windows Explorer file icon for the exe itself - separate from the
+    # logo2.jpg/logo_otto.jpg/app_icon.ico data files above (those are
+    # the in-window logos and the runtime taskbar-icon source - see
+    # AtomicaDashboard.__init__'s iconbitmap call). PyInstaller embeds
+    # this .ico directly into the binary; without it, the exe falls back
+    # to PyInstaller's own default icon. Same image as app_icon.ico
+    # (ottologo2's diamond badge) so the file icon and the running
+    # window's icon match.
+    icon=os.path.join(GUI_DIR, "app_icon.ico"),
 )
